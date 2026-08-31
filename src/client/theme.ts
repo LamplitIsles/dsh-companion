@@ -90,7 +90,7 @@ export const companionStyles = `
 #dsh-companion .companion-session-running{width:8px;height:8px;flex:none;border-radius:50%;background:var(--color-secondary);box-shadow:0 0 0 4px color-mix(in srgb,var(--color-secondary) 14%,transparent)}
 #dsh-companion .companion-session-empty{padding:16px 12px;opacity:.55;font-size:.78rem}
 #dsh-companion .companion-sidebar-advanced{margin-top:12px;padding:10px;color:inherit;opacity:.58;font-size:.74rem;text-align:center;text-decoration:none}
-#dsh-companion .companion-detail-card{position:fixed;z-index:20;top:auto;left:auto;width:min(372px,calc(100vw - 38px));max-width:none;margin:0;padding:0;overflow:hidden;border:1px solid color-mix(in srgb,var(--color-base-content) 12%,transparent);color:var(--color-base-content);box-shadow:0 24px 70px rgb(0 0 0 / .28);animation:companion-card-in .2s cubic-bezier(.2,.8,.2,1);transform-origin:36px 0;backdrop-filter:blur(18px)}
+#dsh-companion .companion-detail-card{position:fixed;z-index:20;top:auto;left:auto;width:min(372px,calc(100vw - 38px));max-width:none;margin:0;padding:0;overflow:hidden;border:1px solid color-mix(in srgb,var(--color-base-content) 12%,transparent);color:var(--color-base-content);background:var(--color-base-100);box-shadow:0 24px 70px rgb(0 0 0 / .28);animation:companion-card-in .2s cubic-bezier(.2,.8,.2,1);transform-origin:36px 0;backdrop-filter:blur(18px)}
 #dsh-companion .companion-detail-card .cmp-card-body{padding:0}
 #dsh-companion .companion-detail-art{height:128px;background:linear-gradient(to bottom,transparent 45%,var(--color-base-100)),var(--relationship-art) center 54%/cover no-repeat}
 #dsh-companion[data-theme="sticker-messenger"] .companion-detail-art{filter:saturate(.78) brightness(1.2);opacity:.82}

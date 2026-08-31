@@ -1,5 +1,6 @@
-@import "tailwindcss/utilities.css";
+@import "tailwindcss/utilities.css" source(none);
 @source "./Companion.svelte";
+@source not inline("hidden");
 
 @plugin "daisyui" {
   themes: false;

@@ -27,6 +27,24 @@ test("fixture has complete media states, accessible overlays, and no duplicate i
   await expect.poll(() => page.evaluate(() => window.__companionFixture?.revoked() ?? 0)).toBeGreaterThan(1);
 });
 
+test("relationship card uses the semantic base surface in both themes", async ({ page }) => {
+  await page.goto("/");
+  const root = page.getByTestId("companion-root");
+  const avatar = page.getByRole("button", { name: "查看 Companion 关系资料" });
+  await avatar.click();
+  const card = page.getByRole("dialog", { name: "小灯的关系资料" });
+  await expect(card).toBeVisible();
+  await expect.poll(() => card.evaluate((node) => getComputedStyle(node).backgroundColor)).toBe("rgb(255, 250, 243)");
+  await page.getByRole("button", { name: "关闭关系资料", exact: true }).click();
+  await expect(card).toHaveCount(0);
+
+  await page.evaluate(() => window.__companionFixture?.setTheme("dark"));
+  await expect(root).toHaveAttribute("data-theme", "night-voyage");
+  await avatar.click();
+  await expect(card).toBeVisible();
+  await expect.poll(() => card.evaluate((node) => getComputedStyle(node).backgroundColor)).toBe("rgb(16, 24, 39)");
+});
+
 test("Pixel 7a geometry keeps composer and relationship overlay usable", async ({ page }) => {
   await page.goto("/?theme=dark");
   await page.evaluate(() => document.fonts.ready);

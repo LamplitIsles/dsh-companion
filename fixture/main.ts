@@ -4,9 +4,10 @@ import CompanionBridge from "../src/client/CompanionBridge.svelte";
 import type { CompanionBridgeProps } from "../src/client/companion-bridge.js";
 import { companionStyles } from "../src/client/theme.js";
 import daisyStyles from "../src/client/daisy.css?inline";
+import tailwindStyles from "../src/client/tailwind.css?inline";
 import type { CompanionProjection } from "../src/projection.js";
 
-const fixtureDaisyStyles = daisyStyles.replace(/:root:has\(input\.theme-controller\[value=[^)]+\]:checked\),?/gu, "").replace(/:root\b/gu, ":scope").replace(/\[data-theme=["']?(sticker-messenger|night-voyage)["']?\]/gu, ":scope[data-theme=$1]");
+const fixtureDaisyStyles = `${daisyStyles}\n${tailwindStyles}`.replace(/:root:has\(input\.theme-controller\[value=[^)]+\]:checked\),?/gu, "").replace(/:root\b/gu, ":scope").replace(/\[data-theme=["']?(sticker-messenger|night-voyage)["']?\]/gu, ":scope[data-theme=$1]");
 const style = document.createElement("style"); style.textContent = `@font-face{font-family:'Companion Noto Sans SC';src:url('/fonts/NotoSansSC-Companion.woff2') format('woff2');font-weight:100 900;font-display:block}@scope (#dsh-companion){${fixtureDaisyStyles}}${companionStyles.replace('ui-rounded, "SF Pro Rounded", system-ui, sans-serif', '"Companion Noto Sans SC", ui-rounded, "SF Pro Rounded", system-ui, sans-serif')}`; document.head.appendChild(style);
 const svgDocument = "<svg xmlns='http://www.w3.org/2000/svg' width='640' height='420' viewBox='0 0 640 420'><rect width='640' height='420' rx='34' fill='#ffc857'/><circle cx='180' cy='190' r='86' fill='#f26d85'/><circle cx='460' cy='190' r='86' fill='#76c9bc'/></svg>";
 const svg = `data:image/svg+xml,${encodeURIComponent(svgDocument)}`;

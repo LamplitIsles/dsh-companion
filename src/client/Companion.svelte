@@ -355,15 +355,15 @@
       <header class="companion-header">
         <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-session-toggle" aria-label={sidebarOpen ? "收起对话列表" : "展开对话列表"} aria-controls="companion-session-list" aria-expanded={sidebarOpen} on:click={() => sidebarOpen = !sidebarOpen}><span aria-hidden="true">☰</span></button>
         <div bind:this={detailAnchor} class="companion-avatar-anchor">
-          <button class="cmp-avatar cmp-avatar-placeholder rounded-full companion-avatar" aria-label="查看 Companion 关系资料" aria-expanded={detailOpen} on:click={toggleDetail}>
-            <div class="companion-avatar-crop rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div>
+          <button class="cmp-avatar cmp-avatar-placeholder cmp:rounded-full companion-avatar" aria-label="查看 Companion 关系资料" aria-expanded={detailOpen} on:click={toggleDetail}>
+            <div class="companion-avatar-crop cmp:rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div>
           </button>
           {#if detailOpen}
             <div bind:this={detailPopover} id="companion-detail-popover" popover="auto" class="cmp-card companion-detail-card" role="dialog" aria-label={`${identity.companionName}的关系资料`} style={`--relationship-art: url("${relationshipBackground}")`} on:toggle={onDetailToggle}>
               <div class="companion-detail-art" aria-hidden="true"></div>
               <div class="cmp-card-body">
                 <div class="companion-detail-head">
-                  <div class="cmp-avatar cmp-avatar-placeholder rounded-full companion-detail-avatar"><div class="companion-avatar-crop rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt={identity.companionName} />{:else}<span aria-hidden="true">✦</span>{/if}</div></div>
+                  <div class="cmp-avatar cmp-avatar-placeholder cmp:rounded-full companion-detail-avatar"><div class="companion-avatar-crop cmp:rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt={identity.companionName} />{:else}<span aria-hidden="true">✦</span>{/if}</div></div>
                   <div><h2 id="companion-detail-title">{identity.companionName}</h2><span class="cmp-badge cmp-badge-soft cmp-badge-secondary companion-mood-chip">{identity.moodLabel}</span></div>
                   <button class="cmp-btn cmp-btn-ghost cmp-btn-circle cmp-btn-sm companion-detail-close" aria-label="关闭关系资料" on:click={() => closeDetail()}>×</button>
                 </div>
@@ -406,8 +406,8 @@
           {#each projection.items as item (item.projectionKey ?? item.id)}
             {#if item.kind === "text"}
               <article class="cmp-chat companion-row" class:cmp-chat-start={item.side === "incoming"} class:cmp-chat-end={item.side === "outgoing"} class:outgoing={item.side === "outgoing"} class:incoming={item.side === "incoming"} data-testid={`message-${item.id}`}>
-                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder rounded-full message-avatar">
-                  <div class="companion-avatar-crop rounded-full">{#if item.side === "incoming" && identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else if item.side === "outgoing" && identity.userAvatar}<img src={identity.userAvatar} alt="" />{:else}<span aria-hidden="true">{item.side === "incoming" ? "✦" : "你"}</span>{/if}</div>
+                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder cmp:rounded-full message-avatar">
+                  <div class="companion-avatar-crop cmp:rounded-full">{#if item.side === "incoming" && identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else if item.side === "outgoing" && identity.userAvatar}<img src={identity.userAvatar} alt="" />{:else}<span aria-hidden="true">{item.side === "incoming" ? "✦" : "你"}</span>{/if}</div>
                 </div>
                 <div class="companion-message-stack">
                   <div class="cmp-chat-bubble companion-bubble" class:cmp-skeleton={item.pending && !item.text}><Markdown text={item.text} /></div>
@@ -416,7 +416,7 @@
               </article>
             {:else if item.kind === "image"}
               <article class="cmp-chat cmp-chat-start companion-row incoming" data-testid={`image-${item.id}`}>
-                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder rounded-full message-avatar"><div class="companion-avatar-crop rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div></div>
+                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder cmp:rounded-full message-avatar"><div class="companion-avatar-crop cmp:rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div></div>
                 <div class="cmp-chat-bubble companion-media">
                   {#if item.state === "running" || item.state === "loading"}<div class="cmp-skeleton" style="height:260px"></div><div style="padding:12px">正在画一张图…</div>
                   {:else if imageUrls[item.id]}<button class="companion-media-button" aria-label={"查看大图：" + item.alt} on:click={() => showLightbox(item)}><img src={imageUrls[item.id]} alt={item.alt} /></button>
@@ -426,7 +426,7 @@
               </article>
             {:else if item.kind === "voice"}
               <article class="cmp-chat cmp-chat-start companion-row incoming" data-testid={`voice-${item.id}`}>
-                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder rounded-full message-avatar"><div class="companion-avatar-crop rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div></div>
+                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder cmp:rounded-full message-avatar"><div class="companion-avatar-crop cmp:rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div></div>
                 <div class="cmp-chat-bubble companion-bubble companion-voice" class:is-playing={voiceState(item.id).playing}>
                   {#if voiceUrls[item.id]}
                     <audio class="companion-audio" preload="none" src={voiceUrls[item.id]} aria-hidden="true" tabindex="-1" on:loadedmetadata={(event) => onVoiceLoaded(item.id, event)} on:timeupdate={(event) => onVoiceTime(item.id, event)} on:play={() => onVoicePlay(item.id)} on:pause={() => onVoicePause(item.id)} on:ended={() => onVoiceEnded(item.id)} on:error={() => voiceErrors = { ...voiceErrors, [item.id]: "语音暂时无法播放，文字稿仍可查看。" }}></audio>

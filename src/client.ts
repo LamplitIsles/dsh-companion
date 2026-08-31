@@ -10,6 +10,7 @@ import { CompanionSettingsCard } from "./client/CompanionSettingsCard.js";
 import { decodeClientSettings } from "./client/settings.js";
 import { companionStyles } from "./client/theme.js";
 import daisyStyles from "./client/daisy.css?inline";
+import tailwindStyles from "./client/tailwind.css?inline";
 import settingsCardStyles from "./client/CompanionSettingsCard.module.css?inline";
 
 export const name = "dsh-companion" as const;
@@ -25,7 +26,7 @@ export function installStyles(ctx: ClientContext): () => void {
   if (existing) return () => undefined;
   const element = document.createElement("style");
   element.id = id;
-  element.textContent = `${daisyStyles}\n${companionStyles}`;
+  element.textContent = `${daisyStyles}\n${tailwindStyles}\n${companionStyles}`;
   document.head.appendChild(element);
   const dispose = () => element.remove();
   if (typeof ctx.effect === "function") ctx.effect(() => dispose, "dsh-companion: styles");
