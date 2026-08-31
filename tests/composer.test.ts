@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createComposerState, findComposerCommand, reduceComposer, shouldSubmitEnter } from "../src/client/composer.js";
-import { queueCompanionPrompt, submitCompanionInput } from "../src/client/admission.js";
+import { isCompanionPromptRejectedError, isCompanionTransportAmbiguousError, queueCompanionPrompt, submitCompanionInput } from "../src/client/admission.js";
 import { changedSettingsPayload, mergeCleanSettingsDraft, relationshipControlsWritable } from "../src/client/settings.js";
 import { companionSessionOpenPlan } from "../src/client/session-opening.js";
 
@@ -49,6 +49,24 @@ describe("Companion admission", () => {
 
   it("surfaces rejection so the Svelte caller retains the draft", async () => {
     await expect(queueCompanionPrompt({ prompt: async () => ({ ok: false, error: { message: "rejected" } }) }, [{ type: "text", text: "保留我" }])).rejects.toThrow("rejected");
+  });
+
+  it("keeps the runtime internal code and treats it as transport-ambiguous", async () => {
+    const error = await queueCompanionPrompt({
+      prompt: async () => ({ ok: false, error: { code: "internal", message: "carrier unavailable", details: {} } }),
+    }, [{ type: "text", text: "等待确认" }]).catch((value: unknown) => value);
+    expect(error).toMatchObject({ name: "CompanionTransportAmbiguousError", code: "internal" });
+    expect(isCompanionTransportAmbiguousError(error)).toBe(true);
+    expect(isCompanionPromptRejectedError(error)).toBe(false);
+  });
+
+  it("preserves an explicit Host admission code as an immediate rejection", async () => {
+    const error = await queueCompanionPrompt({
+      prompt: async () => ({ ok: false, error: { code: "attachment-error", message: "bad image" } }),
+    }, [{ type: "text", text: "拒绝我" }]).catch((value: unknown) => value);
+    expect(error).toMatchObject({ name: "CompanionPromptRejectedError", code: "attachment-error" });
+    expect(isCompanionPromptRejectedError(error)).toBe(true);
+    expect(isCompanionTransportAmbiguousError(error)).toBe(false);
   });
 
   it("routes exact /compact input through the session command channel", async () => {

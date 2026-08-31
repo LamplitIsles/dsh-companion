@@ -122,9 +122,17 @@ describe("chat projection", () => {
     }));
 
     const rejectedSend = projectConversation({
-      promptError: { op: "prompt", error: { message: "host-send-rejected" } },
+      promptError: { op: "send", error: { code: "attachment-error", message: "host-send-rejected", details: { reason: "fixture" } } },
     });
+    expect(rejectedSend.promptErrorOp).toBe("send");
+    expect(rejectedSend.promptErrorCode).toBe("attachment-error");
     expect(rejectedSend.items).toContainEqual(expect.objectContaining({ text: "host-send-rejected" }));
+
+    const carrierFailure = projectConversation({
+      promptError: { op: "send", error: { code: "internal", message: "carrier unavailable", details: {} } },
+    });
+    expect(carrierFailure.promptErrorOp).toBe("send");
+    expect(carrierFailure.promptErrorCode).toBe("internal");
   });
 
   it("uses the live connection observable even while a Session snapshot remains mounted", () => {

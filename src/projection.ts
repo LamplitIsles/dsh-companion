@@ -84,6 +84,8 @@ export interface CompanionProjection {
   promptErrorKey?: string;
   /** Original prompt operation, when the runtime provides it. */
   promptErrorOp?: string;
+  /** Public prompt error code, retained so admission failures can be distinguished from carrier internals. */
+  promptErrorCode?: string;
   lastAgentError?: string;
 }
 
@@ -313,6 +315,7 @@ export function projectConversation(snapshot: unknown, connected = true, continu
   const promptError = asRecord(root.promptError);
   const promptErrorKey = promptError ? stableValueKey(root.promptError) : undefined;
   const error = asRecord(promptError?.error);
+  const promptErrorCode = typeof error?.code === "string" ? error.code : undefined;
   const promptErrorNotice = promptError?.op === "stop"
     ? "暂时无法停止当前回复，请重试。"
     : typeof error?.message === "string"
@@ -340,6 +343,7 @@ export function projectConversation(snapshot: unknown, connected = true, continu
     ...(promptErrorAnnouncement ? { promptError: promptErrorAnnouncement } : {}),
     ...(promptErrorKey ? { promptErrorKey } : {}),
     ...(typeof promptError?.op === "string" ? { promptErrorOp: promptError.op } : {}),
+    ...(promptErrorCode ? { promptErrorCode } : {}),
     ...(lastError ? { lastAgentError: lastError } : {}),
   };
 }

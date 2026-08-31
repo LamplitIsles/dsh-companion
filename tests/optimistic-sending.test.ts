@@ -48,9 +48,11 @@ describe("optimistic sending batches", () => {
     expect(refreshed).toMatchObject({ decision: "reject", reason: "authoritative-absence" });
   });
 
-  it("recognizes a new explicit prompt rejection", () => {
+  it("recognizes a new explicit send rejection while leaving stop errors alone", () => {
     const batch = createSendingBatch({ text: "会失败", images: [], projection: base({ promptErrorKey: "old" }) });
-    expect(observeSendingBatch(base({ promptErrorKey: "new", promptErrorOp: "prompt", promptError: "失败" }), batch)).toMatchObject({ decision: "reject", reason: "prompt-rejection" });
+    expect(observeSendingBatch(base({ promptErrorKey: "new", promptErrorOp: "send", promptError: "失败" }), batch)).toMatchObject({ decision: "reject", reason: "prompt-rejection" });
+    expect(observeSendingBatch(base({ promptErrorKey: "internal", promptErrorOp: "send", promptErrorCode: "internal", promptError: "连接中断" }), batch).decision).toBe("keep");
+    expect(observeSendingBatch(base({ promptErrorKey: "other", promptErrorOp: "prompt", promptError: "旧投影" }), batch).decision).toBe("keep");
     expect(observeSendingBatch(base({ promptErrorKey: "stop", promptErrorOp: "stop", promptError: "停止失败" }), batch).decision).toBe("keep");
   });
 

@@ -15,6 +15,7 @@ export interface SendingBatch {
   baselineIds: ReadonlySet<string>;
   baselinePromptError?: string;
   baselinePromptErrorKey?: string;
+  baselinePromptErrorCode?: string;
   admission: "sending" | "accepted" | "transport-ambiguous";
   sawReconnect: boolean;
   lastStatus?: CompanionProjection["status"];
@@ -53,6 +54,7 @@ export function createSendingBatch(input: SendingBatchInput): SendingBatch {
     baselineIds: new Set(input.projection.items.map((item) => item.id)),
     ...(input.projection.promptError === undefined ? {} : { baselinePromptError: input.projection.promptError }),
     ...(input.projection.promptErrorKey === undefined ? {} : { baselinePromptErrorKey: input.projection.promptErrorKey }),
+    ...(input.projection.promptErrorCode === undefined ? {} : { baselinePromptErrorCode: input.projection.promptErrorCode }),
     admission: "sending",
     sawReconnect: false,
     lastStatus: input.projection.status,
@@ -135,15 +137,18 @@ export function matchesDurableSendingBatch(projection: CompanionProjection, batc
 }
 
 function hasNewPromptRejection(projection: CompanionProjection, batch: SendingBatch): boolean {
+  // Session folds carrier exceptions into a public `internal` prompt error.
+  // That result is ambiguous even though its operation is still `send`.
+  if (projection.promptErrorCode === "internal") return false;
   const currentKey = projection.promptErrorKey;
   const changed = currentKey !== undefined
     ? currentKey !== batch.baselinePromptErrorKey
-    : projection.promptError !== undefined && projection.promptError !== batch.baselinePromptError;
+    : (projection.promptError !== undefined && projection.promptError !== batch.baselinePromptError)
+      || projection.promptErrorCode !== batch.baselinePromptErrorCode;
   if (!changed) return false;
-  // A missing operation is treated as a prompt result for fixture/test
-  // projections that expose only the public error text. The runtime marks
-  // stop failures explicitly and those must never roll a sending batch back.
-  return projection.promptErrorOp === undefined || projection.promptErrorOp === "prompt";
+  // The Session runtime projects ordinary admission failures as op:"send".
+  // Stop failures share the same error slot but must never roll a batch back.
+  return projection.promptErrorOp === "send";
 }
 
 /**

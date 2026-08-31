@@ -9,7 +9,7 @@ import type { CompanionProjection } from "../src/projection.js";
 import type { TimelineItem } from "../src/projection.js";
 import type { CompanionContinuityView } from "../src/client/companion-bridge.js";
 import type { CompanionImageDraft } from "../src/client/image-drafts.js";
-import { CompanionPromptRejectedError } from "../src/client/admission.js";
+import { CompanionPromptRejectedError, queueCompanionPrompt } from "../src/client/admission.js";
 import type { CompactionLifecycleState, ContextPressureProjection } from "../src/continuity.js";
 import type { ImageAttachmentLimits } from "@deepseek-ai/dsh-attachment";
 
@@ -48,7 +48,9 @@ let revokedImageUrls = 0;
 let stopCalls = 0;
 let sendCalls = 0;
 let sendSequence = 0;
+let promptErrorSequence = 0;
 let deferredSends = false;
+let internalSendFailure = false;
 let pendingSends: Array<{
   text: string;
   images: readonly CompanionImageDraft[];
@@ -70,6 +72,14 @@ const fixtureProps: CompanionBridgeProps = {
   actions: { send: async (text: string, images: readonly CompanionImageDraft[]) => {
     sendCalls += 1;
     lastSend = { text, images };
+    if (internalSendFailure) {
+      internalSendFailure = false;
+      propsStore.update((current) => ({ ...current, projection: { ...current.projection!, status: "reconnecting", promptError: "fixture carrier unavailable", promptErrorKey: `fixture-internal-error-${++promptErrorSequence}`, promptErrorOp: "send", promptErrorCode: "internal" } }));
+      await queueCompanionPrompt({
+        prompt: async () => ({ ok: false, error: { code: "internal", message: "fixture carrier unavailable", details: {} } }),
+      }, [{ type: "text", text }]);
+      return;
+    }
     if (!deferredSends) {
       appendDurableSend(text, images);
       return;
@@ -151,13 +161,12 @@ declare global {
       setRunning(running: boolean): void;
       finishImageGeneration(): void;
       deferSend(): void;
-      immediateSend(): void;
       resolveSend(): void;
-      acceptSend(): void;
       rejectSend(message?: string): void;
       transportFail(message?: string): void;
+      internalFail(): void;
+      sendError(message?: string): void;
       confirmSend(): void;
-      echoLastSend(): void;
       refreshAuthoritative(): void;
       switchSession(sessionId: string): void;
       setCapacity(value: ContextPressureProjection | undefined): void;
@@ -195,13 +204,15 @@ window.__companionFixture = {
   setRunning(running) { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, running } })); },
   finishImageGeneration() { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, items: current.projection!.items.filter((item) => item.id !== "imagegen:demo:loading") } })); },
   deferSend() { deferredSends = true; },
-  immediateSend() { deferredSends = false; },
   resolveSend() { settlePendingSend("resolve"); },
-  acceptSend() { settlePendingSend("resolve"); },
   rejectSend(message = "host-send-rejected") { settlePendingSend("reject", message); },
   transportFail(message = "transport-failed") { settlePendingSend("transport", message); },
+  internalFail() { internalSendFailure = true; },
+  sendError(message = "host-send-rejected") {
+    propsStore.update((current) => ({ ...current, projection: { ...current.projection!, promptError: message, promptErrorKey: `fixture-send-error-${++promptErrorSequence}`, promptErrorOp: "send", promptErrorCode: "attachment-error" } }));
+    pendingSends.shift()?.resolve();
+  },
   confirmSend() { confirmLastSend(); },
-  echoLastSend() { confirmLastSend(); },
   refreshAuthoritative() { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, status: "ready", openState: "open" } })); },
   switchSession(sessionId) { switchFixtureSession(sessionId); },
   setCapacity(value) { propsStore.update((current) => ({ ...current, continuity: { ...current.continuity, contextPressure: value } })); },

@@ -124,9 +124,11 @@
   let imageDraftSessionId: string | undefined;
   let submitting = false;
   let optimisticBatch: SendingBatch | undefined;
+  let deferredPreviewReleases: CompanionImageDraft[] = [];
+  let handledSendErrorKey: string | undefined;
+  let suppressNextSendError = false;
   let displayedProjection: CompanionProjection = projection;
   let submissionToken = 0;
-  let settlingBatchToken = 0;
   let imagePickerPointer: { id: number; startedAt: number } | undefined;
   let suppressImagePickerClick = false;
 
@@ -139,12 +141,17 @@
   $: syncContinuityStatus(latestContinuityLifecycle);
   $: if (!contextCapacity && contextMeterOpen) closeContextMeter(false);
   $: syncWaitingState(typingVisible, `${sessions.find((session) => session.selected)?.id ?? "none"}:${latestSettledReplyKey(projection)}`);
-  $: displayedProjection = mergeSendingBatch(projection, optimisticBatch && optimisticBatch.sessionId === sessionId ? optimisticBatch : undefined);
+  $: if (handledSendErrorKey !== undefined && projection.promptErrorOp !== "send") handledSendErrorKey = undefined;
+  $: if (suppressNextSendError && projection.promptErrorOp === "send") {
+    handledSendErrorKey = promptErrorSignature(projection);
+    suppressNextSendError = false;
+  }
+  $: displayedProjection = mergeSendingBatch(displayProjection(projection), optimisticBatch && optimisticBatch.sessionId === sessionId ? optimisticBatch : undefined);
   $: if (projection) observeSendingProjection(projection);
   $: if (displayedProjection) void reconcileProjection(displayedProjection);
   $: if (sessionId !== imageDraftSessionId) {
     if (optimisticBatch && optimisticBatch.sessionId !== sessionId) {
-      releaseImageDrafts(optimisticBatch.images);
+      releaseBatchImages(optimisticBatch.images);
       optimisticBatch = undefined;
       syncDisplayedProjection();
       submissionToken += 1;
@@ -161,8 +168,40 @@
     return submitting || Boolean(optimisticBatch && optimisticBatch.sessionId === sessionId);
   }
 
+  function promptErrorSignature(value: CompanionProjection): string | undefined {
+    return value.promptErrorKey ?? value.promptError;
+  }
+
+  function displayProjection(value: CompanionProjection): CompanionProjection {
+    if (value.promptErrorOp !== "send" || handledSendErrorKey === undefined || promptErrorSignature(value) !== handledSendErrorKey) return value;
+    const { promptError: _promptError, promptErrorKey: _promptErrorKey, promptErrorOp: _promptErrorOp, promptErrorCode: _promptErrorCode, ...rest } = value;
+    return { ...rest, items: value.items.filter((item) => item.id !== "prompt-error") };
+  }
+
   function syncDisplayedProjection(): void {
-    displayedProjection = mergeSendingBatch(projection, optimisticBatch && optimisticBatch.sessionId === sessionId ? optimisticBatch : undefined);
+    displayedProjection = mergeSendingBatch(displayProjection(projection), optimisticBatch && optimisticBatch.sessionId === sessionId ? optimisticBatch : undefined);
+  }
+
+  function releaseDeferredPreviewReleases(): void {
+    if (deferredPreviewReleases.length === 0) return;
+    const drafts = deferredPreviewReleases;
+    deferredPreviewReleases = [];
+    releaseImageDrafts(drafts);
+  }
+
+  function releaseBatchImages(images: readonly CompanionImageDraft[]): void {
+    const protectedPreview = lightboxUrl && lightbox?.previewUrl === lightboxUrl ? lightboxUrl : undefined;
+    const deferred = protectedPreview ? images.filter((draft) => draft.previewUrl === protectedPreview) : [];
+    const releasable = deferred.length ? images.filter((draft) => draft.previewUrl !== protectedPreview) : images;
+    if (deferred.length) deferredPreviewReleases = [...deferredPreviewReleases, ...deferred];
+    if (releasable.length) void tick().then(() => releaseImageDrafts(releasable));
+  }
+
+  function rememberHandledSendError(value: CompanionProjection): void {
+    if (value.promptErrorOp !== "send") return;
+    const signature = promptErrorSignature(value);
+    if (signature !== undefined) handledSendErrorKey = signature;
+    else suppressNextSendError = true;
   }
 
   function latestSettledReplyKey(value: CompanionProjection): string {
@@ -184,11 +223,11 @@
       }
       return;
     }
+    if (observation.decision === "reject" && observation.reason === "prompt-rejection") rememberHandledSendError(value);
     optimisticBatch = undefined;
     syncDisplayedProjection();
     submissionToken += 1;
     submitting = false;
-    const token = ++settlingBatchToken;
     if (observation.decision === "reject") {
       // A batch can only be rejected while its original Session is active;
       // never restore its drafts into a different Session's composer.
@@ -201,9 +240,7 @@
     }
     // Keep local preview URLs alive through the render that removes the
     // overlay. The next tick is the replacement boundary for ownership.
-    void tick().then(() => {
-      if (token === settlingBatchToken) releaseImageDrafts(batch.images);
-    });
+    releaseBatchImages(batch.images);
   }
 
   function readDesktopSidebarPreference(): boolean {
@@ -507,6 +544,7 @@
     const restoreText = composer.draft;
     const text = restoreText.trim();
     if ((!text && imageDrafts.length === 0) || composer.composing || isComposerLocked()) return;
+    suppressNextSendError = false;
     const submittedDrafts = [...imageDrafts];
     const batch = text === "/compact"
       ? undefined
@@ -534,6 +572,8 @@
       const explicitRejection = isCompanionPromptRejectedError(error)
         || (error instanceof Error && error.message === "compact-with-images");
       if (explicitRejection) {
+        rememberHandledSendError(projection);
+        if (projection.promptErrorOp !== "send") suppressNextSendError = true;
         optimisticBatch = undefined;
         syncDisplayedProjection();
         submissionToken += 1;
@@ -704,6 +744,7 @@
     lightbox = undefined;
     lightboxUrl = "";
     lightboxReturnFocus = undefined;
+    releaseDeferredPreviewReleases();
     if (target) target.focus();
     if (!fromHistory && hadHistory) closeHistory();
   }
@@ -743,6 +784,7 @@
   onDestroy(() => {
     if (timelineRevealFrame) cancelAnimationFrame(timelineRevealFrame);
     if (optimisticBatch) releaseImageDrafts(optimisticBatch.images);
+    releaseDeferredPreviewReleases();
     releaseImageDrafts(imageDrafts);
     clearWaitingTimers();
     clearContinuityStatusTimer();
