@@ -1,6 +1,11 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, tick } from "svelte";
+  import LoaderCircle from "lucide-svelte/icons/loader-circle";
+  import MessageSquareText from "lucide-svelte/icons/message-square-text";
   import PanelsTopLeft from "lucide-svelte/icons/panels-top-left";
+  import Pause from "lucide-svelte/icons/pause";
+  import Play from "lucide-svelte/icons/play";
+  import RotateCcw from "lucide-svelte/icons/rotate-ccw";
   import Square from "lucide-svelte/icons/square";
   import type { CompanionProjection, TimelineImage, TimelineVoice } from "../projection.js";
   import { createComposerState, reduceComposer, shouldSubmitEnter } from "./composer.js";
@@ -48,6 +53,7 @@
   const dispatch = createEventDispatcher<{ advanced: void; recovery: void }>();
   const LONG_WAIT_DELAY_MS = 12_000;
   const LONG_WAIT_ROTATION_MS = 9_000;
+  const VOICE_WAVEFORM_BAR_COUNT = 28;
   const LONG_WAIT_MESSAGES = [
     "我还在认真想，陪我再等一小会儿呀",
     "正在把想说的话轻轻理好……",
@@ -68,7 +74,7 @@
   let voiceUrls: Record<string, string> = {};
   let voiceErrors: Record<string, string> = {};
   let voicePreparing: Record<string, boolean> = {};
-  let voicePlayback: Record<string, { current: number; duration: number; playing: boolean; ended: boolean }> = {};
+  let voicePlayback: Record<string, { current: number; duration: number; playing: boolean }> = {};
   let imageUrls: Record<string, string> = {};
   let imageErrors: Record<string, string> = {};
   let imageSources: Record<string, string> = {};
@@ -191,17 +197,18 @@
   async function prepareVoice(item: TimelineVoice): Promise<void> {
     if (!actions.prepareVoice || voiceUrls[item.id] || voicePreparing[item.id]) return;
     voicePreparing = { ...voicePreparing, [item.id]: true };
+    const nextErrors = { ...voiceErrors }; delete nextErrors[item.id]; voiceErrors = nextErrors;
     try { voiceUrls = { ...voiceUrls, [item.id]: await actions.prepareVoice(item.text) }; }
-    catch { voiceErrors = { ...voiceErrors, [item.id]: "语音暂时无法播放，文字稿仍可查看。" }; }
+    catch { voiceErrors = { ...voiceErrors, [item.id]: "语音暂时无法播放，文字内容仍可查看。" }; }
     finally { const next = { ...voicePreparing }; delete next[item.id]; voicePreparing = next; }
   }
 
-  function updateVoicePlayback(id: string, patch: Partial<{ current: number; duration: number; playing: boolean; ended: boolean }>): void {
-    voicePlayback = { ...voicePlayback, [id]: { current: 0, duration: 0, playing: false, ended: false, ...voicePlayback[id], ...patch } };
+  function updateVoicePlayback(id: string, patch: Partial<{ current: number; duration: number; playing: boolean }>): void {
+    voicePlayback = { ...voicePlayback, [id]: { current: 0, duration: 0, playing: false, ...voicePlayback[id], ...patch } };
   }
 
-  function voiceState(id: string): { current: number; duration: number; playing: boolean; ended: boolean } {
-    return voicePlayback[id] ?? { current: 0, duration: 0, playing: false, ended: false };
+  function voiceState(id: string): { current: number; duration: number; playing: boolean } {
+    return voicePlayback[id] ?? { current: 0, duration: 0, playing: false };
   }
 
   function formatDuration(value: number): string {
@@ -210,8 +217,27 @@
     return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   }
 
+  function voiceProgress(id: string): number {
+    const state = voiceState(id);
+    return state.duration > 0 ? Math.min(1, Math.max(0, state.current / state.duration)) : 0;
+  }
+
+  function voiceWaveform(id: string): number[] {
+    let seed = 2166136261;
+    for (const character of id) seed = Math.imul(seed ^ character.codePointAt(0)!, 16777619);
+    return Array.from({ length: VOICE_WAVEFORM_BAR_COUNT }, (_, index) => {
+      seed = Math.imul(seed ^ index, 2246822519);
+      return 28 + (Math.abs(seed) % 69);
+    });
+  }
+
   function audioFor(control: Element): HTMLAudioElement | undefined {
     return control.closest(".companion-voice")?.querySelector<HTMLAudioElement>("audio") ?? undefined;
+  }
+
+  function failVoice(id: string): void {
+    const nextUrls = { ...voiceUrls }; delete nextUrls[id]; voiceUrls = nextUrls;
+    voiceErrors = { ...voiceErrors, [id]: "语音暂时无法播放，文字内容仍可查看。" };
   }
 
   async function toggleVoice(item: TimelineVoice, control: Element): Promise<void> {
@@ -226,7 +252,7 @@
       if (audio.paused) await audio.play();
       else audio.pause();
     } catch {
-      voiceErrors = { ...voiceErrors, [item.id]: "语音暂时无法播放，文字稿仍可查看。" };
+      failVoice(item.id);
     }
   }
 
@@ -235,12 +261,12 @@
     const value = Number((event.currentTarget as HTMLInputElement).value);
     if (!audio || !Number.isFinite(value)) return;
     audio.currentTime = value;
-    updateVoicePlayback(id, { current: value, ended: false });
+    updateVoicePlayback(id, { current: value });
   }
 
-  function onVoicePlay(id: string): void { updateVoicePlayback(id, { playing: true, ended: false }); }
+  function onVoicePlay(id: string): void { updateVoicePlayback(id, { playing: true }); }
   function onVoicePause(id: string): void { updateVoicePlayback(id, { playing: false }); }
-  function onVoiceEnded(id: string): void { updateVoicePlayback(id, { playing: false, ended: true }); }
+  function onVoiceEnded(id: string): void { updateVoicePlayback(id, { playing: false }); }
   function onVoiceLoaded(id: string, event: Event): void {
     const audio = event.target as HTMLAudioElement;
     updateVoicePlayback(id, { duration: Number.isFinite(audio.duration) ? audio.duration : 0, current: audio.currentTime });
@@ -490,17 +516,32 @@
             {:else if item.kind === "voice"}
               <article class="cmp-chat cmp-chat-start companion-row incoming" data-testid={`voice-${item.id}`}>
                 <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder cmp:rounded-full message-avatar"><div class="companion-avatar-crop cmp:rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div></div>
-                <div class="cmp-chat-bubble companion-bubble companion-voice" class:is-playing={voiceState(item.id).playing}>
+                <div class="cmp-chat-bubble companion-bubble companion-voice" role="region" aria-label="语音播放器">
                   {#if voiceUrls[item.id]}
-                    <audio class="companion-audio" preload="none" src={voiceUrls[item.id]} aria-hidden="true" tabindex="-1" on:loadedmetadata={(event) => onVoiceLoaded(item.id, event)} on:timeupdate={(event) => onVoiceTime(item.id, event)} on:play={() => onVoicePlay(item.id)} on:pause={() => onVoicePause(item.id)} on:ended={() => onVoiceEnded(item.id)} on:error={() => voiceErrors = { ...voiceErrors, [item.id]: "语音暂时无法播放，文字稿仍可查看。" }}></audio>
-                    <button class="cmp-btn cmp-btn-primary cmp-btn-sm companion-voice-control" aria-label={voiceState(item.id).playing ? "暂停语音" : "播放语音"} on:click={(event) => void toggleVoice(item, event.currentTarget)}>{voiceState(item.id).playing ? "暂停" : "播放"}</button>
-                    <div class="companion-voice-progress">
-                      <input class="cmp-range cmp-range-sm" type="range" min="0" max={voiceState(item.id).duration || 0} step="0.1" value={voiceState(item.id).current} disabled={!voiceState(item.id).duration} aria-label="语音进度" on:input={(event) => seekVoice(event, item.id)} />
-                      <span aria-live="off">{formatDuration(voiceState(item.id).current)} / {formatDuration(voiceState(item.id).duration)}</span>
+                    <audio class="companion-audio" preload="none" src={voiceUrls[item.id]} aria-hidden="true" tabindex="-1" on:loadedmetadata={(event) => onVoiceLoaded(item.id, event)} on:timeupdate={(event) => onVoiceTime(item.id, event)} on:play={() => onVoicePlay(item.id)} on:pause={() => onVoicePause(item.id)} on:ended={() => onVoiceEnded(item.id)} on:error={() => failVoice(item.id)}></audio>
+                    <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-voice-control" aria-label={voiceState(item.id).playing ? "暂停语音" : "播放语音"} on:click={(event) => void toggleVoice(item, event.currentTarget)}>
+                      {#if voiceState(item.id).playing}<Pause size={18} fill="currentColor" aria-hidden="true" />{:else}<Play size={18} fill="currentColor" aria-hidden="true" />{/if}
+                    </button>
+                    <div class="companion-voice-player">
+                      <div class="companion-voice-waveform">
+                        {#each voiceWaveform(item.id) as height, index}<span class:played={(index + 1) / VOICE_WAVEFORM_BAR_COUNT <= voiceProgress(item.id)} style={`--voice-bar:${height}%`} aria-hidden="true"></span>{/each}
+                        <input class="companion-voice-seek" type="range" min="0" max={voiceState(item.id).duration || 0} step="0.1" value={voiceState(item.id).current} disabled={!voiceState(item.id).duration} aria-label="语音进度" aria-valuetext={`${formatDuration(voiceState(item.id).current)} / ${formatDuration(voiceState(item.id).duration)}`} on:input={(event) => seekVoice(event, item.id)} />
+                      </div>
+                      <div class="companion-voice-meta"><span role="timer" aria-live="off">{formatDuration(voiceState(item.id).current)} / {formatDuration(voiceState(item.id).duration)}</span>{#if voiceErrors[item.id]}<span role="alert">播放失败</span>{/if}</div>
                     </div>
-                    <span class="companion-voice-state" role="status">{voiceState(item.id).playing ? "播放中" : voiceState(item.id).ended ? "已播放" : "可播放"}</span>
-                  {:else}<button class="cmp-btn cmp-btn-primary cmp-btn-sm" on:click={(event) => void toggleVoice(item, event.currentTarget)} disabled={!actions.prepareVoice || voicePreparing[item.id]}>{voicePreparing[item.id] ? "准备中…" : voiceErrors[item.id] ? "重试播放" : "播放语音"}</button>{/if}
-                  <details open={Boolean(voiceErrors[item.id])}><summary>文字稿</summary><p>{item.text}</p></details>
+                  {:else}
+                    <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-voice-control" aria-label={voicePreparing[item.id] ? "正在准备语音" : voiceErrors[item.id] ? "重试语音" : "播放语音"} on:click={(event) => void toggleVoice(item, event.currentTarget)} disabled={!actions.prepareVoice || voicePreparing[item.id]}>
+                      {#if voicePreparing[item.id]}<LoaderCircle class="companion-spin" size={18} aria-hidden="true" />{:else if voiceErrors[item.id]}<RotateCcw size={18} aria-hidden="true" />{:else}<Play size={18} fill="currentColor" aria-hidden="true" />{/if}
+                    </button>
+                    <div class="companion-voice-player">
+                      <div class="companion-voice-waveform">{#each voiceWaveform(item.id) as height}<span style={`--voice-bar:${height}%`} aria-hidden="true"></span>{/each}</div>
+                      <div class="companion-voice-meta">{#if voicePreparing[item.id]}<span role="status">准备中</span>{:else if voiceErrors[item.id]}<span role="alert">播放失败</span>{:else}<span>0:00</span>{/if}</div>
+                    </div>
+                  {/if}
+                  <details class="companion-transcript" open={Boolean(voiceErrors[item.id])}>
+                    <summary><MessageSquareText size={14} aria-hidden="true" /><span>转文字</span></summary>
+                    <p>{item.text}</p>
+                  </details>
                 </div>
               </article>
             {:else}
@@ -565,5 +606,5 @@
 <style>
   .companion-sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
   .companion-avatar-crop { background:color-mix(in srgb, var(--color-primary) 20%, var(--color-base-200)); color:var(--color-primary); font-weight:700; }
-  @media (max-width: 520px) { .companion-timeline { padding-bottom:8px; } .companion-composer { padding-inline:9px; } .companion-voice { min-width:0; flex-wrap:wrap; } .companion-voice audio { max-width:180px; } }
+  @media (max-width: 520px) { .companion-timeline { padding-bottom:8px; } .companion-composer { padding-inline:9px; } .companion-voice { min-width:0; } }
 </style>

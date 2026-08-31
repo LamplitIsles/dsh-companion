@@ -6,7 +6,16 @@ test("fixture has complete media states, accessible overlays, and no duplicate i
   await expect(page.getByTestId("companion-root")).toHaveAttribute("data-theme", "sticker-messenger");
   await expect(page.locator(".companion-header")).not.toContainText("把平凡日子折成星星");
   await expect(page.getByRole("button", { name: /今晚的海/ })).toBeVisible();
-  await expect(page.getByTestId("voice-voice:demo:1:abc").getByText("文字稿")).toBeVisible();
+  const voice = page.getByTestId("voice-voice:demo:1:abc");
+  await expect(voice.getByRole("region", { name: "语音播放器" })).toBeVisible();
+  const playVoice = voice.getByRole("button", { name: "播放语音" });
+  await expect(playVoice.locator("svg")).toHaveCount(1);
+  await expect.poll(() => playVoice.evaluate((node) => getComputedStyle(node).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
+  await expect(voice.locator(".companion-voice-waveform")).toBeVisible();
+  await expect(voice.getByRole("slider", { name: "语音进度" })).toBeAttached();
+  await expect(voice.getByRole("timer")).toContainText("0:00");
+  await expect(voice.getByText("转文字")).toBeVisible();
+  await expect(page.getByTestId("voice-voice:demo:failed").getByRole("button", { name: "重试语音" }).locator("svg")).toHaveCount(1);
   const avatar = page.getByRole("button", { name: "查看 Companion 关系资料" });
   await avatar.focus();
   await avatar.click();
@@ -156,6 +165,7 @@ test("drawer uses one checkbox state across desktop and Pixel-sized layouts", as
     await expect.poll(() => page.locator(".companion-sidebar-overlay").evaluate((node) => getComputedStyle(node).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
     await page.locator(".companion-sidebar-overlay").click({ position: { x: 390, y: 120 } });
     await expect(toggle).not.toBeChecked();
+    await expect.poll(() => headerToggle.evaluate((node) => getComputedStyle(node).getPropertyValue("-webkit-tap-highlight-color"))).toBe("rgba(0, 0, 0, 0)");
   } else {
     await expect(toggle).toBeChecked();
     await headerToggle.click();
