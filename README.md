@@ -32,6 +32,8 @@ Typing `/compact` as the complete Companion input invokes DSH's Session command 
 
 Messages sent during a reply use DSH's durable FIFO queue and remain separate turns. With an empty draft, the composer action stops the current reply without clearing queued messages; DSH resumes those messages in order after cancellation settles.
 
+DSH continues to stream and persist model output internally, while Companion shows assistant text only after its message is finalized. The typing bubble gains a slowly rotating, non-repeating companion note after a 12-second wait; stopping or completing the reply clears that transient timer state.
+
 The Companion deliberately does not include a Workspace picker, session list/new-chat flow, model or preset controls, permissions/approvals, reasoning, Trajectory, generic Tool cards, prompt-injection inspection, file upload, voice input, notifications, or multi-contact UI.
 
 ## Configuration and recovery

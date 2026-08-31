@@ -16,7 +16,6 @@ export interface TimelineText {
   kind: "text";
   side: MessageSide;
   text: string;
-  streaming?: boolean;
   pending?: boolean;
   failed?: boolean;
   time?: number;
@@ -232,10 +231,11 @@ export function projectConversation(snapshot: unknown, connected = true): Compan
       continue;
     }
     if (isAssistantNode(node)) {
+      if (!isFinalized(node)) continue;
       const text = assistantText(node);
-      const passage = parseTtsPassage(text, isFinalized(node));
+      const passage = parseTtsPassage(text, true);
       const visibleText = passage ? `${text.slice(0, passage.start)}${text.slice(passage.end)}`.trim() : text;
-      if (visibleText) items.push({ id, kind: "text", side: "incoming", text: visibleText, streaming: !isFinalized(node), time });
+      if (visibleText) items.push({ id, kind: "text", side: "incoming", text: visibleText, time });
       items.push(...assistantMedia(node, id, time));
       if (passage) items.push({ id: ttsProjectionId(id, passage), kind: "voice", side: "incoming", text: passage.text, status: "preparing", time });
       continue;
@@ -253,12 +253,6 @@ export function projectConversation(snapshot: unknown, connected = true): Compan
       const projectionId = image.attachment ? imageGenProjectionId(image.id, image.attachment.attachmentId) : `imagegen:${image.id}`;
       items.push({ id: projectionId, projectionKey: `imagegen:${image.id}`, kind: "image", side: "incoming", state: image.state, attachment: image.attachment, alt: image.alt, error: image.error, time });
     }
-  }
-  const partial = asRecord(root.partial);
-  if (partial) {
-    const id = nodeId(partial, `partial-${partial.turn ?? "reply"}`);
-    const text = assistantText(partial);
-    if (text) items.push({ id, kind: "text", side: "incoming", text, streaming: true });
   }
   const pending = pendingNodes(snapshot);
   for (let index = 0; index < pending.length; index += 1) {
@@ -310,7 +304,7 @@ function dedupeTimeline(items: readonly TimelineItem[]): TimelineItem[] {
 
 function timelineRank(item: TimelineItem): number {
   if (item.kind === "image") return item.state === "ready" || item.state === "failed" ? 2 : 1;
-  if (item.kind === "text") return item.pending || item.streaming ? 1 : 2;
+  if (item.kind === "text") return item.pending ? 1 : 2;
   return 2;
 }
 

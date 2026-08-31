@@ -46,6 +46,15 @@
   export let sessionReady = true;
 
   const dispatch = createEventDispatcher<{ advanced: void; recovery: void }>();
+  const LONG_WAIT_DELAY_MS = 12_000;
+  const LONG_WAIT_ROTATION_MS = 9_000;
+  const LONG_WAIT_MESSAGES = [
+    "我还在认真想，陪我再等一小会儿呀",
+    "正在把想说的话轻轻理好……",
+    "再给我一点点时间，很快就回来",
+    "这次想认真一点，不让你久等",
+    "我在这里，只是还在想怎么说更好",
+  ] as const;
   let composer = createComposerState();
   let stopping = false;
   let timeline: HTMLDivElement;
@@ -73,10 +82,48 @@
   let overlayHistory = false;
   let lightboxCloseFromHistory = false;
   let statusText = "";
+  let waitingCopy = "";
+  let waitingCycle = "";
+  let waitingDelayTimer: ReturnType<typeof setTimeout> | undefined;
+  let waitingRotationTimer: ReturnType<typeof setInterval> | undefined;
   const intensityLabels: Record<number, string> = { 1: "轻微", 2: "明显", 3: "强烈" };
 
   $: statusText = projection.status === "working" ? "正在陪你想" : projection.status === "reconnecting" ? "正在重新连接" : "已准备好";
+  $: syncWaitingState(projection.running, `${sessions.find((session) => session.selected)?.id ?? "none"}:${latestSettledReplyKey(projection)}`);
   $: if (projection) void reconcileProjection(projection);
+
+  function latestSettledReplyKey(value: CompanionProjection): string {
+    for (let index = value.items.length - 1; index >= 0; index -= 1) {
+      const item = value.items[index]!;
+      if (item.side === "incoming" && (item.kind !== "image" || item.state === "ready" || item.state === "failed")) return item.projectionKey ?? item.id;
+    }
+    return "empty";
+  }
+
+  function clearWaitingTimers(): void {
+    if (waitingDelayTimer !== undefined) clearTimeout(waitingDelayTimer);
+    if (waitingRotationTimer !== undefined) clearInterval(waitingRotationTimer);
+    waitingDelayTimer = undefined;
+    waitingRotationTimer = undefined;
+  }
+
+  function rotateWaitingCopy(): void {
+    const choices = LONG_WAIT_MESSAGES.filter((message) => message !== waitingCopy);
+    waitingCopy = choices[Math.floor(Math.random() * choices.length)] ?? LONG_WAIT_MESSAGES[0];
+  }
+
+  function syncWaitingState(running: boolean, replyKey: string): void {
+    const nextCycle = running ? replyKey : "";
+    if (nextCycle === waitingCycle) return;
+    waitingCycle = nextCycle;
+    clearWaitingTimers();
+    waitingCopy = "";
+    if (!running) return;
+    waitingDelayTimer = setTimeout(() => {
+      rotateWaitingCopy();
+      waitingRotationTimer = setInterval(rotateWaitingCopy, LONG_WAIT_ROTATION_MS);
+    }, LONG_WAIT_DELAY_MS);
+  }
 
   async function reconcileProjection(value: CompanionProjection): Promise<void> {
     await tick();
@@ -351,6 +398,7 @@
 
   onDestroy(() => {
     if (timelineRevealFrame) cancelAnimationFrame(timelineRevealFrame);
+    clearWaitingTimers();
     for (const audio of document.querySelectorAll<HTMLAudioElement>("#dsh-companion .companion-voice audio")) audio.pause();
     for (const url of Object.values(imageUrls)) if (url.startsWith("blob:")) URL.revokeObjectURL(url);
   });
@@ -460,7 +508,7 @@
               <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder cmp:rounded-full message-avatar">
                 <div class="companion-avatar-crop cmp:rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div>
               </div>
-              <div class="cmp-chat-bubble companion-bubble"><span class="cmp-loading cmp-loading-dots cmp-loading-sm" aria-hidden="true"></span></div>
+              <div class="cmp-chat-bubble companion-bubble companion-typing-bubble"><span class="cmp-loading cmp-loading-dots cmp-loading-sm" aria-hidden="true"></span>{#if waitingCopy}<span class="companion-waiting-copy">{waitingCopy}</span>{/if}</div>
             </article>
           {/if}
           {#if !wasNearBottom && projection.items.length > 0}<button class="cmp-btn cmp-btn-primary cmp-btn-sm" style="position:sticky;bottom:10px;left:50%;transform:translateX(-50%)" on:click={() => timeline.scrollTop = timeline.scrollHeight}>有新消息 ↓</button>{/if}

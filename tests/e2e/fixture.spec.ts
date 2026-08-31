@@ -86,6 +86,21 @@ test("shows an incoming typing indicator only while the companion is running", a
   await expect(indicator).toHaveCount(0);
 });
 
+test("warms up a long typing wait with rotating non-repeating companion copy", async ({ page }) => {
+  await page.clock.install();
+  await page.goto("/");
+  const indicator = page.getByTestId("companion-typing-indicator");
+  await expect(indicator.locator(".companion-waiting-copy")).toHaveCount(0);
+  await page.clock.fastForward(12_000);
+  const copy = indicator.locator(".companion-waiting-copy");
+  await expect(copy).toBeVisible();
+  const first = await copy.textContent();
+  await page.clock.fastForward(9_000);
+  await expect(copy).not.toHaveText(first ?? "");
+  await page.evaluate(() => window.__companionFixture?.setRunning(false));
+  await expect(indicator).toHaveCount(0);
+});
+
 test("uses the composer action to stop a running reply without hiding queued messages", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("还有一件小事想告诉你")).toBeVisible();

@@ -69,7 +69,7 @@ describe("chat projection", () => {
     ]);
   });
 
-  it("hides reasoning blocks from finalized and streaming assistant messages", () => {
+  it("shows only finalized assistant text and always hides reasoning", () => {
     const finalized = projectConversation({ nodes: [{
       kind: "assistant",
       seq: 1,
@@ -86,12 +86,11 @@ describe("chat projection", () => {
       ],
     } });
 
-    expect(finalized.items).toEqual([
-      expect.objectContaining({ kind: "text", text: "我在这里。", streaming: false }),
-    ]);
-    expect(streaming.items).toEqual([
-      expect.objectContaining({ kind: "text", text: "慢慢说", streaming: true }),
-    ]);
+    const streamingNode = projectConversation({ nodes: [{ kind: "assistant", seq: 3, streaming: true, blocks: [{ kind: "text", text: "还没说完" }] }] });
+
+    expect(finalized.items).toEqual([expect.objectContaining({ kind: "text", text: "我在这里。" })]);
+    expect(streaming.items).toEqual([]);
+    expect(streamingNode.items).toEqual([]);
   });
 
   it("keeps a queue row only until its keyed steering node arrives", () => {
