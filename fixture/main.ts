@@ -51,6 +51,7 @@ let sendSequence = 0;
 let promptErrorSequence = 0;
 let deferredSends = false;
 let internalSendFailure = false;
+let healthyInternalSendFailure = false;
 let pendingSends: Array<{
   text: string;
   images: readonly CompanionImageDraft[];
@@ -72,9 +73,11 @@ const fixtureProps: CompanionBridgeProps = {
   actions: { send: async (text: string, images: readonly CompanionImageDraft[]) => {
     sendCalls += 1;
     lastSend = { text, images };
-    if (internalSendFailure) {
+    if (internalSendFailure || healthyInternalSendFailure) {
+      const reconnecting = internalSendFailure;
       internalSendFailure = false;
-      propsStore.update((current) => ({ ...current, projection: { ...current.projection!, status: "reconnecting", promptError: "fixture carrier unavailable", promptErrorKey: `fixture-internal-error-${++promptErrorSequence}`, promptErrorOp: "send", promptErrorCode: "internal" } }));
+      healthyInternalSendFailure = false;
+      propsStore.update((current) => ({ ...current, projection: { ...current.projection!, status: reconnecting ? "reconnecting" : current.projection!.status, promptError: "fixture carrier unavailable", promptErrorKey: `fixture-internal-error-${++promptErrorSequence}`, promptErrorOp: "send", promptErrorCode: "internal" } }));
       await queueCompanionPrompt({
         prompt: async () => ({ ok: false, error: { code: "internal", message: "fixture carrier unavailable", details: {} } }),
       }, [{ type: "text", text }]);
@@ -165,6 +168,7 @@ declare global {
       rejectSend(message?: string): void;
       transportFail(message?: string): void;
       internalFail(): void;
+      internalHealthyFail(): void;
       sendError(message?: string): void;
       confirmSend(): void;
       refreshAuthoritative(): void;
@@ -208,6 +212,7 @@ window.__companionFixture = {
   rejectSend(message = "host-send-rejected") { settlePendingSend("reject", message); },
   transportFail(message = "transport-failed") { settlePendingSend("transport", message); },
   internalFail() { internalSendFailure = true; },
+  internalHealthyFail() { healthyInternalSendFailure = true; },
   sendError(message = "host-send-rejected") {
     propsStore.update((current) => ({ ...current, projection: { ...current.projection!, promptError: message, promptErrorKey: `fixture-send-error-${++promptErrorSequence}`, promptErrorOp: "send", promptErrorCode: "attachment-error" } }));
     pendingSends.shift()?.resolve();

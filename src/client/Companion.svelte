@@ -215,6 +215,12 @@
   function observeSendingProjection(value: CompanionProjection): void {
     const batch = optimisticBatch;
     if (!batch || batch.sessionId !== sessionId) return;
+    // The Session runtime folds a carrier exception into an `internal`
+    // prompt-error projection. Keep the batch transport-ambiguous, but hide
+    // this error's Host failure/retry notice just like an explicit rejection.
+    // The stable projection signature keeps later, unrelated send errors
+    // visible.
+    if (value.promptErrorOp === "send" && value.promptErrorCode === "internal") rememberHandledSendError(value);
     const observation = observeSendingBatch(value, batch);
     if (observation.decision === "keep") {
       if (observation.batch.sawReconnect !== batch.sawReconnect || observation.batch.lastStatus !== batch.lastStatus) {

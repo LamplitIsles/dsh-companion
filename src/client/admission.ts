@@ -46,12 +46,6 @@ export class CompanionTransportAmbiguousError extends Error {
   }
 }
 
-export function isCompanionTransportAmbiguousError(error: unknown): error is CompanionTransportAmbiguousError {
-  return error instanceof CompanionTransportAmbiguousError
-    || (typeof error === "object" && error !== null && (error as { admission?: unknown }).admission === "transport-ambiguous")
-    || (typeof error === "object" && error !== null && (error as { code?: unknown }).code === "internal");
-}
-
 function throwAdmissionError(error: CompanionAdmissionError | undefined, fallbackMessage: string): never {
   const code = typeof error?.code === "string" && error.code ? error.code : undefined;
   const message = error?.message || fallbackMessage;

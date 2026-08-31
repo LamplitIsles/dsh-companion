@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createComposerState, findComposerCommand, reduceComposer, shouldSubmitEnter } from "../src/client/composer.js";
-import { isCompanionPromptRejectedError, isCompanionTransportAmbiguousError, queueCompanionPrompt, submitCompanionInput } from "../src/client/admission.js";
+import { isCompanionPromptRejectedError, queueCompanionPrompt, submitCompanionInput } from "../src/client/admission.js";
 import { changedSettingsPayload, mergeCleanSettingsDraft, relationshipControlsWritable } from "../src/client/settings.js";
 import { companionSessionOpenPlan } from "../src/client/session-opening.js";
 
@@ -56,7 +56,6 @@ describe("Companion admission", () => {
       prompt: async () => ({ ok: false, error: { code: "internal", message: "carrier unavailable", details: {} } }),
     }, [{ type: "text", text: "等待确认" }]).catch((value: unknown) => value);
     expect(error).toMatchObject({ name: "CompanionTransportAmbiguousError", code: "internal" });
-    expect(isCompanionTransportAmbiguousError(error)).toBe(true);
     expect(isCompanionPromptRejectedError(error)).toBe(false);
   });
 
@@ -66,7 +65,6 @@ describe("Companion admission", () => {
     }, [{ type: "text", text: "拒绝我" }]).catch((value: unknown) => value);
     expect(error).toMatchObject({ name: "CompanionPromptRejectedError", code: "attachment-error" });
     expect(isCompanionPromptRejectedError(error)).toBe(true);
-    expect(isCompanionTransportAmbiguousError(error)).toBe(false);
   });
 
   it("routes exact /compact input through the session command channel", async () => {

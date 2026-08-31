@@ -208,6 +208,26 @@ test("hides a handled send projection error", async ({ page }) => {
   await expect(textarea).toHaveValue("投影失败");
 });
 
+test("hides a healthy-stream internal send failure without masking later errors", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => window.__companionFixture?.internalHealthyFail());
+  const textarea = page.getByRole("textbox", { name: "写消息" });
+  await textarea.fill("健康流内部失败");
+  await page.getByRole("button", { name: "发送消息" }).click();
+
+  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(1);
+  await expect(page.locator(".companion-presence")).not.toContainText("正在重新连接");
+  await expect(page.getByText("fixture carrier unavailable", { exact: true })).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText("可以重试");
+
+  await page.evaluate(() => window.__companionFixture?.setStatus("reconnecting"));
+  await page.evaluate(() => window.__companionFixture?.refreshAuthoritative());
+  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(0);
+
+  await page.evaluate(() => window.__companionFixture?.sendError("later-host-error"));
+  await expect(page.getByText("later-host-error", { exact: true })).toHaveCount(1);
+});
+
 test("restores rejected batches, keeps transport ambiguity, and clears old-session sends", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => window.__companionFixture?.deferSend());
