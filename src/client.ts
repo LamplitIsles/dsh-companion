@@ -10,6 +10,7 @@ import { CompanionSettingsCard } from "./client/CompanionSettingsCard.js";
 import { decodeClientSettings } from "./client/settings.js";
 import { companionStyles } from "./client/theme.js";
 import daisyStyles from "./client/daisy.css?inline";
+import settingsCardStyles from "./client/CompanionSettingsCard.module.css?inline";
 
 export const name = "dsh-companion" as const;
 export const inject = ["connection", "locale", "sessions", "settingsScope", "slots", "theme", "workspaces"] as const;
@@ -31,7 +32,22 @@ export function installStyles(ctx: ClientContext): () => void {
   return dispose;
 }
 
+export function installSettingsStyles(ctx: ClientContext): () => void {
+  const id = "dsh-companion-settings-styles";
+  const existing = document.getElementById(id);
+  if (existing) return () => undefined;
+  const element = document.createElement("style");
+  element.id = id;
+  element.dataset.pluginCss = "dsh-companion-settings";
+  element.textContent = settingsCardStyles;
+  document.head.appendChild(element);
+  const dispose = () => element.remove();
+  if (typeof ctx.effect === "function") ctx.effect(() => dispose, "dsh-companion: settings styles");
+  return dispose;
+}
+
 export function apply(ctx: ClientContext): void {
+  installSettingsStyles(ctx);
   const settings = ctx.settingsScope.bind({ namespace: SETTINGS_NAMESPACE, decode: decodeClientSettings });
   const connection = (ctx as unknown as { connection: { rpc: { call(channel: string, endpoint: string, payload: unknown, signal?: AbortSignal): Promise<{ ok: boolean; value?: unknown; error?: { message: string } }> } } }).connection;
   const configuredWorkspace = (): string => {

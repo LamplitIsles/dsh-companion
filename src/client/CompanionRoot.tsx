@@ -6,7 +6,7 @@ import Companion from "./Companion.svelte";
 import { affinityStage, MOOD_LABELS, selectCompanionSession } from "./relationship.js";
 import { projectConversation } from "../projection.js";
 import { TtsPreparationCache } from "./voice-cache.js";
-import { queueCompanionPrompt } from "./admission.js";
+import { submitCompanionInput } from "./admission.js";
 import { companionSessionOpenPlan } from "./session-opening.js";
 import type { ClientSettings } from "./settings.js";
 import { RPC_CHANNEL as TTS_CHANNEL, RPC_ENDPOINT as TTS_ENDPOINT } from "./tts-contract.js";
@@ -158,7 +158,7 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
     return {
       async send(text: string): Promise<void> {
         if (!session) throw new Error("session-unavailable");
-        await queueCompanionPrompt(session, text);
+        await submitCompanionInput(session, text);
       },
       async loadOlder(): Promise<void> { await session?.loadOlder(); },
       async attachmentUrl(attachment: unknown): Promise<string> { if (!session) throw new Error("session-unavailable"); return imageUrl(session, attachment); },

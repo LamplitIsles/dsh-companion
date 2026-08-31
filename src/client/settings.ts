@@ -73,3 +73,28 @@ export function settingsPayload(settings: ClientSettings): Record<string, unknow
     ...(settings.userAvatar ? { userAvatar: settings.userAvatar } : {}),
   };
 }
+
+function sameSettingValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+/** Keep staged fields while clean fields follow a replacement Host snapshot. */
+export function mergeCleanSettingsDraft(draft: ClientSettings, previous: ClientSettings, next: ClientSettings): ClientSettings {
+  const merged = { ...draft };
+  for (const key of Object.keys(settingsPayload(next)) as (keyof ClientSettings)[]) {
+    if (sameSettingValue(draft[key], previous[key])) (merged as Record<keyof ClientSettings, unknown>)[key] = next[key];
+  }
+  return merged;
+}
+
+/** Return only values that differ from the last Host-accepted baseline. */
+export function changedSettingsPayload(draft: ClientSettings, baseline: ClientSettings): Record<string, unknown> {
+  const draftPayload = settingsPayload(draft);
+  const baselinePayload = settingsPayload(baseline);
+  return Object.fromEntries(Object.entries(draftPayload).filter(([key, value]) => !sameSettingValue(value, baselinePayload[key])));
+}
+
+/** Compare a planned write with the latest Host-accepted field value. */
+export function settingValueAccepted(settings: ClientSettings | undefined, key: string, value: unknown): boolean {
+  return settings !== undefined && sameSettingValue((settingsPayload(settings) as Record<string, unknown>)[key], value);
+}

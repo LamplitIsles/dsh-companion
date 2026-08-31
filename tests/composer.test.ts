@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createComposerState, reduceComposer, shouldSubmitEnter } from "../src/client/composer.js";
-import { queueCompanionPrompt } from "../src/client/admission.js";
-import { relationshipControlsWritable } from "../src/client/settings.js";
+import { queueCompanionPrompt, submitCompanionInput } from "../src/client/admission.js";
+import { changedSettingsPayload, mergeCleanSettingsDraft, relationshipControlsWritable } from "../src/client/settings.js";
 import { companionSessionOpenPlan } from "../src/client/session-opening.js";
 
 describe("IME composer", () => {
@@ -22,6 +22,14 @@ it("keeps relationship recovery controls writable only for an idle writable sett
   expect(relationshipControlsWritable(false, true)).toBe(false);
 });
 
+it("retains staged settings while clean fields follow a refreshed Host baseline", () => {
+  const before = { workspaceId: "one", companionName: "Mio", userName: "Neil", preferredAddress: "你", defaultAffinity: 50 };
+  const draft = { ...before, companionName: "Mio!" };
+  const refreshed = { ...before, workspaceId: "two", userName: "N" };
+  expect(mergeCleanSettingsDraft(draft, before, refreshed)).toEqual({ ...refreshed, companionName: "Mio!" });
+  expect(changedSettingsPayload(draft, before)).toEqual({ companionName: "Mio!" });
+});
+
 describe("Companion admission", () => {
   it.each([false, true])("queues a text message while session running=%s", async (running) => {
     const calls: unknown[][] = [];
@@ -31,6 +39,35 @@ describe("Companion admission", () => {
 
   it("surfaces rejection so the Svelte caller retains the draft", async () => {
     await expect(queueCompanionPrompt({ prompt: async () => ({ ok: false, error: { message: "rejected" } }) }, "保留我")).rejects.toThrow("rejected");
+  });
+
+  it("routes exact /compact input through the session command channel", async () => {
+    const prompts: unknown[][] = [];
+    const commands: string[] = [];
+    await submitCompanionInput({
+      prompt: async (...args) => { prompts.push(args); return { ok: true }; },
+      command: async (line) => { commands.push(line); return { ok: true, value: { matched: true } }; },
+    }, "/compact");
+    expect(commands).toEqual(["/compact"]);
+    expect(prompts).toEqual([]);
+  });
+
+  it("keeps other slash-prefixed text on the ordinary prompt path", async () => {
+    const prompts: unknown[][] = [];
+    const commands: string[] = [];
+    await submitCompanionInput({
+      prompt: async (...args) => { prompts.push(args); return { ok: true }; },
+      command: async (line) => { commands.push(line); return { ok: true, value: { matched: true } }; },
+    }, "/不是命令");
+    expect(commands).toEqual([]);
+    expect(prompts).toEqual([[[{ type: "text", text: "/不是命令" }], "queue"]]);
+  });
+
+  it("surfaces an unavailable compact command so the draft is retained", async () => {
+    await expect(submitCompanionInput({
+      prompt: async () => ({ ok: true }),
+      command: async () => ({ ok: true, value: { matched: false } }),
+    }, "/compact")).rejects.toThrow("compact-command-unavailable");
   });
 });
 

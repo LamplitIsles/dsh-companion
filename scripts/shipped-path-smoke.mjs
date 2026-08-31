@@ -153,6 +153,8 @@ try {
   const browserFailures = observeBrowserFailures(page);
   await page.goto(`${runtime.baseUrl}/`, { waitUntil: "domcontentloaded" });
   if (await page.locator("#dsh-companion").count() !== 0) throw new Error("stock DSH root unexpectedly mounted Companion");
+  const settingsStyle = page.locator('style[data-plugin-css="dsh-companion-settings"]');
+  if (await settingsStyle.count() !== 1 || !(await settingsStyle.textContent())?.includes("--dsw-alias")) throw new Error("packed stock root did not inject the Companion settings CSS Module");
   // Avoid aborting the stock root's normal boot transport while switching documents.
   await page.waitForTimeout(500);
   await page.goto(`${runtime.baseUrl}/companion/`, { waitUntil: "domcontentloaded" });

@@ -28,6 +28,8 @@ The package is pinned to the deployed DSH `0.1.1-rc.2` contract family (Cordis `
 - `/` remains the stock DSH Web UI, including advanced navigation, ordinary Tool views, Kepos ImageGen's React view, and plugin settings.
 - `/companion/` selects the lower-priority Companion root. It shows one configured Workspace and one remembered/recent Session, human and assistant chat, allowlisted ImageGen images, and finalized Kepos TTS voice messages. A small **高级 DSH** link returns to `/` with a full-page navigation so the two compositions do not leak into one another.
 
+Typing `/compact` as the complete Companion input invokes DSH's Session command channel and keeps the continuity checkpoint invisible; other slash-prefixed text remains an ordinary message.
+
 The Companion deliberately does not include a Workspace picker, session list/new-chat flow, model or preset controls, permissions/approvals, reasoning, Trajectory, generic Tool cards, prompt-injection inspection, file upload, voice input, notifications, or multi-contact UI.
 
 ## Configuration and recovery
