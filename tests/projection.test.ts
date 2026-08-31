@@ -69,6 +69,31 @@ describe("chat projection", () => {
     ]);
   });
 
+  it("hides reasoning blocks from finalized and streaming assistant messages", () => {
+    const finalized = projectConversation({ nodes: [{
+      kind: "assistant",
+      seq: 1,
+      blocks: [
+        { kind: "reasoning", text: "先分析用户真正想问什么" },
+        { kind: "text", text: "我在这里。" },
+      ],
+    }] });
+    const streaming = projectConversation({ partial: {
+      turn: 2,
+      blocks: [
+        { kind: "reasoning", text: "继续在内部推理" },
+        { kind: "text", text: "慢慢说" },
+      ],
+    } });
+
+    expect(finalized.items).toEqual([
+      expect.objectContaining({ kind: "text", text: "我在这里。", streaming: false }),
+    ]);
+    expect(streaming.items).toEqual([
+      expect.objectContaining({ kind: "text", text: "慢慢说", streaming: true }),
+    ]);
+  });
+
   it("keeps a queue row only until its keyed steering node arrives", () => {
     const queued = { chat: { order: [], nodes: new Map() }, queue: [{ messageId: "queued-1", content: [{ type: "text", text: "补充一句" }] }] };
     const admitted = { chat: { order: ["steering-key"], nodes: new Map([["steering-key", { key: "steering-key", kind: "steering", visibility: "visible", data: { seq: 1, time: 1, messageId: "queued-1", content: [{ type: "text", text: "补充一句" }] } }]]) }, queue: queued.queue };

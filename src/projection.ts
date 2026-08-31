@@ -143,7 +143,14 @@ function isFinalized(node: Record<string, unknown>): boolean {
 function assistantText(node: Record<string, unknown>): string {
   const direct = textFromValue(node.text);
   if (direct !== undefined) return direct;
-  const parts = contentOf(node).map(textFromValue).filter((part): part is string => part !== undefined);
+  const parts = contentOf(node)
+    .map((block) => {
+      const record = asRecord(block);
+      if (!record) return undefined;
+      const blockKind = typeof record.kind === "string" ? record.kind : record.type;
+      return blockKind === "text" ? textFromValue(record) : undefined;
+    })
+    .filter((part): part is string => part !== undefined);
   return parts.join("");
 }
 
