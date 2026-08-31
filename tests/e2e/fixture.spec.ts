@@ -238,6 +238,8 @@ test("chat shell has rendered Markdown, viewport scrolling, sessions, rounded fo
       const style = getComputedStyle(bubble);
       const tail = getComputedStyle(bubble, "::before");
       return {
+        avatarTop: avatar.getBoundingClientRect().top,
+        bubbleTop: bubble.getBoundingClientRect().top,
         avatarWidth: avatar.getBoundingClientRect().width,
         avatarHeight: avatar.getBoundingClientRect().height,
         corners: [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomRightRadius, style.borderBottomLeftRadius],
@@ -249,6 +251,8 @@ test("chat shell has rendered Markdown, viewport scrolling, sessions, rounded fo
       outgoing: measure("history-2"),
     };
   });
+  expect(Math.abs(bubbles.incoming.avatarTop - bubbles.incoming.bubbleTop)).toBeLessThanOrEqual(1);
+  expect(Math.abs(bubbles.outgoing.avatarTop - bubbles.outgoing.bubbleTop)).toBeLessThanOrEqual(1);
   expect(bubbles.incoming.avatarWidth).toBe(40);
   expect(bubbles.incoming.avatarHeight).toBe(40);
   expect(bubbles.outgoing.avatarWidth).toBe(40);

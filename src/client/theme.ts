@@ -43,11 +43,11 @@ export const companionStyles = `
 #dsh-companion .companion-full-dsh:hover{opacity:1}
 #dsh-companion .companion-timeline{min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:28px clamp(16px,4vw,48px) 16px}
 #dsh-companion .companion-timeline:not(.timeline-ready){visibility:hidden}
-#dsh-companion .companion-row{display:grid;grid-template-columns:34px minmax(0,auto);align-items:end;justify-content:start;gap:9px;width:100%;margin:9px 0}
+#dsh-companion .companion-row{display:grid;grid-template-columns:34px minmax(0,auto);align-items:start;justify-content:start;gap:9px;width:100%;margin:9px 0}
 #dsh-companion .companion-row.outgoing{grid-template-columns:minmax(0,auto) 34px;justify-content:end}
 #dsh-companion .companion-row.outgoing .message-avatar{grid-column:2}
 #dsh-companion .companion-row.outgoing .companion-message-stack{grid-column:1;grid-row:1}
-#dsh-companion .message-avatar{width:34px;height:34px;font-size:.72rem}
+#dsh-companion .message-avatar{align-self:start;width:34px;height:34px;font-size:.72rem}
 #dsh-companion .companion-avatar-crop{display:grid;width:100%;height:100%;place-items:center;overflow:hidden}
 #dsh-companion .companion-avatar-crop img{display:block;width:100%;height:100%;object-fit:cover}
 #dsh-companion .companion-message-stack{max-width:min(76vw,680px)}
