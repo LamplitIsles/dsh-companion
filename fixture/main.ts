@@ -65,6 +65,7 @@ declare global {
       removeImage(): void;
       setTheme(theme: "light" | "dark"): void;
       setStatus(status: CompanionProjection["status"]): void;
+      setRunning(running: boolean): void;
       setIdentity(patch: Partial<CompanionBridgeProps["identity"]>): void;
       revoked(): number;
       rootIsStable(): boolean;
@@ -84,6 +85,7 @@ window.__companionFixture = {
   },
   setTheme(theme) { propsStore.update((current) => ({ ...current, scheme: theme })); },
   setStatus(status) { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, status } })); },
+  setRunning(running) { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, running } })); },
   setIdentity(patch) { propsStore.update((current) => ({ ...current, identity: { ...current.identity!, ...patch } })); },
   revoked: () => revokedImageUrls,
   rootIsStable: () => document.getElementById("dsh-companion") === mountedCompanionRoot,

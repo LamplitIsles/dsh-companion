@@ -444,6 +444,14 @@
               <div class="companion-recovery" role={item.tone === "error" ? "alert" : "status"}><p>{item.text}</p></div>
             {/if}
           {/each}
+          {#if projection.running}
+            <article class="cmp-chat cmp-chat-start companion-row incoming" data-testid="companion-typing-indicator" role="status" aria-label={`${identity.companionName}正在输入`}>
+              <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder cmp:rounded-full message-avatar">
+                <div class="companion-avatar-crop cmp:rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div>
+              </div>
+              <div class="cmp-chat-bubble companion-bubble"><span class="cmp-loading cmp-loading-dots cmp-loading-sm" aria-hidden="true"></span></div>
+            </article>
+          {/if}
           {#if !wasNearBottom && projection.items.length > 0}<button class="cmp-btn cmp-btn-primary cmp-btn-sm" style="position:sticky;bottom:10px;left:50%;transform:translateX(-50%)" on:click={() => timeline.scrollTop = timeline.scrollHeight}>有新消息 ↓</button>{/if}
           </div>
         </div>

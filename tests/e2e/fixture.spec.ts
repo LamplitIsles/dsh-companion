@@ -77,6 +77,15 @@ test("draft edits stay local to the composer", async ({ page }) => {
   expect(timing).toBeLessThan(50);
 });
 
+test("shows an incoming typing indicator only while the companion is running", async ({ page }) => {
+  await page.goto("/");
+  const indicator = page.getByTestId("companion-typing-indicator");
+  await expect(indicator).toBeVisible();
+  await expect(indicator).toHaveAccessibleName("小灯正在输入");
+  await page.evaluate(() => window.__companionFixture?.setRunning(false));
+  await expect(indicator).toHaveCount(0);
+});
+
 test("Svelte 5 bridge applies live identity and theme changes without remounting", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("companion-root")).toHaveAttribute("data-theme", "sticker-messenger");
