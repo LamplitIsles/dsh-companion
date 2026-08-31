@@ -1,4 +1,4 @@
 - insert:
     - id: dsh-companion
       name: "@lamplitisles/dsh-companion"
-      inject: [fs, settings, systemPrompt, tools, connection, workspaceRegistry, webServer]
+      inject: [fs, settings, systemPrompt, tools, connection, workspaceRegistry, llm, webServer]

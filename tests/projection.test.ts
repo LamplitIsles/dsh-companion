@@ -57,6 +57,18 @@ describe("chat projection", () => {
     expect(result.pendingCount).toBe(0);
   });
 
+  it("hides a compaction marker between visible user and assistant messages without reordering either", () => {
+    const result = projectConversation({ nodes: [
+      { kind: "user", seq: 1, time: 1, content: [{ type: "text", text: "我今天有点累" }] },
+      { kind: "compaction", seq: 2, time: 2, summary: "internal continuity checkpoint" },
+      { kind: "assistant", seq: 3, time: 3, blocks: [{ kind: "text", text: "那我们慢一点。" }] },
+    ] });
+    expect(result.items.map((item) => item.kind === "text" ? [item.side, item.text] : item.kind)).toEqual([
+      ["outgoing", "我今天有点累"],
+      ["incoming", "那我们慢一点。"],
+    ]);
+  });
+
   it("keeps a queue row only until its keyed steering node arrives", () => {
     const queued = { chat: { order: [], nodes: new Map() }, queue: [{ messageId: "queued-1", content: [{ type: "text", text: "补充一句" }] }] };
     const admitted = { chat: { order: ["steering-key"], nodes: new Map([["steering-key", { key: "steering-key", kind: "steering", visibility: "visible", data: { seq: 1, time: 1, messageId: "queued-1", content: [{ type: "text", text: "补充一句" }] } }]]) }, queue: queued.queue };

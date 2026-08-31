@@ -3,6 +3,7 @@ import { request as httpRequest, type IncomingMessage, type ServerResponse } fro
 import z from "@deepseek-ai/schemastery";
 import { defineTool, type ToolDefinition, type ToolRunContext } from "@deepseek-ai/dsh-tools";
 import type { RpcResult } from "@deepseek-ai/dsh-host-apiproxy/api";
+import type { GenerateOptions, LlmRuntime, StreamChunk } from "@deepseek-ai/dsh-llm";
 import {
   CompanionStateStore,
   type CompanionFileSystem,
@@ -17,6 +18,7 @@ import {
   formatCompanionPrompt,
   validateIdentitySettings,
 } from "./domain.js";
+import { rewriteCompanionCompactionRequest } from "./compaction.js";
 
 export const SETTINGS_NAMESPACE = "dsh-companion" as const;
 export const RPC_CHANNEL = "/dsh-companion" as const;
@@ -79,8 +81,10 @@ interface HostContextLike {
   tools: { register(definition: ToolDefinition): unknown };
   connection: { rpc: RpcLike };
   workspaceRegistry: WorkspaceRegistryLike;
+  llm: LlmRuntime;
   /** Required by this web plugin solely for the pinned static-server alias. */
   webServer: WebServerLike;
+  on(name: "llm/stream", listener: (options: GenerateOptions, next: () => AsyncIterable<StreamChunk>) => AsyncIterable<StreamChunk>, options: { global: true }): () => void;
 }
 
 export interface RelationshipView {
@@ -325,6 +329,11 @@ export class CompanionHostController {
     this.ctx.tools.register(moodTool(this));
     this.ctx.tools.register(affinityTool(this));
     this.ctx.tools.register(signatureTool(this));
+    this.disposers.push(this.ctx.on("llm/stream", (options, next) => {
+      const rewritten = rewriteCompanionCompactionRequest(options, this.configuredWorkspace()?.workspace.sessionIds);
+      if (rewritten !== options) options.messages = rewritten.messages;
+      return next();
+    }, { global: true }));
     this.disposers.push(this.ctx.connection.rpc.handle(RPC_CHANNEL, async (endpoint, payload, signal) => {
       const record = typeof payload === "object" && payload !== null ? payload as { workspaceId?: unknown; affinity?: unknown; revision?: unknown } : {};
       const requested = typeof record.workspaceId === "string" ? record.workspaceId : undefined;
@@ -363,7 +372,7 @@ export class CompanionHostController {
 }
 
 export const name = "dsh-companion" as const;
-export const inject = ["fs", "settings", "systemPrompt", "tools", "connection", "workspaceRegistry", "webServer"] as const;
+export const inject = ["fs", "settings", "systemPrompt", "tools", "connection", "workspaceRegistry", "llm", "webServer"] as const;
 
 export async function* apply(ctx: HostContextLike): AsyncGenerator<() => Promise<void>> {
   const settingsScope = ctx.settings.register<CompanionSettings>(SETTINGS_NAMESPACE, SettingsSchema, {

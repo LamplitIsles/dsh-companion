@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, rm, stat, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { createUserMessage, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import type { ToolRunContext } from "@deepseek-ai/dsh-tools";
 import { CompanionStateStore } from "../src/domain.js";
 import { CompanionHostController, RPC_CHANNEL, acceptedTurnKey, adjustAffinityForAcceptedTurn, apply } from "../src/host.js";
@@ -49,6 +50,8 @@ describe("Host accepted-turn relationship contract", () => {
       tools: { register: () => undefined },
       connection: { rpc: { handle: (_channel: string, handler: typeof rpcHandler) => { rpcHandler = handler; return () => undefined; } } },
       workspaceRegistry: { get: (id: string) => id === "workspace-a" ? { id, path: directory, sessionIds: [] } : undefined, list: () => [] },
+      llm: {},
+      on: () => () => undefined,
       webServer: { port: 1, register: () => () => undefined },
     };
     const host = new CompanionHostController(ctx as never, scope);
@@ -87,6 +90,8 @@ describe("Host accepted-turn relationship contract", () => {
       tools: { register: () => undefined },
       connection: { rpc: { handle: () => () => undefined } },
       workspaceRegistry: { get: (id: string) => id === "workspace-a" ? { id, path: directory, sessionIds: [] } : undefined, list: () => [] },
+      llm: {},
+      on: () => () => undefined,
       webServer: { port: 1, register: () => () => undefined },
     };
     const lifecycle = apply(ctx as never);
@@ -95,5 +100,64 @@ describe("Host accepted-turn relationship contract", () => {
     expect(prompt?.({ agent: { session: { header: { cwd: directory } } } })).toContain('signature="旧签名"');
     await loaded.value?.();
     await lifecycle.next();
+  });
+
+  it("registers a global compaction waterfall that reads live scope, delegates once, and disposes", async () => {
+    let configured = { workspaceId: "workspace-a", companionName: "Companion", userName: "你", preferredAddress: "你", defaultAffinity: 50 };
+    const workspace = { id: "workspace-a", path: "/test-workspace", sessionIds: ["session-a"] as string[] };
+    const scope = { get: () => configured, update: async () => undefined, watch: () => () => undefined };
+    let listener: ((options: GenerateOptions, next: () => AsyncIterable<StreamChunk>) => AsyncIterable<StreamChunk>) | undefined;
+    let listenerOptions: unknown;
+    let listenerDisposed = 0;
+    const ctx = {
+      fs: {},
+      settings: { register: () => scope },
+      systemPrompt: { context: () => () => undefined },
+      tools: { register: () => undefined },
+      connection: { rpc: { handle: () => () => undefined } },
+      workspaceRegistry: { get: (id: string) => id === workspace.id ? workspace : undefined, list: () => [workspace] },
+      llm: {},
+      on: (_name: string, callback: typeof listener, options: unknown) => { listener = callback; listenerOptions = options; return () => { listenerDisposed += 1; }; },
+      webServer: { port: 1, register: () => () => undefined },
+    };
+    const host = new CompanionHostController(ctx as never, scope);
+    host.register();
+    expect(listenerOptions).toEqual({ global: true });
+
+    const basicTail = createUserMessage({ content: [{ type: "text", text: "standard basic prompt" }], source: { kind: "plugin", plugin: "dsh-compaction-basic" } });
+    const prefix = createUserMessage({ content: [{ type: "text", text: "hello" }], source: { kind: "user" } });
+    const qualified: GenerateOptions = { provider: "fake", model: "fake", messages: [prefix, basicTail], sessionId: "session-a" as GenerateOptions["sessionId"], purpose: "compaction" };
+    const downstream = (options: GenerateOptions) => {
+      let calls = 0;
+      const stream = (async function* (): AsyncGenerator<StreamChunk> { yield { type: "finish", reason: { kind: "stop" } }; })();
+      const next = () => { calls += 1; return stream; };
+      return { result: listener!(options, next), calls: () => calls, stream };
+    };
+    const changed = downstream(qualified);
+    expect(changed.result).toBe(changed.stream);
+    expect(changed.calls()).toBe(1);
+    expect(qualified.messages[0]).toBe(prefix);
+    expect(qualified.messages.at(-1)).toMatchObject({ source: { kind: "plugin", plugin: "dsh-companion" } });
+
+    const malformed = { ...qualified, messages: [prefix, createUserMessage({ content: [{ type: "text", text: "unknown backend" }], source: { kind: "plugin", plugin: "different-backend" } })] };
+    let malformedNextCalls = 0;
+    expect(() => listener!(malformed, () => { malformedNextCalls += 1; return changed.stream; })).toThrow(/dsh-compaction-basic/i);
+    expect(malformedNextCalls).toBe(0);
+
+    configured = { ...configured, workspaceId: "" };
+    const disabled = { ...qualified, messages: [prefix, basicTail] };
+    const unchangedForSettings = downstream(disabled);
+    expect(unchangedForSettings.calls()).toBe(1);
+    expect(disabled.messages.at(-1)).toBe(basicTail);
+
+    configured = { ...configured, workspaceId: "workspace-a" };
+    workspace.sessionIds = [];
+    const missingMembership = { ...qualified, messages: [prefix, basicTail] };
+    const unchangedForMembership = downstream(missingMembership);
+    expect(unchangedForMembership.calls()).toBe(1);
+    expect(missingMembership.messages.at(-1)).toBe(basicTail);
+
+    await host.dispose();
+    expect(listenerDisposed).toBe(1);
   });
 });

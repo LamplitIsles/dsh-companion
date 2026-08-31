@@ -44,6 +44,8 @@ The configured Workspace is resolved by id and the live Session cwd. A missing i
 
 Mood, affinity, and signature are Host-owned state stored atomically under the configured Workspace at `.dsh/dsh-companion/state.json`. The Host validates and bounds every load and mutation. The Companion exposes only a read-only relationship RPC to the browser; the agent's narrow `companion_set_mood`, `companion_adjust_affinity`, and `companion_set_signature` Tools remain hidden from the chat timeline. Affinity movement is clamped to ±10 net per accepted turn, and the dynamic prompt context is bounded descriptive metadata—not instructions, permissions, or a score to maximize.
 
+For Sessions in that configured Workspace only, the package replaces DSH basic compaction's final instruction with its fixed companion continuity checkpoint. Other Sessions and LLM calls are unchanged. A request that is otherwise eligible but no longer has DSH basic compaction's expected final message fails visibly, rather than applying the companion prompt to an unknown backend; the runtime instruction is the single source of truth for its wording.
+
 The execution posture is fixed to `workspace-write` with escalation disabled. Operations requiring broader authority fail; no approval or permission picker is presented.
 
 ## Media dependencies
