@@ -169,6 +169,7 @@ declare global {
       transportFail(message?: string): void;
       internalFail(): void;
       internalHealthyFail(): void;
+      seedInternalPromptError(): void;
       sendError(message?: string): void;
       confirmSend(): void;
       refreshAuthoritative(): void;
@@ -213,6 +214,9 @@ window.__companionFixture = {
   transportFail(message = "transport-failed") { settlePendingSend("transport", message); },
   internalFail() { internalSendFailure = true; },
   internalHealthyFail() { healthyInternalSendFailure = true; },
+  seedInternalPromptError() {
+    propsStore.update((current) => ({ ...current, projection: { ...current.projection!, promptError: "fixture existing carrier error", promptErrorKey: `fixture-existing-internal-error-${++promptErrorSequence}`, promptErrorOp: "send", promptErrorCode: "internal" } }));
+  },
   sendError(message = "host-send-rejected") {
     propsStore.update((current) => ({ ...current, projection: { ...current.projection!, promptError: message, promptErrorKey: `fixture-send-error-${++promptErrorSequence}`, promptErrorOp: "send", promptErrorCode: "attachment-error" } }));
     pendingSends.shift()?.resolve();

@@ -136,16 +136,19 @@ export function matchesDurableSendingBatch(projection: CompanionProjection, batc
   return batch.images.every((draft, index) => imageMatches(images[index]!, draft));
 }
 
+export function hasNewPromptError(projection: CompanionProjection, batch: SendingBatch): boolean {
+  const currentKey = projection.promptErrorKey;
+  return currentKey !== undefined
+    ? currentKey !== batch.baselinePromptErrorKey
+    : (projection.promptError !== undefined && projection.promptError !== batch.baselinePromptError)
+      || projection.promptErrorCode !== batch.baselinePromptErrorCode;
+}
+
 function hasNewPromptRejection(projection: CompanionProjection, batch: SendingBatch): boolean {
   // Session folds carrier exceptions into a public `internal` prompt error.
   // That result is ambiguous even though its operation is still `send`.
   if (projection.promptErrorCode === "internal") return false;
-  const currentKey = projection.promptErrorKey;
-  const changed = currentKey !== undefined
-    ? currentKey !== batch.baselinePromptErrorKey
-    : (projection.promptError !== undefined && projection.promptError !== batch.baselinePromptError)
-      || projection.promptErrorCode !== batch.baselinePromptErrorCode;
-  if (!changed) return false;
+  if (!hasNewPromptError(projection, batch)) return false;
   // The Session runtime projects ordinary admission failures as op:"send".
   // Stop failures share the same error slot but must never roll a batch back.
   return projection.promptErrorOp === "send";

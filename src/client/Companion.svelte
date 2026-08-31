@@ -15,7 +15,7 @@
   import { isCompanionPromptRejectedError } from "./admission.js";
   import { createComposerState, findComposerCommand, reduceComposer, shouldSubmitEnter, type ComposerCommand } from "./composer.js";
   import { createImageDrafts, imageFilesFromClipboard, imageIntakeError, IMAGE_ACCEPT, releaseImageDrafts, type CompanionImageDraft } from "./image-drafts.js";
-  import { createSendingBatch, markSendingBatchAccepted, markSendingBatchTransportAmbiguous, mergeSendingBatch, observeSendingBatch, type SendingBatch } from "./optimistic-sending.js";
+  import { createSendingBatch, hasNewPromptError, markSendingBatchAccepted, markSendingBatchTransportAmbiguous, mergeSendingBatch, observeSendingBatch, type SendingBatch } from "./optimistic-sending.js";
   import { INTENSITY_LABELS } from "./relationship.js";
   import Markdown from "./Markdown.svelte";
   import relationshipBackground from "./assets/relationship-night-voyage.webp";
@@ -220,7 +220,7 @@
     // this error's Host failure/retry notice just like an explicit rejection.
     // The stable projection signature keeps later, unrelated send errors
     // visible.
-    if (value.promptErrorOp === "send" && value.promptErrorCode === "internal") rememberHandledSendError(value);
+    if (value.promptErrorOp === "send" && value.promptErrorCode === "internal" && hasNewPromptError(value, batch)) rememberHandledSendError(value);
     const observation = observeSendingBatch(value, batch);
     if (observation.decision === "keep") {
       if (observation.batch.sawReconnect !== batch.sawReconnect || observation.batch.lastStatus !== batch.lastStatus) {

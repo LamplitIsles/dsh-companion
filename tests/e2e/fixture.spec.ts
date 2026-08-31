@@ -228,6 +228,23 @@ test("hides a healthy-stream internal send failure without masking later errors"
   await expect(page.getByText("later-host-error", { exact: true })).toHaveCount(1);
 });
 
+test("keeps an existing internal send error visible when a batch begins", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => window.__companionFixture?.seedInternalPromptError());
+  await expect(page.getByText("fixture existing carrier error", { exact: true })).toHaveCount(1);
+
+  await page.evaluate(() => window.__companionFixture?.deferSend());
+  const textarea = page.getByRole("textbox", { name: "写消息" });
+  await textarea.fill("新消息");
+  await page.getByRole("button", { name: "发送消息" }).click();
+  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(1);
+  await expect(page.getByText("fixture existing carrier error", { exact: true })).toHaveCount(1);
+
+  await page.evaluate(() => window.__companionFixture?.confirmSend());
+  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(0);
+  await expect(page.getByText("fixture existing carrier error", { exact: true })).toHaveCount(1);
+});
+
 test("restores rejected batches, keeps transport ambiguity, and clears old-session sends", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => window.__companionFixture?.deferSend());
