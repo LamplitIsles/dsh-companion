@@ -1,5 +1,7 @@
 import type { CompanionProjection } from "../projection.js";
 import type { CompanionContinuitySnapshot, ContextPressureProjection } from "../continuity.js";
+import type { ImageAttachmentLimits } from "@deepseek-ai/dsh-attachment";
+import type { CompanionImageDraft } from "./image-drafts.js";
 
 export interface CompanionIdentityView {
   companionName: string;
@@ -16,7 +18,7 @@ export interface CompanionIdentityView {
   affinityStage?: string;
 }
 export interface CompanionActions {
-  send: (text: string) => Promise<void>;
+  send: (text: string, images: readonly CompanionImageDraft[]) => Promise<void>;
   stop?: () => Promise<void>;
   selectSession?: (sessionId: string) => Promise<void>;
   loadOlder?: () => Promise<void>;
@@ -46,6 +48,10 @@ export interface CompanionBridgeProps {
   sessions: CompanionSessionView[];
   workspaceReady: boolean;
   sessionReady: boolean;
+  /** Browser-only draft images must not cross an active Session switch. */
+  sessionId?: string;
+  /** Host-advertised image capability and intake limits; absent means unavailable. */
+  imageLimits?: ImageAttachmentLimits;
   continuity?: CompanionContinuityView;
   onAdvanced?: () => void;
   onRecovery?: () => void;

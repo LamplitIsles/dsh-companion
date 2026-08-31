@@ -1,16 +1,19 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
   import LoaderCircle from "lucide-svelte/icons/loader-circle";
+  import ImagePlus from "lucide-svelte/icons/image-plus";
   import MessageSquareText from "lucide-svelte/icons/message-square-text";
   import PanelsTopLeft from "lucide-svelte/icons/panels-top-left";
   import Pause from "lucide-svelte/icons/pause";
   import Play from "lucide-svelte/icons/play";
   import RotateCcw from "lucide-svelte/icons/rotate-ccw";
   import Square from "lucide-svelte/icons/square";
+  import X from "lucide-svelte/icons/x";
   import { COMPACTION_STATUS_DURATION_MS, formatTokenCount, resolveContextCapacity, type CompactionLifecycleState } from "../continuity.js";
   import type { CompanionProjection, TimelineImage, TimelineVoice } from "../projection.js";
   import type { CompanionContinuityView } from "./companion-bridge.js";
   import { createComposerState, findComposerCommand, reduceComposer, shouldSubmitEnter, type ComposerCommand } from "./composer.js";
+  import { createImageDrafts, imageFilesFromClipboard, imageIntakeError, IMAGE_ACCEPT, releaseImageDrafts, type CompanionImageDraft } from "./image-drafts.js";
   import { INTENSITY_LABELS } from "./relationship.js";
   import Markdown from "./Markdown.svelte";
   import relationshipBackground from "./assets/relationship-night-voyage.webp";
@@ -30,7 +33,7 @@
     affinityStage?: string;
   }
   export interface CompanionActions {
-    send: (text: string) => Promise<void>;
+    send: (text: string, images: readonly CompanionImageDraft[]) => Promise<void>;
     stop?: () => Promise<void>;
     selectSession?: (sessionId: string) => Promise<void>;
     loadOlder?: () => Promise<void>;
@@ -52,11 +55,14 @@
   export let sessions: CompanionSessionView[] = [];
   export let workspaceReady = true;
   export let sessionReady = true;
+  export let sessionId: string | undefined;
+  export let imageLimits: import("@deepseek-ai/dsh-attachment").ImageAttachmentLimits | undefined;
   export let continuity: CompanionContinuityView = {};
 
   const dispatch = createEventDispatcher<{ advanced: void; recovery: void }>();
   const LONG_WAIT_DELAY_MS = 12_000;
   const LONG_WAIT_ROTATION_MS = 9_000;
+  const PHOTO_LONG_PRESS_MS = 450;
   const VOICE_WAVEFORM_BAR_COUNT = 28;
   const DESKTOP_SIDEBAR_QUERY = "(min-width: 821px)";
   const DESKTOP_SIDEBAR_STORAGE_KEY = "dsh-companion:desktop-sidebar-open";
@@ -70,6 +76,8 @@
   ] as const;
   let composer = createComposerState();
   let composerInput: HTMLTextAreaElement;
+  let photoLibraryInput: HTMLInputElement;
+  let cameraInput: HTMLInputElement;
   let commandSuggestion: ComposerCommand | undefined;
   let stopping = false;
   let timeline: HTMLDivElement;
@@ -110,17 +118,27 @@
   let continuityStatus: CompactionLifecycleState | undefined;
   let continuityStatusKey = "";
   let continuityStatusTimer: ReturnType<typeof setTimeout> | undefined;
+  let imageDrafts: CompanionImageDraft[] = [];
+  let imageDraftSessionId: string | undefined;
+  let submitting = false;
+  let imagePickerPointer: { id: number; startedAt: number } | undefined;
+  let suppressImagePickerClick = false;
 
   $: statusText = projection.status === "working" ? "正在陪你想" : projection.status === "reconnecting" ? "正在重新连接" : "已准备好";
   $: imageGenerationRunning = projection.items.some((item) => item.kind === "image" && (item.state === "running" || item.state === "loading"));
   $: typingVisible = projection.running && !imageGenerationRunning;
-  $: commandSuggestion = findComposerCommand(composer.draft);
+  $: commandSuggestion = imageDrafts.length ? undefined : findComposerCommand(composer.draft);
   $: contextCapacity = resolveContextCapacity(continuity?.contextPressure);
   $: latestContinuityLifecycle = latestLifecycle(continuity?.lifecycle);
   $: syncContinuityStatus(latestContinuityLifecycle);
   $: if (!contextCapacity && contextMeterOpen) closeContextMeter(false);
   $: syncWaitingState(typingVisible, `${sessions.find((session) => session.selected)?.id ?? "none"}:${latestSettledReplyKey(projection)}`);
   $: if (projection) void reconcileProjection(projection);
+  $: if (sessionId !== imageDraftSessionId) {
+    releaseImageDrafts(imageDrafts);
+    imageDrafts = [];
+    imageDraftSessionId = sessionId;
+  }
 
   function latestSettledReplyKey(value: CompanionProjection): string {
     for (let index = value.items.length - 1; index >= 0; index -= 1) {
@@ -429,12 +447,19 @@
 
   function submit(): void {
     const text = composer.draft.trim();
-    if (!text || composer.composing) return;
+    if ((!text && imageDrafts.length === 0) || composer.composing || submitting) return;
+    const submittedDrafts = imageDrafts;
     composer = reduceComposer(composer, { type: "submit" });
-    void actions.send(text).catch(() => {
+    submitting = true;
+    void actions.send(text, submittedDrafts).then(() => {
+      releaseImageDrafts(submittedDrafts);
+      imageDrafts = imageDrafts.filter((draft) => !submittedDrafts.includes(draft));
+    }).catch((error: unknown) => {
       composer = { ...composer, draft: text };
-      liveAnnouncement = "消息发送失败，内容已保留，可以重试。";
-    });
+      liveAnnouncement = error instanceof Error && error.message === "compact-with-images"
+        ? "整理时请先移除图片。"
+        : "消息发送失败，内容已保留，可以重试。";
+    }).finally(() => { submitting = false; });
   }
 
   async function stop(): Promise<void> {
@@ -466,6 +491,47 @@
   function onInput(event: Event): void { setDraft((event.currentTarget as HTMLTextAreaElement).value); }
   function onCompositionEnd(event: CompositionEvent): void { composer = reduceComposer(composer, { type: "compositionend", value: (event.currentTarget as HTMLTextAreaElement).value }); }
   function onCompositionStart(): void { composer = reduceComposer(composer, { type: "compositionstart" }); }
+  function addImages(files: readonly File[]): void {
+    if (submitting) return;
+    const error = imageIntakeError(imageDrafts, files, imageLimits);
+    if (error) { liveAnnouncement = error; return; }
+    imageDrafts = [...imageDrafts, ...createImageDrafts(files)];
+  }
+  function onImageInput(event: Event): void {
+    const input = event.currentTarget as HTMLInputElement;
+    addImages(Array.from(input.files ?? []));
+    input.value = "";
+  }
+  function onPaste(event: ClipboardEvent): void {
+    const images = imageFilesFromClipboard(event.clipboardData);
+    if (images.length === 0) return;
+    event.preventDefault();
+    addImages(images);
+  }
+  function removeImage(draft: CompanionImageDraft): void {
+    if (submitting) return;
+    releaseImageDrafts([draft]);
+    imageDrafts = imageDrafts.filter((candidate) => candidate !== draft);
+  }
+  function onImagePickerPointerDown(event: PointerEvent): void {
+    if (event.pointerType !== "touch") return;
+    imagePickerPointer = { id: event.pointerId, startedAt: Date.now() };
+  }
+  function onImagePickerPointerUp(event: PointerEvent): void {
+    if (!imagePickerPointer || imagePickerPointer.id !== event.pointerId) return;
+    const held = Date.now() - imagePickerPointer.startedAt >= PHOTO_LONG_PRESS_MS;
+    imagePickerPointer = undefined;
+    if (!held) return;
+    suppressImagePickerClick = true;
+    event.preventDefault();
+    cameraInput?.click();
+  }
+  function clearImagePickerPointer(): void { imagePickerPointer = undefined; }
+  function choosePhoto(): void {
+    if (submitting) return;
+    if (suppressImagePickerClick) { suppressImagePickerClick = false; return; }
+    photoLibraryInput?.click();
+  }
   function formatSessionDate(value: number): string {
     if (!Number.isFinite(value)) return "";
     const date = new Date(value);
@@ -588,6 +654,7 @@
 
   onDestroy(() => {
     if (timelineRevealFrame) cancelAnimationFrame(timelineRevealFrame);
+    releaseImageDrafts(imageDrafts);
     clearWaitingTimers();
     clearContinuityStatusTimer();
     for (const audio of document.querySelectorAll<HTMLAudioElement>("#dsh-companion .companion-voice audio")) audio.pause();
@@ -665,8 +732,8 @@
                 </div>
               </article>
             {:else if item.kind === "image"}
-              <article class="cmp-chat cmp-chat-start companion-row incoming" data-testid={`image-${item.id}`}>
-                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder cmp:rounded-full message-avatar"><div class="companion-avatar-crop cmp:rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div></div>
+              <article class="cmp-chat companion-row" class:cmp-chat-start={item.side === "incoming"} class:cmp-chat-end={item.side === "outgoing"} class:outgoing={item.side === "outgoing"} class:incoming={item.side === "incoming"} data-testid={`image-${item.id}`}>
+                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder cmp:rounded-full message-avatar"><div class="companion-avatar-crop cmp:rounded-full">{#if item.side === "incoming" && identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else if item.side === "outgoing" && identity.userAvatar}<img src={identity.userAvatar} alt="" />{:else}<span aria-hidden="true">{item.side === "incoming" ? "✦" : "你"}</span>{/if}</div></div>
                 <div class="cmp-chat-bubble companion-media">
                   {#if item.state === "running" || item.state === "loading"}<div class="cmp-skeleton" style="height:260px" aria-hidden="true"></div><div style="padding:12px" role="status">正在画一张图…</div>
                   {:else if imageUrls[item.id]}<button class="companion-media-button" aria-label={"查看大图：" + item.alt} on:click={() => showLightbox(item)}><img src={imageUrls[item.id]} alt={item.alt} /></button>
@@ -738,8 +805,21 @@
               {#if continuityStatus.status === "running"}正在整理记忆…{:else if continuityStatus.status === "failed"}本次整理未完成，仍可继续对话{:else}整理记忆已完成{/if}
             </div>
           {/if}
+          {#if imageDrafts.length > 0}
+            <div class="companion-image-drafts" role="group" aria-label="待发送图片">
+              {#each imageDrafts as draft (draft.id)}
+                <div class="companion-image-draft">
+                  <img src={draft.previewUrl} alt={draft.file.name || "待发送图片"} />
+                  <button class="cmp-btn cmp-btn-circle companion-image-draft-remove" type="button" aria-label="移除图片" disabled={submitting} on:click={() => removeImage(draft)}><X size={13} strokeWidth={2.5} aria-hidden="true" /></button>
+                </div>
+              {/each}
+            </div>
+          {/if}
           <div class="companion-compose-row">
-            <textarea bind:this={composerInput} class="cmp-textarea companion-textarea" aria-label="写消息" aria-autocomplete={commandSuggestion ? "list" : undefined} aria-controls={commandSuggestion ? "companion-command-suggestions" : undefined} placeholder={"写给 " + identity.companionName + "…"} rows="1" value={composer.draft} on:input={onInput} on:compositionstart={onCompositionStart} on:compositionend={onCompositionEnd} on:keydown={onKeydown}></textarea>
+            <input bind:this={photoLibraryInput} id="companion-image-library" class="cmp-file-input companion-image-input" type="file" accept={IMAGE_ACCEPT} multiple tabindex="-1" aria-hidden="true" on:change={onImageInput} />
+            <input bind:this={cameraInput} id="companion-image-camera" class="cmp-file-input companion-image-input" type="file" accept={IMAGE_ACCEPT} capture="environment" tabindex="-1" aria-hidden="true" on:change={onImageInput} />
+            <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-attach" type="button" aria-label="选择照片；长按拍照" title="选择照片；长按拍照" disabled={!imageLimits || submitting} on:pointerdown={onImagePickerPointerDown} on:pointerup={onImagePickerPointerUp} on:pointercancel={clearImagePickerPointer} on:contextmenu|preventDefault on:click={choosePhoto}><ImagePlus size={19} strokeWidth={2} aria-hidden="true" /></button>
+            <textarea bind:this={composerInput} class="cmp-textarea companion-textarea" aria-label="写消息" aria-autocomplete={commandSuggestion ? "list" : undefined} aria-controls={commandSuggestion ? "companion-command-suggestions" : undefined} placeholder={"写给 " + identity.companionName + "…"} rows="1" value={composer.draft} on:input={onInput} on:paste={onPaste} on:compositionstart={onCompositionStart} on:compositionend={onCompositionEnd} on:keydown={onKeydown}></textarea>
             {#if contextCapacity}
               <div class="companion-context-meter-wrap">
                 <button bind:this={contextMeterButton} class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-context-meter" class:companion-context-meter-open={contextMeterOpen} data-state={continuityStatus?.status === "running" ? "active" : continuityStatus?.status === "complete" ? "complete" : continuityStatus?.status === "failed" ? "failed" : contextCapacity.percentage >= 80 ? "warning" : "idle"} type="button" aria-label={`对话容量：${contextCapacity.percentage}%`} aria-expanded={contextMeterOpen} aria-controls="companion-context-popover" on:click={toggleContextMeter}>
@@ -754,10 +834,10 @@
                 {/if}
               </div>
             {/if}
-            {#if projection.running && !composer.draft.trim()}
+            {#if projection.running && !composer.draft.trim() && imageDrafts.length === 0}
               <button class="cmp-btn cmp-btn-primary cmp-btn-circle companion-send" aria-label="停止当前回复" on:click={() => void stop()} disabled={!actions.stop || stopping}><Square size={15} fill="currentColor" aria-hidden="true" /></button>
             {:else}
-              <button class="cmp-btn cmp-btn-primary cmp-btn-circle companion-send" aria-label="发送消息" on:click={submit} disabled={!composer.draft.trim()}><span aria-hidden="true">↑</span></button>
+              <button class="cmp-btn cmp-btn-primary cmp-btn-circle companion-send" aria-label="发送消息" on:click={submit} disabled={(!composer.draft.trim() && imageDrafts.length === 0) || submitting}><span aria-hidden="true">↑</span></button>
             {/if}
           </div>
           <div class="companion-compose-hint">Enter 发送 · Shift+Enter 换行{projection.pendingCount ? ` · ${projection.pendingCount} 条消息排队中` : ""}</div>

@@ -1,0 +1,90 @@
+import type { ImageAttachmentLimits, ImageMediaType } from "@deepseek-ai/dsh-attachment";
+
+export const IMAGE_ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
+
+const IMAGE_MEDIA_TYPES = new Set<ImageMediaType>([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+]);
+
+export interface CompanionImageDraft {
+  id: string;
+  file: File;
+  previewUrl: string;
+}
+
+export interface ImagePromptPart {
+  type: "image";
+  mediaType: ImageMediaType;
+  data: string;
+  name?: string;
+}
+
+/** Validate a complete image addition before allocating any preview URLs. */
+export function imageIntakeError(
+  current: readonly CompanionImageDraft[],
+  incoming: readonly File[],
+  limits: ImageAttachmentLimits | undefined,
+): string | undefined {
+  if (incoming.length === 0) return undefined;
+  if (!limits) return "当前无法发送图片。";
+  if (incoming.some((file) => !IMAGE_MEDIA_TYPES.has(file.type as ImageMediaType) || !limits.mediaTypes.includes(file.type as ImageMediaType))) {
+    return "只支持 PNG、JPEG、WebP 或 GIF。";
+  }
+  if (current.length + incoming.length > limits.maxImagesPerMessage) return `一次最多 ${limits.maxImagesPerMessage} 张图片。`;
+  if (incoming.some((file) => file.size > limits.maxImageBytes)) return "图片太大了。";
+  const total = current.reduce((sum, image) => sum + image.file.size, 0) + incoming.reduce((sum, file) => sum + file.size, 0);
+  if (total > limits.maxMessageImageBytes) return "图片总大小超出限制。";
+  return undefined;
+}
+
+export function createImageDrafts(files: readonly File[]): CompanionImageDraft[] {
+  return files.map((file) => ({
+    id: crypto.randomUUID(),
+    file,
+    previewUrl: URL.createObjectURL(file),
+  }));
+}
+
+export function releaseImageDrafts(drafts: readonly CompanionImageDraft[]): void {
+  for (const draft of drafts) if (draft.previewUrl.startsWith("blob:")) URL.revokeObjectURL(draft.previewUrl);
+}
+
+/** Preserve the clipboard's image order while leaving ordinary text paste alone. */
+export function imageFilesFromClipboard(clipboard: Pick<DataTransfer, "items" | "files"> | null): File[] {
+  if (!clipboard) return [];
+  const files: File[] = [];
+  for (let index = 0; index < clipboard.items.length; index += 1) {
+    const item = clipboard.items[index]!;
+    if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+    const file = item.getAsFile();
+    if (file) files.push(file);
+  }
+  if (files.length > 0) return files;
+  return Array.from(clipboard.files).filter((file) => file.type.startsWith("image/"));
+}
+
+export async function serializeImageDrafts(drafts: readonly CompanionImageDraft[]): Promise<ImagePromptPart[]> {
+  return Promise.all(drafts.map(async (draft) => ({
+    type: "image" as const,
+    mediaType: draft.file.type as ImageMediaType,
+    data: await base64Of(draft.file),
+    ...(draft.file.name ? { name: draft.file.name } : {}),
+  })));
+}
+
+function base64Of(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = typeof reader.result === "string" ? reader.result : "";
+      const separator = value.indexOf(",");
+      if (separator < 0) { reject(new Error("image-read-failed")); return; }
+      resolve(value.slice(separator + 1));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("image-read-failed"));
+    reader.readAsDataURL(file);
+  });
+}

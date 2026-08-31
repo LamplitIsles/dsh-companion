@@ -13,6 +13,15 @@ describe("chat projection", () => {
     expect(result.pendingCount).toBe(1);
   });
 
+  it("projects durable user image attachments onto the outgoing side", () => {
+    const image = { attachmentId: "user-image", mediaType: "image/jpeg", name: "傍晚.jpg", bytes: 1, width: 1, height: 1 };
+    const result = projectConversation({ nodes: [{ kind: "user", seq: 1, content: [{ type: "image", attachment: image }, { type: "text", text: "看这里" }] }] });
+    expect(result.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "text", side: "outgoing", text: "看这里" }),
+      expect.objectContaining({ kind: "image", side: "outgoing", attachment: image, alt: "傍晚.jpg" }),
+    ]));
+  });
+
   it("preserves a reader anchor and offers new-message affordance", () => {
     expect(scrollPlan({ scrollTop: 20, scrollHeight: 1000, clientHeight: 600 })).toMatchObject({ follow: false, preserveAnchor: true, showNewMessageAffordance: true });
     expect(scrollPlan({ scrollTop: 395, scrollHeight: 1000, clientHeight: 600 })).toMatchObject({ follow: true });

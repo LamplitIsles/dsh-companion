@@ -6,7 +6,7 @@
   themes: false;
   root: "#dsh-companion";
   prefix: cmp-;
-  include: button, avatar, chat, drawer, status, textarea, loading, skeleton, card, badge, modal, range;
+  include: button, avatar, chat, drawer, status, textarea, file-input, loading, skeleton, card, badge, modal, range;
   exclude: properties, rootcolor, scrollbar, rootscrolllock, rootscrollgutter, svg;
   logs: false;
 }

@@ -43,12 +43,12 @@ it("retains staged settings while clean fields follow a refreshed Host baseline"
 describe("Companion admission", () => {
   it.each([false, true])("queues a text message while session running=%s", async (running) => {
     const calls: unknown[][] = [];
-    await queueCompanionPrompt({ prompt: async (...args) => { calls.push(args); return { ok: true }; } }, `消息-${running}`);
+    await queueCompanionPrompt({ prompt: async (...args) => { calls.push(args); return { ok: true }; } }, [{ type: "text", text: `消息-${running}` }]);
     expect(calls).toEqual([[[{ type: "text", text: `消息-${running}` }], "queue"]]);
   });
 
   it("surfaces rejection so the Svelte caller retains the draft", async () => {
-    await expect(queueCompanionPrompt({ prompt: async () => ({ ok: false, error: { message: "rejected" } }) }, "保留我")).rejects.toThrow("rejected");
+    await expect(queueCompanionPrompt({ prompt: async () => ({ ok: false, error: { message: "rejected" } }) }, [{ type: "text", text: "保留我" }])).rejects.toThrow("rejected");
   });
 
   it("routes exact /compact input through the session command channel", async () => {
@@ -71,6 +71,25 @@ describe("Companion admission", () => {
     }, "/不是命令");
     expect(commands).toEqual([]);
     expect(prompts).toEqual([[[{ type: "text", text: "/不是命令" }], "queue"]]);
+  });
+
+  it("sends image blocks before the accompanying text", async () => {
+    const prompts: unknown[][] = [];
+    await submitCompanionInput({
+      prompt: async (...args) => { prompts.push(args); return { ok: true }; },
+      command: async () => ({ ok: true, value: { matched: true } }),
+    }, "看这张", [{ type: "image", mediaType: "image/png", data: "AQ==", name: "sea.png" }]);
+    expect(prompts).toEqual([[[
+      { type: "image", mediaType: "image/png", data: "AQ==", name: "sea.png" },
+      { type: "text", text: "看这张" },
+    ], "queue"]]);
+  });
+
+  it("does not let /compact carry images", async () => {
+    await expect(submitCompanionInput({
+      prompt: async () => ({ ok: true }),
+      command: async () => ({ ok: true, value: { matched: true } }),
+    }, "/compact", [{ type: "image", mediaType: "image/png", data: "AQ==" }])).rejects.toThrow("compact-with-images");
   });
 
   it("surfaces an unavailable compact command so the draft is retained", async () => {

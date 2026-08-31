@@ -8,6 +8,7 @@ import tailwindStyles from "../src/client/tailwind.css?inline";
 import type { CompanionProjection } from "../src/projection.js";
 import type { CompanionContinuityView } from "../src/client/companion-bridge.js";
 import type { CompactionLifecycleState, ContextPressureProjection } from "../src/continuity.js";
+import type { ImageAttachmentLimits } from "@deepseek-ai/dsh-attachment";
 
 const fixtureDaisyStyles = `${daisyStyles}\n${tailwindStyles}`.replace(/:root:has\(input\.theme-controller\[value=[^)]+\]:checked\),?/gu, "").replace(/:root\b/gu, ":scope").replace(/\[data-theme=["']?(sticker-messenger|night-voyage)["']?\]/gu, ":scope[data-theme=$1]");
 const style = document.createElement("style"); style.textContent = `@font-face{font-family:'Companion Noto Sans SC';src:url('/fonts/NotoSansSC-Companion.woff2') format('woff2');font-weight:100 900;font-display:block}@scope (#dsh-companion){${fixtureDaisyStyles}}${companionStyles.replace('ui-rounded, "SF Pro Rounded", system-ui, sans-serif', '"Companion Noto Sans SC", ui-rounded, "SF Pro Rounded", system-ui, sans-serif')}`; document.head.appendChild(style);
@@ -57,6 +58,15 @@ const fixtureProps: CompanionBridgeProps = {
   actions: { send: async () => { sendCalls += 1; }, stop: async () => { stopCalls += 1; }, selectSession: async () => undefined, loadOlder: async () => undefined, attachmentUrl: async () => URL.createObjectURL(new Blob([svgDocument], { type: "image/svg+xml" })), prepareVoice: async (text: string) => { if (text.includes("失败")) throw new Error("fixture voice failure"); return "/kepos-tts/audio/fixture.mp3"; } },
   workspaceReady: true,
   sessionReady: true,
+  sessionId: "quiet-evening",
+  imageLimits: {
+    maxImageBytes: 5 * 1024 * 1024,
+    maxImagesPerMessage: 20,
+    maxMessageImageBytes: 100 * 1024 * 1024,
+    maxImagePixels: 40_000_000,
+    maxImageDimension: 2_000,
+    mediaTypes: ["image/png", "image/jpeg", "image/webp", "image/gif"],
+  } satisfies ImageAttachmentLimits,
 };
 const propsStore = writable(fixtureProps);
 const component = mount(CompanionBridge, { target: root, props: { propsStore } });
