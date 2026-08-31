@@ -20,7 +20,14 @@ if (literalStart < 0 || literalEnd < daisyStart) throw new Error("Could not scop
 // Tailwind/daisyUI compile before this step. Its primitives are deliberately
 // injected only under the Companion root, including generated utility
 // selectors, so the host's document receives neither Preflight nor CSS leaks.
-esm = `${esm.slice(0, literalStart + 1)}@scope (#dsh-companion){${esm.slice(literalStart + 1, literalEnd)}}${esm.slice(literalEnd)}`;
+// Custom daisyUI themes normally emit a document-root theme-controller branch;
+// the Companion has no controller and must not alter the stock DSH root. Keep
+// the useful data-theme branch while rewriting root selectors to the scope root.
+let generatedStyles = esm.slice(literalStart + 1, literalEnd)
+  .replace(/:root:has\(input\.theme-controller\[value=[^)]+\]:checked\),?/gu, "")
+  .replace(/:root\b/gu, ":scope")
+  .replace(/\[data-theme=["']?(sticker-messenger|night-voyage)["']?\]/gu, ":scope[data-theme=$1]");
+esm = `${esm.slice(0, literalStart + 1)}@scope (#dsh-companion){${generatedStyles}}${esm.slice(literalEnd)}`;
 await writeFile(esmPath, esm);
 
 await build({

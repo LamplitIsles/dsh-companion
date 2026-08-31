@@ -1,8 +1,11 @@
 import { createElement, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { mount, unmount } from "svelte";
+import { writable, type Writable } from "svelte/store";
 import type { ClientContext, ISession, ConversationSnapshot, SessionListState, WorkspaceListState } from "@deepseek-ai/dsh-client-runtime/client";
 import type { SettingsScope } from "@deepseek-ai/dsh-client-runtime/client";
 import type { ClientConnectionRpc, ConnectionHandle } from "@deepseek-ai/dsh-client-connection/client";
-import Companion from "./Companion.svelte";
+import CompanionBridge from "./CompanionBridge.svelte";
+import type { CompanionBridgeProps } from "./companion-bridge.js";
 import { affinityStage, companionSessionList, MOOD_LABELS, selectCompanionSession } from "./relationship.js";
 import { projectConversation } from "../projection.js";
 import { TtsPreparationCache } from "./voice-cache.js";
@@ -198,7 +201,7 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
     return availableSessions.map((item) => ({ ...item, selected: item.id === selectedSessionId }));
   }, [availableSessions, selectedSessionId]);
 
-  const svelteProps = {
+  const svelteProps: CompanionBridgeProps = {
     projection,
     identity,
     scheme,
@@ -206,21 +209,22 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
     sessions,
     workspaceReady: Boolean(workspace && relationship.workspacePresent),
     sessionReady: Boolean(session),
-    "on:advanced": () => { window.location.assign("/"); },
-    "on:recovery": () => setRecoveryKey((value) => value + 1),
+    onAdvanced: () => { window.location.assign("/"); },
+    onRecovery: () => setRecoveryKey((value) => value + 1),
   };
   return createElement(SvelteMount, { props: svelteProps });
 }
 
-function SvelteMount({ props }: { props: Record<string, unknown> }): JSX.Element {
+function SvelteMount({ props }: { props: CompanionBridgeProps }): JSX.Element {
   const target = useRef<HTMLDivElement>(null);
-  const instance = useRef<{ $set(next: Record<string, unknown>): void; $destroy(): void }>();
+  const propsStore = useRef<Writable<CompanionBridgeProps>>();
+  if (!propsStore.current) propsStore.current = writable(props);
+
   useEffect(() => {
     if (!target.current) return undefined;
-    const Component = Companion as unknown as new (options: { target: HTMLElement; props: Record<string, unknown> }) => { $set(next: Record<string, unknown>): void; $destroy(): void };
-    instance.current = new Component({ target: target.current, props });
-    return () => { instance.current?.$destroy(); instance.current = undefined; };
+    const instance = mount(CompanionBridge, { target: target.current, props: { propsStore: propsStore.current! } });
+    return () => { void unmount(instance); };
   }, []);
-  useEffect(() => { instance.current?.$set(props); }, [props]);
+  useEffect(() => { propsStore.current?.set(props); }, [props]);
   return createElement("div", { ref: target, style: { display: "contents" } });
 }

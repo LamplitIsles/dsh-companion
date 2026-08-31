@@ -9,10 +9,6 @@ export function companionThemeForScheme(scheme: string): typeof LIGHT_THEME | ty
 /** Layout and visual language layered over the generated prefixed daisyUI primitives. */
 export const companionStyles = `
 #dsh-companion {
-  --color-base-100:#fffaf3;--color-base-200:#f8ecdf;--color-base-300:#ead8c5;
-  --color-base-content:#352e38;--color-primary:#ed7186;--color-primary-content:#fff9f6;
-  --color-secondary:#71c9bc;--color-secondary-content:#153b3b;--color-accent:#f5bd52;
-  --color-neutral:#423a49;--color-neutral-content:#fffaf3;
   --cmp-line:color-mix(in srgb,var(--color-base-content) 10%,transparent);
   --cmp-panel:color-mix(in srgb,var(--color-base-100) 94%,transparent);
   --cmp-shadow:0 22px 70px rgb(76 48 40 / .14);
@@ -21,10 +17,6 @@ export const companionStyles = `
   font-family:ui-rounded,"SF Pro Rounded","Segoe UI",system-ui,sans-serif;
 }
 #dsh-companion[data-theme="night-voyage"] {
-  --color-base-100:#101827;--color-base-200:#0b1220;--color-base-300:#273650;
-  --color-base-content:#edf2fb;--color-primary:#ff8da0;--color-primary-content:#351823;
-  --color-secondary:#68cdc5;--color-secondary-content:#082e31;--color-accent:#edc66e;
-  --color-neutral:#243149;--color-neutral-content:#f4f7ff;
   --cmp-line:color-mix(in srgb,var(--color-base-content) 11%,transparent);
   --cmp-panel:color-mix(in srgb,var(--color-base-100) 92%,transparent);
   --cmp-shadow:0 25px 75px rgb(0 0 0 / .38);
@@ -34,7 +26,7 @@ export const companionStyles = `
 #dsh-companion button{color:inherit}
 #dsh-companion.companion-shell{height:100dvh;padding:14px;overflow:hidden}
 #dsh-companion .companion-app{position:relative;display:grid;grid-template-columns:0 minmax(0,1fr);width:min(1180px,100%);height:calc(100dvh - 28px);margin:auto;overflow:hidden;border:1px solid var(--cmp-line);border-radius:32px;background:var(--cmp-panel);box-shadow:var(--cmp-shadow);transition:grid-template-columns .24s ease}
-#dsh-companion .companion-app.sidebar-open{grid-template-columns:282px minmax(0,1fr)}
+#dsh-companion .companion-app:has(> .cmp-drawer-toggle:checked){grid-template-columns:282px minmax(0,1fr)}
 #dsh-companion .cmp-drawer-toggle{position:absolute;opacity:0;pointer-events:none}
 #dsh-companion .companion-content{min-width:0;min-height:0;grid-column:2}
 #dsh-companion .companion-main{display:grid;grid-template-rows:auto minmax(0,1fr) auto;height:100%;min-width:0;min-height:0}
@@ -42,7 +34,7 @@ export const companionStyles = `
 #dsh-companion .cmp-btn{min-width:42px;min-height:42px;border-radius:999px}
 #dsh-companion .companion-session-toggle{font-size:1.08rem}
 #dsh-companion .companion-avatar-anchor{position:relative;flex:none}
-#dsh-companion .companion-avatar{width:46px;height:46px;border:2px solid color-mix(in srgb,var(--color-primary) 48%,transparent);box-shadow:0 6px 18px color-mix(in srgb,var(--color-primary) 22%,transparent);cursor:pointer}
+#dsh-companion .companion-avatar{width:46px;height:46px;padding:0;border:2px solid color-mix(in srgb,var(--color-primary) 48%,transparent);box-shadow:0 6px 18px color-mix(in srgb,var(--color-primary) 22%,transparent);cursor:pointer}
 #dsh-companion .companion-header-copy{min-width:0;flex:1}
 #dsh-companion .companion-name{font-size:1.02rem;font-weight:780;letter-spacing:-.02em}
 #dsh-companion .companion-presence{display:flex;align-items:center;gap:6px;margin-top:2px;color:color-mix(in srgb,var(--color-base-content) 64%,transparent);font-size:.73rem}
@@ -56,8 +48,8 @@ export const companionStyles = `
 #dsh-companion .companion-row.outgoing .message-avatar{grid-column:2}
 #dsh-companion .companion-row.outgoing .companion-message-stack{grid-column:1;grid-row:1}
 #dsh-companion .message-avatar{width:34px;height:34px;font-size:.72rem}
-#dsh-companion .companion-avatar,#dsh-companion .message-avatar,#dsh-companion .companion-detail-avatar{overflow:hidden;border-radius:50%}
-#dsh-companion .companion-avatar img,#dsh-companion .message-avatar img,#dsh-companion .companion-detail-avatar img{border-radius:inherit}
+#dsh-companion .companion-avatar-crop{display:grid;width:100%;height:100%;place-items:center;overflow:hidden}
+#dsh-companion .companion-avatar-crop img{display:block;width:100%;height:100%;object-fit:cover}
 #dsh-companion .companion-message-stack{max-width:min(76vw,680px)}
 #dsh-companion .companion-bubble{max-width:min(76vw,680px);padding:11px 15px;border-radius:23px 23px 23px 8px;background:var(--color-base-200);box-shadow:0 5px 18px color-mix(in srgb,var(--color-base-content) 7%,transparent);line-height:1.55;overflow-wrap:anywhere}
 #dsh-companion .outgoing .companion-bubble{border-radius:23px 23px 8px 23px;background:color-mix(in srgb,var(--color-primary) 22%,var(--color-base-100))}
@@ -82,7 +74,7 @@ export const companionStyles = `
 #dsh-companion .companion-recovery p{opacity:.66}
 #dsh-companion .companion-mood-orb{width:86px;height:86px;margin:0 auto 17px;border-radius:50%;background:radial-gradient(circle at 34% 28%,var(--color-accent),var(--color-primary));box-shadow:0 0 0 10px color-mix(in srgb,var(--color-primary) 12%,transparent),0 16px 38px color-mix(in srgb,var(--color-primary) 25%,transparent)}
 #dsh-companion .companion-sidebar-layer{position:absolute;inset:0 auto 0 0;z-index:10;width:282px;transform:translateX(-100%);transition:transform .24s ease;pointer-events:none}
-#dsh-companion .sidebar-open .companion-sidebar-layer{transform:none;pointer-events:auto}
+#dsh-companion .companion-app > .cmp-drawer-toggle:checked ~ .companion-sidebar-layer{transform:none;pointer-events:auto}
 #dsh-companion .companion-sidebar-overlay{display:none}
 #dsh-companion .companion-sidebar{display:flex;flex-direction:column;width:282px;height:100%;padding:19px 14px 14px;border-right:1px solid var(--cmp-line);background:color-mix(in srgb,var(--color-base-100) 92%,var(--color-secondary) 3%)}
 #dsh-companion .companion-sidebar-head{display:flex;align-items:center;justify-content:space-between;padding:3px 7px 14px}
@@ -98,7 +90,8 @@ export const companionStyles = `
 #dsh-companion .companion-session-running{width:8px;height:8px;flex:none;border-radius:50%;background:var(--color-secondary);box-shadow:0 0 0 4px color-mix(in srgb,var(--color-secondary) 14%,transparent)}
 #dsh-companion .companion-session-empty{padding:16px 12px;opacity:.55;font-size:.78rem}
 #dsh-companion .companion-sidebar-advanced{margin-top:12px;padding:10px;color:inherit;opacity:.58;font-size:.74rem;text-align:center;text-decoration:none}
-#dsh-companion .companion-detail-card{position:absolute;z-index:20;top:calc(100% + 10px);left:-8px;width:min(372px,calc(100vw - 38px));max-width:none;margin:0;padding:0;overflow:hidden;border:1px solid color-mix(in srgb,var(--color-base-content) 12%,transparent);border-radius:28px;background:color-mix(in srgb,var(--color-base-100) 94%,transparent);color:var(--color-base-content);box-shadow:0 24px 70px rgb(0 0 0 / .28);animation:companion-card-in .2s cubic-bezier(.2,.8,.2,1);transform-origin:36px 0;backdrop-filter:blur(18px)}
+#dsh-companion .companion-detail-card{position:fixed;z-index:20;top:auto;left:auto;width:min(372px,calc(100vw - 38px));max-width:none;margin:0;padding:0;overflow:hidden;border:1px solid color-mix(in srgb,var(--color-base-content) 12%,transparent);color:var(--color-base-content);box-shadow:0 24px 70px rgb(0 0 0 / .28);animation:companion-card-in .2s cubic-bezier(.2,.8,.2,1);transform-origin:36px 0;backdrop-filter:blur(18px)}
+#dsh-companion .companion-detail-card .cmp-card-body{padding:0}
 #dsh-companion .companion-detail-art{height:128px;background:linear-gradient(to bottom,transparent 45%,var(--color-base-100)),var(--relationship-art) center 54%/cover no-repeat}
 #dsh-companion[data-theme="sticker-messenger"] .companion-detail-art{filter:saturate(.78) brightness(1.2);opacity:.82}
 #dsh-companion .companion-detail-head{position:relative;display:grid;grid-template-columns:58px minmax(0,1fr) 36px;align-items:center;gap:12px;margin-top:-30px;padding:0 20px}
@@ -110,13 +103,14 @@ export const companionStyles = `
 #dsh-companion .companion-relationship-list{display:grid;grid-template-columns:auto minmax(0,1fr);gap:9px 18px;margin:13px 20px 20px;padding-top:14px;border-top:1px solid var(--cmp-line);font-size:.77rem}
 #dsh-companion .companion-relationship-list dt{opacity:.5}
 #dsh-companion .companion-relationship-list dd{margin:0;text-align:right}
-#dsh-companion .companion-lightbox{position:fixed;inset:0;z-index:30;display:grid;place-items:center;padding:24px;background:rgb(5 9 17 / .86)}
+#dsh-companion .companion-lightbox{padding:24px;background:rgb(5 9 17 / .86)}
 #dsh-companion .companion-lightbox-dialog{position:relative;max-width:none;margin:0;padding:0;border:0;background:transparent}
+#dsh-companion .companion-lightbox .cmp-modal-box{position:relative;max-width:none;margin:0;padding:0;background:transparent;box-shadow:none}
 #dsh-companion .companion-lightbox img{display:block;max-width:min(94vw,1000px);max-height:86vh;border-radius:22px;object-fit:contain}
 #dsh-companion .companion-lightbox-close{position:absolute;top:12px;right:12px;z-index:1}
 @keyframes companion-card-in{from{opacity:0;transform:translateY(-8px) scale(.96)}to{opacity:1;transform:none}}
-@media (min-width:821px){#dsh-companion .companion-sidebar-layer{position:relative;grid-column:1;grid-row:1;transform:none;width:100%;overflow:hidden}#dsh-companion .companion-app:not(.sidebar-open) .companion-sidebar-layer{width:0}#dsh-companion .companion-sidebar{position:absolute;inset:0 auto 0 0}}
-@media (max-width:820px){#dsh-companion.companion-shell{padding:0}#dsh-companion .companion-app,#dsh-companion .companion-app.sidebar-open{grid-template-columns:minmax(0,1fr);width:100%;height:100dvh;border:0;border-radius:0}#dsh-companion .companion-content{grid-column:1}#dsh-companion .companion-sidebar-layer{width:100%}#dsh-companion .companion-sidebar-overlay{position:absolute;inset:0;display:block;background:rgb(8 12 20 / .42)}#dsh-companion .companion-sidebar{position:relative;width:min(84vw,300px);box-shadow:20px 0 60px rgb(0 0 0 / .2)}#dsh-companion .companion-header{padding:calc(10px + env(safe-area-inset-top)) 13px 10px}#dsh-companion .companion-timeline{padding:18px 12px 10px}#dsh-companion .companion-composer{padding-inline:9px}#dsh-companion .companion-compose-hint{display:none}#dsh-companion .companion-detail-card{left:-55px}#dsh-companion .companion-message-stack,#dsh-companion .companion-bubble{max-width:78vw}}
-@media (max-width:430px){#dsh-companion .companion-avatar{width:42px;height:42px}#dsh-companion .companion-header{gap:8px}#dsh-companion .companion-row{grid-template-columns:30px minmax(0,auto);gap:7px}#dsh-companion .companion-row.outgoing{grid-template-columns:minmax(0,auto) 30px}#dsh-companion .message-avatar{width:30px;height:30px}#dsh-companion .companion-voice{min-width:0;flex-wrap:wrap}#dsh-companion .companion-detail-card{left:-49px;width:calc(100vw - 20px)}}
+@media (min-width:821px){#dsh-companion .companion-sidebar-layer{position:relative;grid-column:1;grid-row:1;transform:none;width:100%;overflow:hidden}#dsh-companion .companion-app > .cmp-drawer-toggle:not(:checked) ~ .companion-sidebar-layer{width:0}#dsh-companion .companion-sidebar{position:absolute;inset:0 auto 0 0}}
+@media (max-width:820px){#dsh-companion.companion-shell{padding:0}#dsh-companion .companion-app,#dsh-companion .companion-app:has(> .cmp-drawer-toggle:checked){grid-template-columns:minmax(0,1fr);width:100%;height:100dvh;border:0;border-radius:0}#dsh-companion .companion-content{grid-column:1}#dsh-companion .companion-sidebar-layer{width:100%}#dsh-companion .companion-sidebar-overlay{position:absolute;inset:0;display:block;background:rgb(8 12 20 / .42)}#dsh-companion .companion-sidebar{position:relative;width:min(84vw,300px);box-shadow:20px 0 60px rgb(0 0 0 / .2)}#dsh-companion .companion-header{padding:calc(10px + env(safe-area-inset-top)) 13px 10px}#dsh-companion .companion-timeline{padding:18px 12px 10px}#dsh-companion .companion-composer{padding-inline:9px}#dsh-companion .companion-compose-hint{display:none}#dsh-companion .companion-message-stack,#dsh-companion .companion-bubble{max-width:78vw}}
+@media (max-width:430px){#dsh-companion .companion-avatar{width:42px;height:42px}#dsh-companion .companion-header{gap:8px}#dsh-companion .companion-row{grid-template-columns:30px minmax(0,auto);gap:7px}#dsh-companion .companion-row.outgoing{grid-template-columns:minmax(0,auto) 30px}#dsh-companion .message-avatar{width:30px;height:30px}#dsh-companion .companion-voice{min-width:0;flex-wrap:wrap}}
 @media (prefers-reduced-motion:reduce){#dsh-companion *,#dsh-companion *::before,#dsh-companion *::after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
 `;

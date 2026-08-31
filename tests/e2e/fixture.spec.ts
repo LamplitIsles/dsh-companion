@@ -13,7 +13,7 @@ test("fixture has complete media states, accessible overlays, and no duplicate i
   await expect(page.getByRole("dialog")).toContainText("把平凡日子折成星星");
   await expect(page.getByRole("button", { name: "关闭关系资料", exact: true })).toBeFocused();
   await page.keyboard.press("Shift+Tab");
-  await expect(page.getByRole("button", { name: "关闭关系资料", exact: true })).toBeFocused();
+  await expect(avatar).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(avatar).toBeFocused();
   await page.getByRole("button", { name: /查看大图/ }).click();
@@ -57,6 +57,49 @@ test("draft edits stay local to the composer", async ({ page }) => {
     return performance.now() - start;
   });
   expect(timing).toBeLessThan(50);
+});
+
+test("Svelte 5 bridge applies live identity and theme changes without remounting", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("companion-root")).toHaveAttribute("data-theme", "sticker-messenger");
+  await expect.poll(() => page.evaluate(() => window.__companionFixture?.rootIsStable() ?? false)).toBe(true);
+  await page.evaluate(() => window.__companionFixture?.setIdentity({ companionName: "新灯", moodLabel: "明朗" }));
+  await expect(page.locator(".companion-name")).toHaveText("新灯");
+  await expect(page.locator(".companion-presence")).toContainText("明朗");
+  const statusClasses = { ready: "cmp-status-success", working: "cmp-status-warning", reconnecting: "cmp-status-error" } as const;
+  for (const [status, className] of Object.entries(statusClasses)) {
+    await page.evaluate((next) => window.__companionFixture?.setStatus(next as "ready" | "working" | "reconnecting"), status);
+    await expect(page.locator(".cmp-status")).toHaveClass(new RegExp(className));
+    await expect.poll(() => page.locator(".cmp-status").evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+  }
+  await page.evaluate(() => window.__companionFixture?.setStatus("working"));
+  const lightStatus = await page.locator(".cmp-status").evaluate((node) => getComputedStyle(node).backgroundColor);
+  await page.evaluate(() => window.__companionFixture?.setTheme("dark"));
+  await expect(page.getByTestId("companion-root")).toHaveAttribute("data-theme", "night-voyage");
+  await expect.poll(() => page.locator(".cmp-status").evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe(lightStatus);
+  await expect.poll(() => page.evaluate(() => window.__companionFixture?.rootIsStable() ?? false)).toBe(true);
+  await page.evaluate(() => { window.__companionFixture?.dispose(); window.__companionFixture?.dispose(); });
+  await expect.poll(() => page.getByTestId("companion-root").count()).toBe(0);
+  expect(await page.evaluate(() => window.__companionFixture?.unmountCalls() ?? 0)).toBe(1);
+});
+
+test("drawer uses one checkbox state across desktop and Pixel-sized layouts", async ({ page }, testInfo) => {
+  await page.goto("/");
+  const toggle = page.locator("#companion-session-drawer");
+  const headerToggle = page.getByRole("button", { name: /对话列表/ }).first();
+  if (testInfo.project.name === "pixel-7a") {
+    await expect(toggle).not.toBeChecked();
+    await headerToggle.click();
+    await expect(toggle).toBeChecked();
+    await page.locator(".companion-sidebar-overlay").click({ position: { x: 390, y: 120 } });
+    await expect(toggle).not.toBeChecked();
+  } else {
+    await expect(toggle).toBeChecked();
+    await headerToggle.click();
+    await expect(toggle).not.toBeChecked();
+    await headerToggle.click();
+    await expect(toggle).toBeChecked();
+  }
 });
 
 test("chat shell has rendered Markdown, viewport scrolling, sessions, rounded focus, and an anchored relationship card", async ({ page }, testInfo) => {
@@ -135,7 +178,7 @@ test("initial chat presentation is already at the bottom with circular avatars a
   expect(Math.abs(visibleSamples[0]!.distanceFromBottom)).toBeLessThanOrEqual(1);
   expect(Math.abs(visibleSamples.at(-1)!.distanceFromBottom)).toBeLessThanOrEqual(1);
 
-  for (const avatar of await page.locator(".companion-avatar, .message-avatar").all()) {
+  for (const avatar of await page.locator(".companion-avatar-crop").all()) {
     const geometry = await avatar.evaluate((node) => {
       const style = getComputedStyle(node);
       const bounds = node.getBoundingClientRect();

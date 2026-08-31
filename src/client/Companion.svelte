@@ -65,9 +65,10 @@
   let liveAnnouncement = "";
   let detailReturnFocus: HTMLElement | undefined;
   let lightboxReturnFocus: HTMLElement | undefined;
-  let detailDialog: HTMLElement;
-  let lightboxDialog: HTMLElement;
+  let detailPopover: HTMLElement;
+  let lightboxDialog: HTMLDialogElement;
   let overlayHistory = false;
+  let lightboxCloseFromHistory = false;
   let statusText = "";
   const intensityLabels: Record<number, string> = { 1: "轻微", 2: "明显", 3: "强烈" };
 
@@ -256,26 +257,80 @@
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
   }
   function closeHistory(): void { if (overlayHistory) { overlayHistory = false; history.back(); } }
-  function openDetail(): void { detailReturnFocus = document.activeElement as HTMLElement; detailOpen = true; focusFirst(() => detailDialog); }
-  function closeDetail(restoreFocus = true): void {
+  function openDetail(): void {
+    detailReturnFocus = document.activeElement as HTMLElement;
+    detailOpen = true;
+    void tick().then(() => {
+      const popover = detailPopover as (HTMLElement & { showPopover?: () => void }) | undefined;
+      popover?.showPopover?.();
+      positionDetailPopover();
+      focusFirst(() => detailPopover);
+    });
+  }
+  function positionDetailPopover(): void {
+    if (!detailPopover || !detailAnchor) return;
+    const anchor = detailAnchor.getBoundingClientRect();
+    const width = Math.min(372, Math.max(240, window.innerWidth - 38));
+    const height = detailPopover.getBoundingClientRect().height;
+    const left = Math.min(Math.max(12, anchor.left - 8), Math.max(12, window.innerWidth - width - 12));
+    const top = Math.min(anchor.bottom + 10, Math.max(12, window.innerHeight - height - 12));
+    detailPopover.style.width = `${width}px`;
+    detailPopover.style.left = `${left}px`;
+    detailPopover.style.top = `${top}px`;
+  }
+  function onWindowResize(): void { if (detailOpen) positionDetailPopover(); }
+  function finishDetailClose(restoreFocus = true): void {
     detailOpen = false;
-    if (restoreFocus) detailReturnFocus?.focus();
+    const target = detailReturnFocus;
     detailReturnFocus = undefined;
+    if (restoreFocus) target?.focus();
+  }
+  function closeDetail(restoreFocus = true): void {
+    const popover = detailPopover as (HTMLElement & { hidePopover?: () => void }) | undefined;
+    if (popover?.matches(":popover-open")) { popover.hidePopover?.(); return; }
+    finishDetailClose(restoreFocus);
+  }
+  function onDetailToggle(event: Event): void {
+    const toggle = event as ToggleEvent;
+    if (toggle.newState === "open") {
+      detailOpen = true;
+      focusFirst(() => detailPopover);
+      return;
+    }
+    finishDetailClose();
   }
   function openLightbox(item: TimelineImage): void {
     lightboxReturnFocus = document.activeElement as HTMLElement;
     lightbox = item;
     lightboxUrl = imageUrls[item.id] ?? "";
-    focusFirst(() => lightboxDialog);
+    void tick().then(() => {
+      if (lightboxDialog && !lightboxDialog.open) lightboxDialog.showModal();
+      focusFirst(() => lightboxDialog);
+    });
   }
-  function closeLightbox(fromHistory = false): void { lightbox = undefined; lightboxUrl = ""; if (!fromHistory) closeHistory(); lightboxReturnFocus?.focus(); lightboxReturnFocus = undefined; }
+  function finishLightboxClose(fromHistory: boolean): void {
+    const target = lightboxReturnFocus;
+    const hadHistory = overlayHistory;
+    lightbox = undefined;
+    lightboxUrl = "";
+    lightboxReturnFocus = undefined;
+    if (target) target.focus();
+    if (!fromHistory && hadHistory) closeHistory();
+  }
+  function closeLightbox(fromHistory = false): void {
+    if (!lightbox) return;
+    lightboxCloseFromHistory = fromHistory;
+    if (lightboxDialog?.open) { lightboxDialog.close(); return; }
+    finishLightboxClose(fromHistory);
+  }
+  function onLightboxClose(): void {
+    const fromHistory = lightboxCloseFromHistory;
+    lightboxCloseFromHistory = false;
+    finishLightboxClose(fromHistory);
+  }
   function onWindowKeydown(event: KeyboardEvent): void {
-    if (event.key === "Escape") { if (lightbox) closeLightbox(); else if (detailOpen) closeDetail(); return; }
+    if (event.key === "Escape") return;
     if (lightbox && lightboxDialog) trapFocus(event, lightboxDialog);
-    else if (detailOpen && detailDialog) trapFocus(event, detailDialog);
-  }
-  function onWindowPointerDown(event: PointerEvent): void {
-    if (detailOpen && detailAnchor && !detailAnchor.contains(event.target as Node)) closeDetail(false);
   }
   function onPopState(): void { overlayHistory = false; if (lightbox) closeLightbox(true); }
   function pushOverlayHistory(): void { if (!overlayHistory) { history.pushState({ companionOverlay: true }, ""); overlayHistory = true; } }
@@ -290,30 +345,32 @@
   });
 </script>
 
-<svelte:window on:keydown={onWindowKeydown} on:pointerdown={onWindowPointerDown} on:popstate={onPopState} />
+<svelte:window on:keydown={onWindowKeydown} on:popstate={onPopState} on:resize={onWindowResize} />
 
 <div id="dsh-companion" class="companion-shell" data-theme={scheme === "dark" ? "night-voyage" : "sticker-messenger"} data-testid="companion-root">
-  <div class="cmp-drawer companion-app" class:cmp-drawer-open={sidebarOpen} class:sidebar-open={sidebarOpen}>
+  <div class="cmp-drawer companion-app">
     <input id="companion-session-drawer" class="cmp-drawer-toggle" type="checkbox" bind:checked={sidebarOpen} aria-label="显示对话列表" />
     <div class="cmp-drawer-content companion-content">
     <main class="companion-main" aria-label="Companion 私聊">
       <header class="companion-header">
         <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-session-toggle" aria-label={sidebarOpen ? "收起对话列表" : "展开对话列表"} aria-controls="companion-session-list" aria-expanded={sidebarOpen} on:click={() => sidebarOpen = !sidebarOpen}><span aria-hidden="true">☰</span></button>
         <div bind:this={detailAnchor} class="companion-avatar-anchor">
-          <button class="cmp-avatar cmp-avatar-placeholder companion-avatar" aria-label="查看 Companion 关系资料" aria-expanded={detailOpen} on:click={toggleDetail}>
-            {#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}
+          <button class="cmp-avatar cmp-avatar-placeholder rounded-full companion-avatar" aria-label="查看 Companion 关系资料" aria-expanded={detailOpen} on:click={toggleDetail}>
+            <div class="companion-avatar-crop rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div>
           </button>
           {#if detailOpen}
-            <dialog bind:this={detailDialog} open class="companion-detail-card cmp-modal-box" aria-label={`${identity.companionName}的关系资料`} style={`--relationship-art: url("${relationshipBackground}")`}>
+            <div bind:this={detailPopover} id="companion-detail-popover" popover="auto" class="cmp-card companion-detail-card" role="dialog" aria-label={`${identity.companionName}的关系资料`} style={`--relationship-art: url("${relationshipBackground}")`} on:toggle={onDetailToggle}>
               <div class="companion-detail-art" aria-hidden="true"></div>
-              <div class="companion-detail-head">
-                <div class="cmp-avatar cmp-avatar-placeholder companion-detail-avatar">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt={identity.companionName} />{:else}<span aria-hidden="true">✦</span>{/if}</div>
-                <div><h2>{identity.companionName}</h2><span class="companion-mood-chip">{identity.moodLabel}</span></div>
-                <button class="cmp-btn cmp-btn-ghost cmp-btn-circle cmp-btn-sm companion-detail-close" aria-label="关闭关系资料" on:click={() => closeDetail()}>×</button>
+              <div class="cmp-card-body">
+                <div class="companion-detail-head">
+                  <div class="cmp-avatar cmp-avatar-placeholder rounded-full companion-detail-avatar"><div class="companion-avatar-crop rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt={identity.companionName} />{:else}<span aria-hidden="true">✦</span>{/if}</div></div>
+                  <div><h2 id="companion-detail-title">{identity.companionName}</h2><span class="cmp-badge cmp-badge-soft cmp-badge-secondary companion-mood-chip">{identity.moodLabel}</span></div>
+                  <button class="cmp-btn cmp-btn-ghost cmp-btn-circle cmp-btn-sm companion-detail-close" aria-label="关闭关系资料" on:click={() => closeDetail()}>×</button>
+                </div>
+                <p class="companion-signature">{identity.signature || "还没有签名"}</p>
+                <dl class="companion-relationship-list"><dt>此刻心情</dt><dd>{identity.moodLabel} · {intensityLabels[identity.intensity]}</dd>{#if identity.moodNote}<dt>心情短句</dt><dd>{identity.moodNote}</dd>{/if}<dt>亲近度</dt><dd>{identity.affinity === undefined ? "加载中…" : `${identity.affinity} · ${identity.affinityStage}`}</dd></dl>
               </div>
-              <p class="companion-signature">{identity.signature || "还没有签名"}</p>
-              <dl class="companion-relationship-list"><dt>此刻心情</dt><dd>{identity.moodLabel} · {intensityLabels[identity.intensity]}</dd>{#if identity.moodNote}<dt>心情短句</dt><dd>{identity.moodNote}</dd>{/if}<dt>亲近度</dt><dd>{identity.affinity === undefined ? "加载中…" : `${identity.affinity} · ${identity.affinityStage}`}</dd></dl>
-            </dialog>
+            </div>
           {/if}
         </div>
         <div class="companion-header-copy">
@@ -349,8 +406,8 @@
           {#each projection.items as item (item.projectionKey ?? item.id)}
             {#if item.kind === "text"}
               <article class="cmp-chat companion-row" class:cmp-chat-start={item.side === "incoming"} class:cmp-chat-end={item.side === "outgoing"} class:outgoing={item.side === "outgoing"} class:incoming={item.side === "incoming"} data-testid={`message-${item.id}`}>
-                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder message-avatar">
-                  {#if item.side === "incoming" && identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else if item.side === "outgoing" && identity.userAvatar}<img src={identity.userAvatar} alt="" />{:else}<span aria-hidden="true">{item.side === "incoming" ? "✦" : "你"}</span>{/if}
+                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder rounded-full message-avatar">
+                  <div class="companion-avatar-crop rounded-full">{#if item.side === "incoming" && identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else if item.side === "outgoing" && identity.userAvatar}<img src={identity.userAvatar} alt="" />{:else}<span aria-hidden="true">{item.side === "incoming" ? "✦" : "你"}</span>{/if}</div>
                 </div>
                 <div class="companion-message-stack">
                   <div class="cmp-chat-bubble companion-bubble" class:cmp-skeleton={item.pending && !item.text}><Markdown text={item.text} /></div>
@@ -359,7 +416,7 @@
               </article>
             {:else if item.kind === "image"}
               <article class="cmp-chat cmp-chat-start companion-row incoming" data-testid={`image-${item.id}`}>
-                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder message-avatar">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div>
+                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder rounded-full message-avatar"><div class="companion-avatar-crop rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div></div>
                 <div class="cmp-chat-bubble companion-media">
                   {#if item.state === "running" || item.state === "loading"}<div class="cmp-skeleton" style="height:260px"></div><div style="padding:12px">正在画一张图…</div>
                   {:else if imageUrls[item.id]}<button class="companion-media-button" aria-label={"查看大图：" + item.alt} on:click={() => showLightbox(item)}><img src={imageUrls[item.id]} alt={item.alt} /></button>
@@ -369,7 +426,7 @@
               </article>
             {:else if item.kind === "voice"}
               <article class="cmp-chat cmp-chat-start companion-row incoming" data-testid={`voice-${item.id}`}>
-                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder message-avatar">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div>
+                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder rounded-full message-avatar"><div class="companion-avatar-crop rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div></div>
                 <div class="cmp-chat-bubble companion-bubble companion-voice" class:is-playing={voiceState(item.id).playing}>
                   {#if voiceUrls[item.id]}
                     <audio class="companion-audio" preload="none" src={voiceUrls[item.id]} aria-hidden="true" tabindex="-1" on:loadedmetadata={(event) => onVoiceLoaded(item.id, event)} on:timeupdate={(event) => onVoiceTime(item.id, event)} on:play={() => onVoicePlay(item.id)} on:pause={() => onVoicePause(item.id)} on:ended={() => onVoiceEnded(item.id)} on:error={() => voiceErrors = { ...voiceErrors, [item.id]: "语音暂时无法播放，文字稿仍可查看。" }}></audio>
@@ -418,20 +475,20 @@
     </div>
   </div>
   {#if lightbox}
-    <div class="companion-lightbox" role="presentation" on:click={(event) => event.currentTarget === event.target && closeLightbox()}>
-      <dialog bind:this={lightboxDialog} open class="companion-lightbox-dialog cmp-modal-box" aria-labelledby="lightbox-title">
-        <h2 id="lightbox-title" class="sr-only">图片预览：{lightbox.alt}</h2>
+    <dialog bind:this={lightboxDialog} id="companion-image-lightbox" class="cmp-modal companion-lightbox" aria-labelledby="lightbox-title" on:close={onLightboxClose}>
+      <div class="cmp-modal-box companion-lightbox-dialog">
+        <h2 id="lightbox-title" class="companion-sr-only">图片预览：{lightbox.alt}</h2>
         <button class="cmp-btn cmp-btn-neutral companion-lightbox-close" aria-label="关闭大图" on:click={() => closeLightbox()}>×</button>
         {#if lightboxUrl}<img src={lightboxUrl} alt={lightbox.alt} />{:else}<div class="cmp-loading cmp-loading-spinner"></div>{/if}
-      </dialog>
-    </div>
+      </div>
+      <form method="dialog" class="cmp-modal-backdrop companion-lightbox-backdrop"><button type="submit" aria-label="关闭图片预览背景">关闭</button></form>
+    </dialog>
   {/if}
 </div>
-<div class="sr-only" aria-live="assertive">{liveAnnouncement}</div>
+<div class="companion-sr-only" aria-live="assertive">{liveAnnouncement}</div>
 
 <style>
-  .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
-  .cmp-avatar-placeholder { display:grid; place-items:center; overflow:hidden; border-radius:50%; background:color-mix(in srgb, var(--color-primary) 20%, var(--color-base-200)); color:var(--color-primary); font-weight:700; }
-  .cmp-avatar-placeholder img { width:100%; height:100%; object-fit:cover; }
+  .companion-sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+  .companion-avatar-crop { background:color-mix(in srgb, var(--color-primary) 20%, var(--color-base-200)); color:var(--color-primary); font-weight:700; }
   @media (max-width: 520px) { .companion-timeline { padding-bottom:8px; } .companion-composer { padding-inline:9px; } .companion-voice { min-width:0; flex-wrap:wrap; } .companion-voice audio { max-width:180px; } }
 </style>

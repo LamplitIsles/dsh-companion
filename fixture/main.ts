@@ -1,9 +1,13 @@
-import Companion from "../src/client/Companion.svelte";
+import { mount, unmount } from "svelte";
+import { writable } from "svelte/store";
+import CompanionBridge from "../src/client/CompanionBridge.svelte";
+import type { CompanionBridgeProps } from "../src/client/companion-bridge.js";
 import { companionStyles } from "../src/client/theme.js";
 import daisyStyles from "../src/client/daisy.css?inline";
 import type { CompanionProjection } from "../src/projection.js";
 
-const style = document.createElement("style"); style.textContent = `@font-face{font-family:'Companion Noto Sans SC';src:url('/fonts/NotoSansSC-Companion.woff2') format('woff2');font-weight:100 900;font-display:block}@scope (#dsh-companion){${daisyStyles}}${companionStyles.replace('ui-rounded, "SF Pro Rounded", system-ui, sans-serif', '"Companion Noto Sans SC", ui-rounded, "SF Pro Rounded", system-ui, sans-serif')}`; document.head.appendChild(style);
+const fixtureDaisyStyles = daisyStyles.replace(/:root:has\(input\.theme-controller\[value=[^)]+\]:checked\),?/gu, "").replace(/:root\b/gu, ":scope").replace(/\[data-theme=["']?(sticker-messenger|night-voyage)["']?\]/gu, ":scope[data-theme=$1]");
+const style = document.createElement("style"); style.textContent = `@font-face{font-family:'Companion Noto Sans SC';src:url('/fonts/NotoSansSC-Companion.woff2') format('woff2');font-weight:100 900;font-display:block}@scope (#dsh-companion){${fixtureDaisyStyles}}${companionStyles.replace('ui-rounded, "SF Pro Rounded", system-ui, sans-serif', '"Companion Noto Sans SC", ui-rounded, "SF Pro Rounded", system-ui, sans-serif')}`; document.head.appendChild(style);
 const svgDocument = "<svg xmlns='http://www.w3.org/2000/svg' width='640' height='420' viewBox='0 0 640 420'><rect width='640' height='420' rx='34' fill='#ffc857'/><circle cx='180' cy='190' r='86' fill='#f26d85'/><circle cx='460' cy='190' r='86' fill='#76c9bc'/></svg>";
 const svg = `data:image/svg+xml,${encodeURIComponent(svgDocument)}`;
 const query = new URLSearchParams(location.search);
@@ -36,7 +40,7 @@ const root = document.getElementById("fixture")!;
 let revokedImageUrls = 0;
 const revokeObjectUrl = URL.revokeObjectURL.bind(URL);
 URL.revokeObjectURL = (url: string) => { revokedImageUrls += 1; revokeObjectUrl(url); };
-const component = new Companion({ target: root, props: {
+const fixtureProps: CompanionBridgeProps = {
   projection,
   scheme: query.get("theme") === "dark" ? "dark" : "light",
   sessions: [
@@ -46,15 +50,42 @@ const component = new Companion({ target: root, props: {
   ],
   identity: { companionName: "小灯", companionAvatar: svg, userName: "小岛", userAvatar: svg, preferredAddress: "小岛", signature: query.get("signature") === "empty" ? "" : "把平凡日子折成星星，等风来时再写一行很长很长的晚安", ...mood, affinity: 67, affinityStage: "亲近" },
   actions: { send: async () => undefined, selectSession: async () => undefined, loadOlder: async () => undefined, attachmentUrl: async () => URL.createObjectURL(new Blob([svgDocument], { type: "image/svg+xml" })), prepareVoice: async (text: string) => { if (text.includes("失败")) throw new Error("fixture voice failure"); return "/kepos-tts/audio/fixture.mp3"; } },
-}});
+  workspaceReady: true,
+  sessionReady: true,
+};
+const propsStore = writable(fixtureProps);
+const component = mount(CompanionBridge, { target: root, props: { propsStore } });
+const mountedCompanionRoot = document.getElementById("dsh-companion");
 
-declare global { interface Window { __companionFixture?: { replaceImage(): void; removeImage(): void; revoked(): number }; } }
+declare global {
+  interface Window {
+    __companionFixture?: {
+      replaceImage(): void;
+      removeImage(): void;
+      setTheme(theme: "light" | "dark"): void;
+      setStatus(status: CompanionProjection["status"]): void;
+      setIdentity(patch: Partial<CompanionBridgeProps["identity"]>): void;
+      revoked(): number;
+      rootIsStable(): boolean;
+      dispose(): void;
+      unmountCalls(): number;
+    };
+  }
+}
+let disposed = false;
+let unmountCount = 0;
 window.__companionFixture = {
   replaceImage() {
-    component.$set({ projection: { ...projection, items: projection.items.map((item) => item.kind === "image" && item.id === "imagegen:demo:img" ? { ...item, attachment: { ...item.attachment!, attachmentId: "demo-replacement" as never } } : item) } });
+    propsStore.update((current) => ({ ...current, projection: { ...current.projection!, items: current.projection!.items.map((item) => item.kind === "image" && item.id === "imagegen:demo:img" ? { ...item, attachment: { ...item.attachment!, attachmentId: "demo-replacement" as never } } : item) } }));
   },
   removeImage() {
-    component.$set({ projection: { ...projection, items: projection.items.filter((item) => item.id !== "imagegen:demo:img") } });
+    propsStore.update((current) => ({ ...current, projection: { ...current.projection!, items: current.projection!.items.filter((item) => item.id !== "imagegen:demo:img") } }));
   },
+  setTheme(theme) { propsStore.update((current) => ({ ...current, scheme: theme })); },
+  setStatus(status) { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, status } })); },
+  setIdentity(patch) { propsStore.update((current) => ({ ...current, identity: { ...current.identity!, ...patch } })); },
   revoked: () => revokedImageUrls,
+  rootIsStable: () => document.getElementById("dsh-companion") === mountedCompanionRoot,
+  dispose() { if (!disposed) { disposed = true; unmountCount += 1; void unmount(component); } },
+  unmountCalls: () => unmountCount,
 };
