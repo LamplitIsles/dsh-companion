@@ -264,9 +264,17 @@ export function projectConversation(snapshot: unknown, connected = true): Compan
     if (text) items.push({ id: `pending:${identity}`, kind: "text", side: "outgoing", text, pending: true });
   }
   const promptError = asRecord(root.promptError);
+  const error = asRecord(promptError?.error);
+  const promptErrorNotice = promptError?.op === "stop"
+    ? "暂时无法停止当前回复，请重试。"
+    : typeof error?.message === "string"
+      ? error.message
+      : "这条消息没有发送成功，可以重试。";
+  const promptErrorAnnouncement = promptError?.op === "stop"
+    ? "暂时无法停止当前回复，请重试。"
+    : promptError ? "这条消息没有发送成功，可以重试。" : undefined;
   if (promptError) {
-    const error = asRecord(promptError.error);
-    items.push({ id: "prompt-error", kind: "notice", side: "incoming", tone: "error", text: typeof error?.message === "string" ? error.message : "这条消息没有发送成功，可以重试。" });
+    items.push({ id: "prompt-error", kind: "notice", side: "incoming", tone: "error", text: promptErrorNotice });
   }
   const lastError = typeof root.lastAgentError === "string" ? root.lastAgentError : undefined;
   if (lastError) items.push({ id: "agent-error", kind: "notice", side: "incoming", tone: "error", text: lastError });
@@ -281,7 +289,7 @@ export function projectConversation(snapshot: unknown, connected = true): Compan
     openState,
     hasMore: root.hasMore === true,
     loadingOlder: root.loadingOlder === true,
-    ...(promptError ? { promptError: "这条消息没有发送成功，可以重试。" } : {}),
+    ...(promptErrorAnnouncement ? { promptError: promptErrorAnnouncement } : {}),
     ...(lastError ? { lastAgentError: lastError } : {}),
   };
 }

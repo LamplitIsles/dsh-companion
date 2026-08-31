@@ -101,6 +101,23 @@ describe("chat projection", () => {
     expect(projectConversation(admitted).items.some((item) => item.id === "pending:queued-1")).toBe(false);
   });
 
+  it("reports a rejected stop as a stop failure instead of a send failure", () => {
+    const result = projectConversation({
+      promptError: { op: "stop", error: { message: "cancel-rejected" } },
+    });
+
+    expect(result.promptError).toBe("暂时无法停止当前回复，请重试。");
+    expect(result.items).toContainEqual(expect.objectContaining({
+      id: "prompt-error",
+      text: "暂时无法停止当前回复，请重试。",
+    }));
+
+    const rejectedSend = projectConversation({
+      promptError: { op: "prompt", error: { message: "host-send-rejected" } },
+    });
+    expect(rejectedSend.items).toContainEqual(expect.objectContaining({ text: "host-send-rejected" }));
+  });
+
   it("uses the live connection observable even while a Session snapshot remains mounted", () => {
     const sessionSnapshot = { nodes: [{ kind: "assistant", seq: 1, text: "仍在这里" }], openState: "open", running: false };
     expect(projectConversation(sessionSnapshot, false).status).toBe("reconnecting");
