@@ -28,7 +28,7 @@ export interface TimelineImage {
   /** Stable source key used when a durable ImageGen call settles into its attachment. */
   projectionKey?: string;
   kind: "image";
-  side: "incoming";
+  side: MessageSide;
   state: "loading" | "ready" | "failed" | "running";
   attachment?: ImageAttachmentRef;
   alt: string;
@@ -157,7 +157,7 @@ function assistantText(node: Record<string, unknown>): string {
   return parts.join("");
 }
 
-function assistantMedia(node: Record<string, unknown>, id: string, time?: number): TimelineItem[] {
+function nodeMedia(node: Record<string, unknown>, id: string, side: MessageSide, time?: number): TimelineItem[] {
   const items: TimelineItem[] = [];
   const blocks = contentOf(node);
   let imageIndex = 0;
@@ -169,10 +169,10 @@ function assistantMedia(node: Record<string, unknown>, id: string, time?: number
       items.push({
         id: imageProjectionId(id, imageIndex++),
         kind: "image",
-        side: "incoming",
+        side,
         state: "ready",
         attachment,
-        alt: attachment.name ?? "Companion image",
+        alt: attachment.name ?? (side === "incoming" ? "Companion 图片" : "图片"),
         time,
       });
     }
@@ -180,7 +180,7 @@ function assistantMedia(node: Record<string, unknown>, id: string, time?: number
   // A node may use a single attachment property rather than content[].
   if (items.length === 0 && node.attachment && imageFromContent([{ type: "image", attachment: node.attachment }])) {
     const attachment = imageFromContent([{ type: "image", attachment: node.attachment }])!;
-    items.push({ id: imageProjectionId(id, 0), kind: "image", side: "incoming", state: "ready", attachment, alt: attachment.name ?? "Companion image", time });
+    items.push({ id: imageProjectionId(id, 0), kind: "image", side, state: "ready", attachment, alt: attachment.name ?? "图片", time });
   }
   return items;
 }
@@ -251,6 +251,7 @@ export function projectConversation(snapshot: unknown, connected = true, continu
     if (isUserNode(node)) {
       const text = textFromValue(node.text) ?? textFromValue(node.content) ?? "";
       if (text) items.push({ id, kind: "text", side: "outgoing", text, time });
+      items.push(...nodeMedia(node, id, "outgoing", time));
       if (sequence !== undefined) emitContinuityRecords((anchorSeq) => anchorSeq === sequence);
       continue;
     }
@@ -263,7 +264,7 @@ export function projectConversation(snapshot: unknown, connected = true, continu
       const passage = parseTtsPassage(text, true);
       const visibleText = passage ? `${text.slice(0, passage.start)}${text.slice(passage.end)}`.trim() : text;
       if (visibleText) items.push({ id, kind: "text", side: "incoming", text: visibleText, time });
-      items.push(...assistantMedia(node, id, time));
+      items.push(...nodeMedia(node, id, "incoming", time));
       if (passage) items.push({ id: ttsProjectionId(id, passage), kind: "voice", side: "incoming", text: passage.text, status: "preparing", time });
       if (sequence !== undefined) emitContinuityRecords((anchorSeq) => anchorSeq === sequence);
       continue;

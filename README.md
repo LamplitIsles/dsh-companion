@@ -36,7 +36,7 @@ DSH continues to stream and persist model output internally, while Companion sho
 
 While ImageGen is running, its image skeleton and “正在画一张图…” status replace the generic typing bubble. If the agent resumes text generation after the image settles, the typing indicator returns with a fresh long-wait timer.
 
-The Companion deliberately does not include a Workspace picker, session list/new-chat flow, model or preset controls, permissions/approvals, reasoning, Trajectory, generic Tool cards, prompt-injection inspection, file upload, voice input, notifications, or multi-contact UI.
+The Companion deliberately does not include a Workspace picker, session list/new-chat flow, model or preset controls, permissions/approvals, reasoning, Trajectory, generic Tool cards, prompt-injection inspection, generic file upload, voice input, notifications, or multi-contact UI. It supports image messages through DSH's Session attachment contract.
 
 ## Configuration and recovery
 

@@ -100,6 +100,51 @@ test("draft edits stay local to the composer", async ({ page }) => {
   expect(timing).toBeLessThan(50);
 });
 
+test("admits photos from the library or desktop paste and sends them as a draft", async ({ page }) => {
+  await page.goto("/");
+  const textarea = page.getByRole("textbox", { name: "写消息" });
+  const send = page.getByRole("button", { name: "发送消息" });
+  const drafts = page.getByRole("group", { name: "待发送图片" });
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL9pwAAAABJRU5ErkJggg==", "base64");
+
+  await expect(page.getByRole("button", { name: "选择照片；长按拍照" })).toBeEnabled();
+  await page.locator("#companion-image-library").setInputFiles({ name: "island.png", mimeType: "image/png", buffer: png });
+  await expect(drafts).toBeVisible();
+  await expect(drafts.getByRole("img", { name: "island.png" })).toBeVisible();
+  await expect.poll(() => drafts.locator("img").evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBe(1);
+  await expect(send).toBeEnabled();
+  await send.click();
+  await expect(drafts).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__companionFixture?.sendCalls() ?? 0)).toBe(1);
+
+  const pasteResult = await textarea.evaluate((element) => {
+    const bytes = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL9pwAAAABJRU5ErkJggg=="), (character) => character.charCodeAt(0));
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([bytes], "clipboard.png", { type: "image/png" }));
+    const event = new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: transfer });
+    return !element.dispatchEvent(event);
+  });
+  expect(pasteResult).toBe(true);
+  await expect(drafts.getByRole("img", { name: "clipboard.png" })).toBeVisible();
+  await expect.poll(() => drafts.locator("img").evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBe(1);
+  await drafts.getByRole("button", { name: "移除图片" }).click();
+  await expect(drafts).toHaveCount(0);
+
+  const cameraClicks = await page.evaluate(async () => {
+    const camera = document.querySelector<HTMLInputElement>("#companion-image-camera")!;
+    const picker = document.querySelector<HTMLButtonElement>("[aria-label='选择照片；长按拍照']")!;
+    let clicks = 0;
+    const count = () => { clicks += 1; };
+    camera.addEventListener("click", count);
+    picker.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch", pointerId: 9 }));
+    await new Promise((resolve) => window.setTimeout(resolve, 475));
+    picker.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerType: "touch", pointerId: 9 }));
+    camera.removeEventListener("click", count);
+    return clicks;
+  });
+  expect(cameraClicks).toBe(1);
+});
+
 test("offers and accepts the /compact command completion", async ({ page }) => {
   await page.goto("/");
   const textarea = page.getByRole("textbox", { name: "写消息" });
