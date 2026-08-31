@@ -102,13 +102,14 @@ test("draft edits stay local to the composer", async ({ page }) => {
 
 test("admits photos from the library or desktop paste and sends them as a draft", async ({ page }) => {
   await page.addInitScript(() => {
-    const cameraFixture = { cancel: false, fail: false, options: undefined as unknown };
+    const cameraFixture = { cancel: false, cancelNoCode: false, fail: false, options: undefined as unknown };
     const capacitor = ((window as unknown as { Capacitor?: Record<string, unknown> }).Capacitor ??= {});
     const headers = Array.isArray(capacitor.PluginHeaders) ? capacitor.PluginHeaders : [];
     capacitor.PluginHeaders = [...headers, { name: "Camera", methods: [{ name: "takePhoto", rtype: "promise" }] }];
     capacitor.nativePromise = (plugin: string, method: string, options: unknown) => {
       if (plugin !== "Camera" || method !== "takePhoto") return Promise.reject(new Error("unexpected-plugin-call"));
       cameraFixture.options = options;
+      if (cameraFixture.cancelNoCode) return Promise.reject(new Error("User cancelled photos app"));
       if (cameraFixture.cancel) return Promise.reject({ code: "OS-PLUG-CAMR-0006", message: "cancelled" });
       if (cameraFixture.fail) return Promise.reject(new Error("camera-failed"));
       return Promise.resolve({ type: 0, saved: false, webPath: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL9pwAAAABJRU5ErkJggg==", metadata: { format: "png" } });
@@ -150,7 +151,7 @@ test("admits photos from the library or desktop paste and sends them as a draft"
   await picker.dispatchEvent("pointerup", { bubbles: true, pointerType: "touch", pointerId: 9 });
   await expect(drafts.getByRole("img", { name: "camera-photo.png" })).toBeVisible();
   await expect(send).toBeEnabled();
-  expect(await page.evaluate(() => (window as unknown as { __cameraFixture?: { options?: unknown } }).__cameraFixture?.options)).toEqual({ cameraDirection: "REAR", saveToGallery: false, includeMetadata: true });
+  expect(await page.evaluate(() => (window as unknown as { __cameraFixture?: { options?: unknown } }).__cameraFixture?.options)).toEqual({ saveToGallery: false, includeMetadata: true });
 
   await page.evaluate(() => { (window as unknown as { __cameraFixture?: { cancel: boolean } }).__cameraFixture!.cancel = true; });
   await picker.dispatchEvent("pointerdown", { bubbles: true, pointerType: "touch", pointerId: 10 });
@@ -160,8 +161,21 @@ test("admits photos from the library or desktop paste and sends them as a draft"
   await expect(textarea).toBeEnabled();
 
   await page.evaluate(() => {
-    const fixture = (window as unknown as { __cameraFixture?: { cancel: boolean; fail: boolean } }).__cameraFixture!;
+    const fixture = (window as unknown as { __cameraFixture?: { cancel: boolean; cancelNoCode: boolean } }).__cameraFixture!;
     fixture.cancel = false;
+    fixture.cancelNoCode = true;
+  });
+  await picker.dispatchEvent("pointerdown", { bubbles: true, pointerType: "touch", pointerId: 12 });
+  await page.waitForTimeout(475);
+  await picker.dispatchEvent("pointerup", { bubbles: true, pointerType: "touch", pointerId: 12 });
+  await expect(drafts.getByRole("img", { name: "camera-photo.png" })).toBeVisible();
+  await expect(page.locator(".companion-sr-only").last()).toHaveText("");
+  await expect(textarea).toBeEnabled();
+
+  await page.evaluate(() => {
+    const fixture = (window as unknown as { __cameraFixture?: { cancel: boolean; cancelNoCode: boolean; fail: boolean } }).__cameraFixture!;
+    fixture.cancel = false;
+    fixture.cancelNoCode = false;
     fixture.fail = true;
   });
   await picker.dispatchEvent("pointerdown", { bubbles: true, pointerType: "touch", pointerId: 11 });
