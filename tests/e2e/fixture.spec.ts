@@ -231,34 +231,32 @@ test("chat shell has rendered Markdown, viewport scrolling, sessions, rounded fo
   expect(focusStyle.radius).toBeGreaterThanOrEqual(20);
 
   const bubbles = await page.evaluate(() => {
-    const measure = (id: string, topCorner: "borderTopLeftRadius" | "borderTopRightRadius", bottomCorner: "borderBottomLeftRadius" | "borderBottomRightRadius") => {
+    const measure = (id: string) => {
       const row = document.querySelector<HTMLElement>(`[data-testid="message-${id}"]`)!;
       const avatar = row.querySelector<HTMLElement>(".message-avatar")!;
       const bubble = row.querySelector<HTMLElement>(".companion-bubble")!;
       const style = getComputedStyle(bubble);
       const tail = getComputedStyle(bubble, "::before");
       return {
-        avatarTop: avatar.getBoundingClientRect().top,
-        bubbleTop: bubble.getBoundingClientRect().top,
-        topCorner: Number.parseFloat(style[topCorner]),
-        bottomCorner: Number.parseFloat(style[bottomCorner]),
-        tailTop: tail.top,
-        tailBottom: tail.bottom,
+        avatarWidth: avatar.getBoundingClientRect().width,
+        avatarHeight: avatar.getBoundingClientRect().height,
+        corners: [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomRightRadius, style.borderBottomLeftRadius],
+        tailDisplay: tail.display,
       };
     };
     return {
-      incoming: measure("history-1", "borderTopLeftRadius", "borderBottomLeftRadius"),
-      outgoing: measure("history-2", "borderTopRightRadius", "borderBottomRightRadius"),
+      incoming: measure("history-1"),
+      outgoing: measure("history-2"),
     };
   });
-  expect(Math.abs(bubbles.incoming.avatarTop - bubbles.incoming.bubbleTop)).toBeLessThanOrEqual(1);
-  expect(Math.abs(bubbles.outgoing.avatarTop - bubbles.outgoing.bubbleTop)).toBeLessThanOrEqual(1);
-  expect(bubbles.incoming.topCorner).toBeLessThan(bubbles.incoming.bottomCorner);
-  expect(bubbles.outgoing.topCorner).toBeLessThan(bubbles.outgoing.bottomCorner);
-  expect(bubbles.incoming.tailTop).toBe("0px");
-  expect(Number.parseFloat(bubbles.incoming.tailBottom)).toBeGreaterThan(0);
-  expect(bubbles.outgoing.tailTop).toBe("0px");
-  expect(Number.parseFloat(bubbles.outgoing.tailBottom)).toBeGreaterThan(0);
+  expect(bubbles.incoming.avatarWidth).toBe(40);
+  expect(bubbles.incoming.avatarHeight).toBe(40);
+  expect(bubbles.outgoing.avatarWidth).toBe(40);
+  expect(bubbles.outgoing.avatarHeight).toBe(40);
+  expect(bubbles.incoming.corners).toEqual(["22px", "22px", "22px", "22px"]);
+  expect(bubbles.outgoing.corners).toEqual(["22px", "22px", "22px", "22px"]);
+  expect(bubbles.incoming.tailDisplay).toBe("none");
+  expect(bubbles.outgoing.tailDisplay).toBe("none");
 
   const avatar = page.getByRole("button", { name: "查看 Companion 关系资料" });
   const avatarBox = await avatar.boundingBox();
