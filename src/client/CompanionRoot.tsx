@@ -7,6 +7,7 @@ import { affinityStage, MOOD_LABELS, selectCompanionSession } from "./relationsh
 import { projectConversation } from "../projection.js";
 import { TtsPreparationCache } from "./voice-cache.js";
 import { queueCompanionPrompt } from "./admission.js";
+import { companionSessionOpenPlan } from "./session-opening.js";
 import type { ClientSettings } from "./settings.js";
 import { RPC_CHANNEL as TTS_CHANNEL, RPC_ENDPOINT as TTS_ENDPOINT } from "./tts-contract.js";
 
@@ -120,10 +121,14 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
   }, [workspace?.id, remembered]);
 
   useEffect(() => {
-    if (!workspace || !workspaceList.baselinesReady) return;
-    if (remembered) return;
+    const plan = companionSessionOpenPlan(workspaceList.baselinesReady, workspace?.id, remembered);
+    if (!plan) return;
+    if (plan.kind === "open") {
+      ctx.sessions.open(plan.sessionId as never);
+      return;
+    }
     let disposed = false;
-    void ctx.workspaces.connectWorkspace(workspace.id as never).then((id) => { if (!disposed) ctx.sessions.open(id); }).catch(() => undefined);
+    void ctx.workspaces.connectWorkspace(plan.workspaceId as never).then((id) => { if (!disposed) ctx.sessions.open(id); }).catch(() => undefined);
     return () => { disposed = true; };
   }, [ctx, workspace?.id, workspaceList.baselinesReady, remembered]);
 

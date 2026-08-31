@@ -4,11 +4,13 @@ test("fixture has complete media states, accessible overlays, and no duplicate i
   await page.goto("/");
   await page.evaluate(() => document.fonts.ready);
   await expect(page.getByTestId("companion-root")).toHaveAttribute("data-theme", "sticker-messenger");
+  await expect(page.locator(".companion-header")).not.toContainText("把平凡日子折成星星");
   await expect(page.getByRole("button", { name: /今晚的海/ })).toBeVisible();
   await expect(page.getByTestId("voice-voice:demo:1:abc").getByText("文字稿")).toBeVisible();
   const avatar = page.getByRole("button", { name: "查看 Companion 关系资料" });
   await avatar.focus();
   await avatar.click();
+  await expect(page.getByRole("dialog")).toContainText("把平凡日子折成星星");
   await expect(page.getByRole("button", { name: "关闭关系资料" })).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await expect(page.getByRole("button", { name: "知道了" })).toBeFocused();

@@ -242,7 +242,6 @@
         </button>
         <div class="companion-header-copy">
           <div class="companion-name">{identity.companionName}</div>
-          <div class="companion-signature" title={identity.signature || "还没有签名"}>{identity.signature || "在这里，慢慢聊。"}</div>
           <div class="companion-presence" aria-live="polite"><span class="cmp-status {projection.status === 'working' ? 'cmp-status-warning' : projection.status === 'reconnecting' ? 'cmp-status-error' : 'cmp-status-success'}"></span>{statusText} · {identity.moodLabel}</div>
         </div>
         <a class="companion-advanced" href="/" on:click={() => dispatch("advanced")}>高级 DSH</a>

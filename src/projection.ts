@@ -77,7 +77,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 function nodeId(node: Record<string, unknown>, fallback: string): string {
-  for (const key of ["id", "key", "seq", "messageId", "callId"]) {
+  for (const key of ["key", "id", "seq", "messageId", "callId"]) {
     const value = node[key];
     if (typeof value === "string" || typeof value === "number") return String(value);
   }
@@ -128,6 +128,10 @@ function isUserNode(node: Record<string, unknown>): boolean {
 function isAssistantNode(node: Record<string, unknown>): boolean {
   const kind = kindOf(node).toLowerCase();
   return kind.includes("assistant") || kind === "model" || node.role === "assistant";
+}
+
+function isSteeringNode(node: Record<string, unknown>): boolean {
+  return kindOf(node).toLowerCase() === "steering";
 }
 
 function isFinalized(node: Record<string, unknown>): boolean {
@@ -182,11 +186,21 @@ function orderedNodes(snapshot: unknown): readonly unknown[] {
     const store = asRecord(chat.nodes);
     const order = Array.isArray(chat.order) ? chat.order : [];
     if (store && typeof store.get === "function" && order.length) {
-      return order.map((key) => (store.get as (key: string) => unknown)(String(key))).filter(Boolean);
+      return order.map((key) => (store.get as (key: string) => unknown).call(store, String(key))).filter(Boolean);
     }
   }
   if (Array.isArray(root.nodes)) return root.nodes;
   return [];
+}
+
+/** Flatten DSH's keyed Chat view node while retaining its render-stable key. */
+function normalizeChatNode(value: unknown): Record<string, unknown> | undefined {
+  const wrapper = asRecord(value);
+  if (!wrapper) return undefined;
+  const data = asRecord(wrapper.data);
+  if (!data || typeof wrapper.key !== "string" || typeof wrapper.kind !== "string") return wrapper;
+  if (wrapper.visibility === "hidden") return undefined;
+  return { ...data, key: wrapper.key, kind: wrapper.kind };
 }
 
 function pendingNodes(snapshot: unknown): readonly unknown[] {
@@ -198,9 +212,10 @@ function pendingNodes(snapshot: unknown): readonly unknown[] {
 export function projectConversation(snapshot: unknown, connected = true): CompanionProjection {
   const root = asRecord(snapshot) ?? {};
   const items: TimelineItem[] = [];
+  const admittedQueueIds = new Set<string>();
   const nodes = orderedNodes(snapshot);
   for (let index = 0; index < nodes.length; index += 1) {
-    const node = asRecord(nodes[index]);
+    const node = normalizeChatNode(nodes[index]);
     if (!node) continue;
     const id = nodeId(node, `node-${index}`);
     const time = nodeTime(node);
@@ -218,6 +233,13 @@ export function projectConversation(snapshot: unknown, connected = true): Compan
       if (passage) items.push({ id: ttsProjectionId(id, passage), kind: "voice", side: "incoming", text: passage.text, status: "preparing", time });
       continue;
     }
+    if (isSteeringNode(node)) {
+      const text = textFromValue(node.text) ?? textFromValue(node.content) ?? "";
+      const messageId = typeof node.messageId === "string" ? node.messageId : undefined;
+      if (messageId) admittedQueueIds.add(messageId);
+      if (text) items.push({ id, projectionKey: id, kind: "text", side: "outgoing", text, time });
+      continue;
+    }
     const call = asRecord(node.call);
     const image = recognizeImageGenResult({ ...node, name: node.name ?? node.toolName ?? call?.name, callId: node.callId ?? nodeId(node, id) }, id);
     if (image) {
@@ -232,12 +254,11 @@ export function projectConversation(snapshot: unknown, connected = true): Compan
     if (text) items.push({ id, kind: "text", side: "incoming", text, streaming: true });
   }
   const pending = pendingNodes(snapshot);
-  const durableIds = new Set(items.filter((item): item is TimelineText => item.kind === "text" && item.side === "outgoing").map((item) => item.id));
   for (let index = 0; index < pending.length; index += 1) {
     const row = asRecord(pending[index]);
     if (!row) continue;
     const identity = typeof row.messageId === "string" ? row.messageId : typeof row.id === "string" ? row.id : `pending-${index}`;
-    if (durableIds.has(identity)) continue;
+    if (admittedQueueIds.has(identity)) continue;
     const text = typeof row.text === "string" ? row.text : textFromValue(row.content) ?? "";
     if (text) items.push({ id: `pending:${identity}`, kind: "text", side: "outgoing", text, pending: true });
   }
@@ -250,9 +271,10 @@ export function projectConversation(snapshot: unknown, connected = true): Compan
   if (lastError) items.push({ id: "agent-error", kind: "notice", side: "incoming", tone: "error", text: lastError });
   const openState = root.openState === "error" ? "error" : root.openState === "loading" ? "loading" : root.openState === "cold" ? "cold" : "open";
   const running = root.running === true;
+  const timeline = dedupeTimeline(items);
   return {
-    items: dedupeTimeline(items),
-    pendingCount: items.filter((item) => item.kind === "text" && item.pending).length,
+    items: timeline,
+    pendingCount: timeline.filter((item) => item.kind === "text" && item.pending).length,
     running,
     status: deriveStatus({ connected, running, openState }),
     openState,

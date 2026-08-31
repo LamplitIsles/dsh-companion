@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createComposerState, reduceComposer, shouldSubmitEnter } from "../src/client/composer.js";
 import { queueCompanionPrompt } from "../src/client/admission.js";
 import { relationshipControlsWritable } from "../src/client/settings.js";
+import { companionSessionOpenPlan } from "../src/client/session-opening.js";
 
 describe("IME composer", () => {
   it("does not submit while composing and submits once after composition", () => {
@@ -30,5 +31,16 @@ describe("Companion admission", () => {
 
   it("surfaces rejection so the Svelte caller retains the draft", async () => {
     await expect(queueCompanionPrompt({ prompt: async () => ({ ok: false, error: { message: "rejected" } }) }, "保留我")).rejects.toThrow("rejected");
+  });
+});
+
+describe("Companion session opening", () => {
+  it("opens a remembered selected session once baselines are ready", () => {
+    expect(companionSessionOpenPlan(true, "workspace-a", "remembered-session")).toEqual({ kind: "open", sessionId: "remembered-session" });
+  });
+
+  it("opens a recent selected session and connects only without a selection", () => {
+    expect(companionSessionOpenPlan(true, "workspace-a", "recent-session")).toEqual({ kind: "open", sessionId: "recent-session" });
+    expect(companionSessionOpenPlan(true, "workspace-a", undefined)).toEqual({ kind: "connect", workspaceId: "workspace-a" });
   });
 });

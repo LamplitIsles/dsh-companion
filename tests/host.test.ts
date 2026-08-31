@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile, mkdir } from "node:fs/promises"
 import { join } from "node:path";
 import type { ToolRunContext } from "@deepseek-ai/dsh-tools";
 import { CompanionStateStore } from "../src/domain.js";
-import { CompanionHostController, RPC_CHANNEL, acceptedTurnKey, adjustAffinityForAcceptedTurn } from "../src/host.js";
+import { CompanionHostController, RPC_CHANNEL, acceptedTurnKey, adjustAffinityForAcceptedTurn, apply } from "../src/host.js";
 
 const temporary: string[] = [];
 afterEach(async () => { await Promise.all(temporary.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
@@ -62,5 +62,38 @@ describe("Host accepted-turn relationship contract", () => {
     await expect(handler("relationship/clear-signature", { workspaceId: "workspace-a" }, new AbortController().signal)).resolves.toMatchObject({ ok: true, value: { state: { signature: "" } } });
     await expect(handler("relationship/set-affinity", { workspaceId: "workspace-a", affinity: 101 }, new AbortController().signal)).rejects.toThrow("亲近度");
     await host.dispose();
+  });
+
+  it("preloads persisted relationship state before the first prompt callback is registered", async () => {
+    const directory = await mkdtemp("/tmp/dsh-companion-host-"); temporary.push(directory);
+    await mkdir(join(directory, ".dsh/dsh-companion"), { recursive: true });
+    await writeFile(join(directory, ".dsh/dsh-companion/state.json"), JSON.stringify({ mood: "tender", intensity: 2, affinity: 67, signature: "旧签名" }));
+    let prompt: ((context: { agent?: { session?: { header?: { cwd?: string } } } }) => string) | undefined;
+    const scope = {
+      get: () => ({ workspaceId: "workspace-a", companionName: "Companion", userName: "你", preferredAddress: "你", defaultAffinity: 50 }),
+      update: async () => undefined,
+      watch: () => () => undefined,
+    };
+    const ctx = {
+      fs: {
+        resolve: async (path: string, options?: { cwd?: string }) => join(options?.cwd ?? directory, path),
+        stat: async (path: string) => { try { const value = await stat(path); return { type: value.isFile() ? "file" : "directory", size: value.size }; } catch { return undefined; } },
+        readText: async (path: string) => readFile(path, "utf8"),
+        writeText: async (path: string, content: string) => { await mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true }); await writeFile(path, content); },
+        mkdir: async (path: string, options?: { cwd?: string }) => { await mkdir(join(options?.cwd ?? directory, path), { recursive: true }); },
+      },
+      settings: { register: () => scope },
+      systemPrompt: { context: ({ text }: { text: typeof prompt }) => { prompt = text; return () => undefined; } },
+      tools: { register: () => undefined },
+      connection: { rpc: { handle: () => () => undefined } },
+      workspaceRegistry: { get: (id: string) => id === "workspace-a" ? { id, path: directory, sessionIds: [] } : undefined, list: () => [] },
+      webServer: { port: 1, register: () => () => undefined },
+    };
+    const lifecycle = apply(ctx as never);
+    const loaded = await lifecycle.next();
+    expect(prompt?.({ agent: { session: { header: { cwd: directory } } } })).toContain("affinity=67");
+    expect(prompt?.({ agent: { session: { header: { cwd: directory } } } })).toContain('signature="旧签名"');
+    await loaded.value?.();
+    await lifecycle.next();
   });
 });

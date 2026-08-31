@@ -36,6 +36,35 @@ describe("chat projection", () => {
     expect(replay.items[0]).toMatchObject({ id: "imagegen:call-1:att-1", state: "ready" });
   });
 
+  it("normalizes keyed DSH Chat nodes, including admitted steering and invisible compaction", () => {
+    const image = { attachmentId: "att-1", mediaType: "image/png", name: "海边的灯" };
+    const nodes = new Map<string, unknown>([
+      ["user-key", { key: "user-key", kind: "user", visibility: "visible", data: { seq: 1, time: 1, content: [{ type: "text", text: "你好" }] } }],
+      ["assistant-key", { key: "assistant-key", kind: "assistant", visibility: "visible", data: { seq: 2, time: 2, blocks: [{ kind: "text", text: "收到" }, { kind: "image", attachment: image }] } }],
+      ["imagegen-key", { key: "imagegen-key", kind: "tool-result", visibility: "visible", data: { seq: 3, time: 3, callId: "call-1", call: { name: "kepos_image_generate", argsRaw: "{}" }, content: [{ type: "image", attachment: image }], isError: false } }],
+      ["steering-key", { key: "steering-key", kind: "steering", visibility: "visible", data: { seq: 4, time: 4, messageId: "queued-1", content: [{ type: "text", text: "补充一句" }] } }],
+      ["compaction-key", { key: "compaction-key", kind: "compaction", visibility: "visible", data: { seq: 5, time: 5, summary: "模型专用摘要" } }],
+    ]);
+    const result = projectConversation({ chat: { order: ["user-key", "assistant-key", "imagegen-key", "steering-key", "compaction-key"], nodes }, queue: [{ messageId: "queued-1", content: [{ type: "text", text: "补充一句" }] }] });
+    expect(result.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "user-key", kind: "text", side: "outgoing", text: "你好" }),
+      expect.objectContaining({ id: "assistant-key", kind: "text", side: "incoming", text: "收到" }),
+      expect.objectContaining({ id: "image:assistant-key:0", kind: "image", attachment: image }),
+      expect.objectContaining({ id: "imagegen:call-1:att-1", projectionKey: "imagegen:call-1", kind: "image", attachment: image }),
+      expect.objectContaining({ id: "steering-key", projectionKey: "steering-key", kind: "text", side: "outgoing", text: "补充一句" }),
+    ]));
+    expect(result.items.some((item) => item.id === "pending:queued-1" || (item.kind === "text" && item.text === "模型专用摘要"))).toBe(false);
+    expect(result.pendingCount).toBe(0);
+  });
+
+  it("keeps a queue row only until its keyed steering node arrives", () => {
+    const queued = { chat: { order: [], nodes: new Map() }, queue: [{ messageId: "queued-1", content: [{ type: "text", text: "补充一句" }] }] };
+    const admitted = { chat: { order: ["steering-key"], nodes: new Map([["steering-key", { key: "steering-key", kind: "steering", visibility: "visible", data: { seq: 1, time: 1, messageId: "queued-1", content: [{ type: "text", text: "补充一句" }] } }]]) }, queue: queued.queue };
+    expect(projectConversation(queued).items).toContainEqual(expect.objectContaining({ id: "pending:queued-1", pending: true }));
+    expect(projectConversation(admitted).items).toContainEqual(expect.objectContaining({ id: "steering-key", text: "补充一句" }));
+    expect(projectConversation(admitted).items.some((item) => item.id === "pending:queued-1")).toBe(false);
+  });
+
   it("uses the live connection observable even while a Session snapshot remains mounted", () => {
     const sessionSnapshot = { nodes: [{ kind: "assistant", seq: 1, text: "仍在这里" }], openState: "open", running: false };
     expect(projectConversation(sessionSnapshot, false).status).toBe("reconnecting");

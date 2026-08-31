@@ -37,7 +37,6 @@ export const companionStyles = `
 #dsh-companion .companion-avatar img { width: 100%; height: 100%; object-fit: cover; }
 #dsh-companion .companion-header-copy { min-width: 0; flex: 1; }
 #dsh-companion .companion-name { font-weight: 760; letter-spacing: -.01em; }
-#dsh-companion .companion-signature { color: color-mix(in srgb, var(--color-base-content) 65%, transparent); font-size: .82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #dsh-companion .companion-presence { display: inline-flex; align-items: center; gap: 6px; font-size: .75rem; color: color-mix(in srgb, var(--color-base-content) 65%, transparent); }
 #dsh-companion .companion-presence .cmp-status { width: 8px; height: 8px; }
 #dsh-companion .companion-timeline { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 24px clamp(14px, 4vw, 46px) 14px; scroll-behavior: smooth; }

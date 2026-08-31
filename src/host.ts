@@ -81,7 +81,6 @@ interface HostContextLike {
   workspaceRegistry: WorkspaceRegistryLike;
   /** Required by this web plugin solely for the pinned static-server alias. */
   webServer: WebServerLike;
-  effect?(effect: () => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>, name?: string): unknown;
 }
 
 export interface RelationshipView {
@@ -297,8 +296,13 @@ export class CompanionHostController {
     const identity = this.settings();
     const store = new CompanionStateStore({ workspacePath: workspace.path, defaultAffinity: identity.defaultAffinity, fs: this.fs });
     this.stores.set(workspace.id, store);
-    void store.load().catch(() => undefined);
     return store;
+  }
+
+  /** Complete the configured store load before prompt registrations become available. */
+  async initialize(): Promise<void> {
+    const configured = this.configuredWorkspace();
+    if (configured) await this.storeFor(configured.workspace).load();
   }
 
   async relationship(workspaceId?: string, signal?: AbortSignal): Promise<RelationshipView> {
@@ -350,7 +354,6 @@ export class CompanionHostController {
     }));
     const webServer = this.ctx.webServer;
     this.disposers.push(webServer.register({ kind: "prefix", path: "/companion", handler: (req, res) => companionAliasHandler(webServer, req, res) }));
-    if (this.ctx.effect) this.ctx.effect(() => () => { void this.dispose(); }, "dsh-companion: lifecycle");
   }
 
   async dispose(): Promise<void> {
@@ -362,7 +365,7 @@ export class CompanionHostController {
 export const name = "dsh-companion" as const;
 export const inject = ["fs", "settings", "systemPrompt", "tools", "connection", "workspaceRegistry", "webServer"] as const;
 
-export function apply(ctx: HostContextLike): CompanionHostController {
+export async function* apply(ctx: HostContextLike): AsyncGenerator<() => Promise<void>> {
   const settingsScope = ctx.settings.register<CompanionSettings>(SETTINGS_NAMESPACE, SettingsSchema, {
     applies: "live",
     validate: (value) => {
@@ -371,6 +374,7 @@ export function apply(ctx: HostContextLike): CompanionHostController {
     },
   });
   const controller = new CompanionHostController(ctx, settingsScope);
+  await controller.initialize();
   controller.register();
-  return controller;
+  yield () => controller.dispose();
 }
