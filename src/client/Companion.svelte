@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, tick } from "svelte";
+  import PanelsTopLeft from "lucide-svelte/icons/panels-top-left";
   import type { CompanionProjection, TimelineImage, TimelineVoice } from "../projection.js";
   import { createComposerState, reduceComposer, shouldSubmitEnter } from "./composer.js";
   import Markdown from "./Markdown.svelte";
@@ -45,6 +46,9 @@
   const dispatch = createEventDispatcher<{ advanced: void; recovery: void }>();
   let composer = createComposerState();
   let timeline: HTMLDivElement;
+  let timelineReady = false;
+  let timelineRevealFrame = 0;
+  let detailAnchor: HTMLDivElement;
   let sidebarOpen = typeof window !== "undefined" && window.matchMedia("(min-width: 821px)").matches;
   let detailOpen = false;
   let lightbox: TimelineImage | undefined;
@@ -73,9 +77,24 @@
   async function reconcileProjection(value: CompanionProjection): Promise<void> {
     await tick();
     if (!timeline) return;
+    if (value.openState !== "open") {
+      if (timelineRevealFrame) cancelAnimationFrame(timelineRevealFrame);
+      timelineRevealFrame = 0;
+      timelineReady = false;
+      return;
+    }
     const distance = timeline.scrollHeight - timeline.clientHeight - timeline.scrollTop;
     const nearBottom = wasNearBottom || distance < 96;
     if (nearBottom && !value.loadingOlder) timeline.scrollTop = timeline.scrollHeight;
+    if (!timelineReady) {
+      if (timelineRevealFrame) cancelAnimationFrame(timelineRevealFrame);
+      timelineRevealFrame = requestAnimationFrame(() => {
+        if (!timeline) return;
+        timeline.scrollTop = timeline.scrollHeight;
+        timelineReady = true;
+        timelineRevealFrame = 0;
+      });
+    }
     wasNearBottom = nearBottom;
     liveAnnouncement = value.promptError ?? value.lastAgentError ?? "";
     const wantedImages = new Map<string, TimelineImage>();
@@ -181,6 +200,14 @@
     wasNearBottom = timeline.scrollHeight - timeline.clientHeight - timeline.scrollTop < 96;
   }
 
+  function keepBottomOnResize(node: HTMLElement): { destroy(): void } {
+    const observer = new ResizeObserver(() => {
+      if (timelineReady && wasNearBottom && timeline) timeline.scrollTop = timeline.scrollHeight;
+    });
+    observer.observe(node);
+    return { destroy: () => observer.disconnect() };
+  }
+
   function submit(): void {
     const text = composer.draft.trim();
     if (!text || composer.composing) return;
@@ -230,7 +257,11 @@
   }
   function closeHistory(): void { if (overlayHistory) { overlayHistory = false; history.back(); } }
   function openDetail(): void { detailReturnFocus = document.activeElement as HTMLElement; detailOpen = true; focusFirst(() => detailDialog); }
-  function closeDetail(fromHistory = false): void { detailOpen = false; if (!fromHistory) closeHistory(); detailReturnFocus?.focus(); detailReturnFocus = undefined; }
+  function closeDetail(restoreFocus = true): void {
+    detailOpen = false;
+    if (restoreFocus) detailReturnFocus?.focus();
+    detailReturnFocus = undefined;
+  }
   function openLightbox(item: TimelineImage): void {
     lightboxReturnFocus = document.activeElement as HTMLElement;
     lightbox = item;
@@ -243,19 +274,23 @@
     if (lightbox && lightboxDialog) trapFocus(event, lightboxDialog);
     else if (detailOpen && detailDialog) trapFocus(event, detailDialog);
   }
-  function onPopState(): void { overlayHistory = false; if (lightbox) closeLightbox(true); else if (detailOpen) closeDetail(true); }
+  function onWindowPointerDown(event: PointerEvent): void {
+    if (detailOpen && detailAnchor && !detailAnchor.contains(event.target as Node)) closeDetail(false);
+  }
+  function onPopState(): void { overlayHistory = false; if (lightbox) closeLightbox(true); }
   function pushOverlayHistory(): void { if (!overlayHistory) { history.pushState({ companionOverlay: true }, ""); overlayHistory = true; } }
-  function showDetail(): void { pushOverlayHistory(); openDetail(); }
+  function toggleDetail(): void { if (detailOpen) closeDetail(); else openDetail(); }
   function showLightbox(item: TimelineImage): void { pushOverlayHistory(); openLightbox(item); }
   async function loadOlder(): Promise<void> { if (!actions.loadOlder || projection.loadingOlder) return; const previousHeight = timeline?.scrollHeight ?? 0; await actions.loadOlder(); await tick(); if (timeline) timeline.scrollTop += timeline.scrollHeight - previousHeight; }
 
   onDestroy(() => {
+    if (timelineRevealFrame) cancelAnimationFrame(timelineRevealFrame);
     for (const audio of document.querySelectorAll<HTMLAudioElement>("#dsh-companion .companion-voice audio")) audio.pause();
     for (const url of Object.values(imageUrls)) if (url.startsWith("blob:")) URL.revokeObjectURL(url);
   });
 </script>
 
-<svelte:window on:keydown={onWindowKeydown} on:popstate={onPopState} />
+<svelte:window on:keydown={onWindowKeydown} on:pointerdown={onWindowPointerDown} on:popstate={onPopState} />
 
 <div id="dsh-companion" class="companion-shell" data-theme={scheme === "dark" ? "night-voyage" : "sticker-messenger"} data-testid="companion-root">
   <div class="cmp-drawer companion-app" class:cmp-drawer-open={sidebarOpen} class:sidebar-open={sidebarOpen}>
@@ -264,12 +299,11 @@
     <main class="companion-main" aria-label="Companion 私聊">
       <header class="companion-header">
         <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-session-toggle" aria-label={sidebarOpen ? "收起对话列表" : "展开对话列表"} aria-controls="companion-session-list" aria-expanded={sidebarOpen} on:click={() => sidebarOpen = !sidebarOpen}><span aria-hidden="true">☰</span></button>
-        <div class="companion-avatar-anchor">
-          <button class="cmp-avatar cmp-avatar-placeholder companion-avatar" aria-label="查看 Companion 关系资料" aria-expanded={detailOpen} on:click={showDetail}>
+        <div bind:this={detailAnchor} class="companion-avatar-anchor">
+          <button class="cmp-avatar cmp-avatar-placeholder companion-avatar" aria-label="查看 Companion 关系资料" aria-expanded={detailOpen} on:click={toggleDetail}>
             {#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}
           </button>
           {#if detailOpen}
-            <button class="companion-detail-dismiss" aria-label="点击空白处关闭关系资料" tabindex="-1" on:click={() => closeDetail()}></button>
             <dialog bind:this={detailDialog} open class="companion-detail-card cmp-modal-box" aria-label={`${identity.companionName}的关系资料`} style={`--relationship-art: url("${relationshipBackground}")`}>
               <div class="companion-detail-art" aria-hidden="true"></div>
               <div class="companion-detail-head">
@@ -286,7 +320,7 @@
           <div class="companion-name">{identity.companionName}</div>
           <div class="companion-presence" aria-live="polite"><span class="cmp-status {projection.status === 'working' ? 'cmp-status-warning' : projection.status === 'reconnecting' ? 'cmp-status-error' : 'cmp-status-success'}"></span>{statusText} · {identity.moodLabel}</div>
         </div>
-        <a class="companion-advanced" href="/" on:click={() => dispatch("advanced")}>高级 DSH</a>
+        <a class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-full-dsh" href="/" aria-label="打开完整 DSH" title="打开完整 DSH" on:click={() => dispatch("advanced")}><PanelsTopLeft size={18} strokeWidth={1.8} aria-hidden="true" /></a>
       </header>
 
       {#if !workspaceReady}
@@ -304,7 +338,8 @@
           <button class="cmp-btn cmp-btn-primary" on:click={() => dispatch("recovery")}>重新连接</button>
         </section>
       {:else}
-        <div bind:this={timeline} class="companion-timeline" role="log" aria-live="polite" aria-relevant="additions text" on:scroll={onScroll}>
+        <div bind:this={timeline} class="companion-timeline" class:timeline-ready={timelineReady} role="log" aria-live="polite" aria-relevant="additions text" on:scroll={onScroll}>
+          <div class="companion-timeline-content" use:keepBottomOnResize>
           {#if projection.hasMore}
             <button class="cmp-btn cmp-btn-ghost cmp-btn-sm" style="display:block;margin:0 auto 18px" on:click={loadOlder} disabled={projection.loadingOlder}>{projection.loadingOlder ? "正在加载…" : "查看更早的消息"}</button>
           {/if}
@@ -353,6 +388,7 @@
             {/if}
           {/each}
           {#if !wasNearBottom && projection.items.length > 0}<button class="cmp-btn cmp-btn-primary cmp-btn-sm" style="position:sticky;bottom:10px;left:50%;transform:translateX(-50%)" on:click={() => timeline.scrollTop = timeline.scrollHeight}>有新消息 ↓</button>{/if}
+          </div>
         </div>
         <div class="companion-composer">
           <div class="companion-compose-row">
@@ -377,7 +413,7 @@
           {/each}
           {#if sessions.length === 0}<p class="companion-session-empty">还没有可以继续的对话</p>{/if}
         </nav>
-        <a class="companion-sidebar-advanced" href="/" on:click={() => dispatch("advanced")}>打开高级 DSH</a>
+        <a class="companion-sidebar-advanced" href="/" on:click={() => dispatch("advanced")}>打开完整 DSH</a>
       </aside>
     </div>
   </div>

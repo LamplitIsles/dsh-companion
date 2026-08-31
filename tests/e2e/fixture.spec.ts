@@ -40,7 +40,7 @@ test("Pixel 7a geometry keeps composer and relationship overlay usable", async (
   await expect(textarea).toHaveValue("中文输入测试\n第二行");
   await page.getByRole("button", { name: "查看 Companion 关系资料" }).click();
   await expect(page.getByRole("button", { name: "关闭关系资料", exact: true })).toBeFocused();
-  await page.goBack();
+  await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
@@ -110,6 +110,50 @@ test("chat shell has rendered Markdown, viewport scrolling, sessions, rounded fo
   expect(detailBox).not.toBeNull();
   expect(detailBox!.y).toBeLessThan(avatarBox!.y + 180);
   expect(detailBox!.x).toBeLessThan(avatarBox!.x + 120);
+});
+
+test("initial chat presentation is already at the bottom with circular avatars and a stable profile popover", async ({ page }) => {
+  await page.addInitScript(() => {
+    const state = window as unknown as { __companionScrollSamples: Array<{ distanceFromBottom: number; visible: boolean }> };
+    state.__companionScrollSamples = [];
+    const sample = () => {
+      const timeline = document.querySelector<HTMLElement>(".companion-timeline");
+      if (timeline) state.__companionScrollSamples.push({
+        distanceFromBottom: Math.round(timeline.scrollHeight - timeline.clientHeight - timeline.scrollTop),
+        visible: getComputedStyle(timeline).visibility === "visible",
+      });
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+  await page.goto("/?theme=dark");
+  await page.waitForTimeout(500);
+
+  const scrollSamples = await page.evaluate(() => (window as unknown as { __companionScrollSamples: Array<{ distanceFromBottom: number; visible: boolean }> }).__companionScrollSamples);
+  const visibleSamples = scrollSamples.filter((sample) => sample.visible);
+  expect(visibleSamples.length).toBeGreaterThan(0);
+  expect(Math.abs(visibleSamples[0]!.distanceFromBottom)).toBeLessThanOrEqual(1);
+  expect(Math.abs(visibleSamples.at(-1)!.distanceFromBottom)).toBeLessThanOrEqual(1);
+
+  for (const avatar of await page.locator(".companion-avatar, .message-avatar").all()) {
+    const geometry = await avatar.evaluate((node) => {
+      const style = getComputedStyle(node);
+      const bounds = node.getBoundingClientRect();
+      return { radius: Number.parseFloat(style.borderRadius), size: Math.min(bounds.width, bounds.height), overflow: style.overflow };
+    });
+    expect(geometry.radius).toBeGreaterThanOrEqual(geometry.size / 2 - 1);
+    expect(geometry.overflow).toBe("hidden");
+  }
+
+  const fullDsh = page.getByRole("link", { name: "打开完整 DSH" });
+  await expect(fullDsh.locator("svg")).toHaveCount(1);
+
+  await page.getByRole("button", { name: "查看 Companion 关系资料" }).click();
+  const profile = page.getByRole("dialog", { name: "小灯的关系资料" });
+  await page.waitForTimeout(600);
+  await expect(profile).toBeVisible();
+  await page.locator(".companion-header-copy").click();
+  await expect(profile).toHaveCount(0);
 });
 
 test("captures readable Sticker Messenger and Night Voyage references", async ({ page }, testInfo) => {
