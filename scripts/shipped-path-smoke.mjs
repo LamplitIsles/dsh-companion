@@ -1,7 +1,8 @@
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import vm from "node:vm";
 import { chromium } from "playwright";
 
@@ -35,8 +36,11 @@ function isolatedEnvironment(temp, dshHome) {
   };
 }
 
-function startRuntime(entry, env) {
-  const child = spawn(process.execPath, ["--expose-internals", entry, "--profile", "web", "--host", "127.0.0.1", "--port", "0", "--no-open"], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
+function startRuntime(entry, env, patch) {
+  const args = ["--expose-internals", entry, "--profile", "web"];
+  if (patch) args.push("--patch", patch);
+  args.push("--host", "127.0.0.1", "--port", "0", "--no-open");
+  const child = spawn(process.execPath, args, { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
   let output = "";
   return new Promise((resolveRuntime, rejectRuntime) => {
     let settled = false;
@@ -93,6 +97,25 @@ async function assertAlias(baseUrl) {
   return bootFrom(rootHtml);
 }
 
+function assembledFixturePatch(temp) {
+  const fixture = pathToFileURL(join(root, "scripts", "fixtures", "assembled-browser-host-fixture.mjs")).href;
+  const patch = join(temp, "assembled-browser.patch.yml");
+  writeFileSync(patch, `- insert:\n    - id: dsh-companion-assembled-browser-fixture\n      name: ${JSON.stringify(fixture)}\n      inject: [workspaceRegistry, sessions, settings, connection, webServer]\n`);
+  return patch;
+}
+
+function observeBrowserFailures(page) {
+  const failures = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") failures.push(`console: ${message.text()}`);
+  });
+  page.on("pageerror", (error) => failures.push(`pageerror: ${error.stack ?? error.message}`));
+  page.on("response", (response) => {
+    if (response.status() >= 400) failures.push(`http ${response.status()}: ${response.url()}`);
+  });
+  return failures;
+}
+
 const temp = mkdtempSync(join(tmpdir(), "dsh-companion-shipped-"));
 let runtime;
 let browser;
@@ -101,16 +124,20 @@ try {
   const tarball = join(temp, packed[0].filename);
   const dshHome = join(temp, "dsh-home");
   const env = isolatedEnvironment(temp, dshHome);
+  const workspacePath = join(temp, "workspace");
+  mkdirSync(workspacePath, { recursive: true });
+  env.DSH_COMPANION_ASSEMBLED_SMOKE_WORKSPACE = workspacePath;
   const entry = dshEntry();
   execFileSync(process.execPath, ["--expose-internals", entry, "plugin", "--profile", "web", "add", tarball, "--ignore-scripts"], { cwd: temp, env, stdio: "pipe" });
-  const config = execFileSync(process.execPath, ["--expose-internals", entry, "--profile", "web", "--dump-config"], { cwd: temp, env, encoding: "utf8" });
-  if (!config.includes("dsh-companion") || !config.includes("workspaceRegistry") || !config.includes("webServer")) throw new Error("composed disposable profile is missing the Companion Host row");
+  const patch = assembledFixturePatch(temp);
+  const config = execFileSync(process.execPath, ["--expose-internals", entry, "--profile", "web", "--dump-config", "--patch", patch], { cwd: temp, env, encoding: "utf8" });
+  if (!config.includes("dsh-companion") || !config.includes("workspaceRegistry") || !config.includes("webServer") || !config.includes("dsh-companion-assembled-browser-fixture")) throw new Error("composed disposable profile is missing the Companion browser slice");
 
   const packageDir = join(dshHome, "profiles", "web", "node_modules", "@lamplitisles", "dsh-companion");
   const manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
   if (manifest.name !== "@lamplitisles/dsh-companion" || manifest.dsh?.client?.platform !== "web") throw new Error("packed manifest is not the declared Web plugin");
 
-  runtime = await startRuntime(entry, env);
+  runtime = await startRuntime(entry, env, patch);
   const boot = await assertAlias(runtime.baseUrl);
   const clientEntry = boot.entries?.find((candidate) => candidate.id === manifest.name);
   if (!clientEntry?.url) throw new Error("Companion is absent from the real DSH bootstrap");
@@ -123,11 +150,27 @@ try {
 
   browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ?? "/run/current-system/sw/bin/chromium" });
   const page = await browser.newPage();
+  const browserFailures = observeBrowserFailures(page);
   await page.goto(`${runtime.baseUrl}/`, { waitUntil: "domcontentloaded" });
+  if (await page.locator("#dsh-companion").count() !== 0) throw new Error("stock DSH root unexpectedly mounted Companion");
+  // Avoid aborting the stock root's normal boot transport while switching documents.
+  await page.waitForTimeout(500);
   await page.goto(`${runtime.baseUrl}/companion/`, { waitUntil: "domcontentloaded" });
-  await page.locator("#dsh-companion").waitFor({ state: "attached", timeout: 20_000 });
+  const companion = page.locator("#dsh-companion");
+  await companion.waitFor({ state: "attached", timeout: 20_000 });
+  if (await companion.count() !== 1) throw new Error("Companion alias did not mount exactly one root");
+  await page.getByText("Packed runtime outgoing message", { exact: true }).waitFor({ state: "visible", timeout: 20_000 });
+  await page.getByText("Packed runtime incoming message.", { exact: true }).waitFor({ state: "visible", timeout: 20_000 });
+  const voice = page.locator('[data-testid^="voice-"]');
+  await voice.locator("audio").waitFor({ state: "attached", timeout: 20_000 });
+  const audio = voice.locator("audio");
+  if (await audio.getAttribute("src") !== "/companion-assembled-smoke/voice.mp3") throw new Error("Companion TTS RPC did not prepare the test-owned audio route");
+  const audioResponse = page.waitForResponse((response) => response.url().endsWith("/companion-assembled-smoke/voice.mp3") && response.ok());
+  await voice.locator(".companion-voice-control").click();
+  await audioResponse;
+  if (browserFailures.length) throw new Error(`assembled browser failures:\n${browserFailures.join("\n")}`);
   await page.close();
-  console.log(`shipped-path: packed profile, composed config, Loader, alias, and browser verified on ${runtime.baseUrl}`);
+  console.log(`shipped-path: packed profile, composed config, Loader, alias, assembled transcript, relationship RPC, TTS RPC, and browser verified on ${runtime.baseUrl}`);
 } finally {
   if (browser) await browser.close();
   if (runtime) await stopRuntime(runtime.child);
