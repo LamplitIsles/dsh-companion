@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher, onDestroy, tick } from "svelte";
+  import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
   import LoaderCircle from "lucide-svelte/icons/loader-circle";
   import MessageSquareText from "lucide-svelte/icons/message-square-text";
   import PanelsTopLeft from "lucide-svelte/icons/panels-top-left";
@@ -7,8 +7,10 @@
   import Play from "lucide-svelte/icons/play";
   import RotateCcw from "lucide-svelte/icons/rotate-ccw";
   import Square from "lucide-svelte/icons/square";
+  import { COMPACTION_STATUS_DURATION_MS, formatTokenCount, resolveContextCapacity, type CompactionLifecycleState } from "../continuity.js";
   import type { CompanionProjection, TimelineImage, TimelineVoice } from "../projection.js";
-  import { createComposerState, reduceComposer, shouldSubmitEnter } from "./composer.js";
+  import type { CompanionContinuityView } from "./companion-bridge.js";
+  import { createComposerState, findComposerCommand, reduceComposer, shouldSubmitEnter, type ComposerCommand } from "./composer.js";
   import { INTENSITY_LABELS } from "./relationship.js";
   import Markdown from "./Markdown.svelte";
   import relationshipBackground from "./assets/relationship-night-voyage.webp";
@@ -50,11 +52,14 @@
   export let sessions: CompanionSessionView[] = [];
   export let workspaceReady = true;
   export let sessionReady = true;
+  export let continuity: CompanionContinuityView = {};
 
   const dispatch = createEventDispatcher<{ advanced: void; recovery: void }>();
   const LONG_WAIT_DELAY_MS = 12_000;
   const LONG_WAIT_ROTATION_MS = 9_000;
   const VOICE_WAVEFORM_BAR_COUNT = 28;
+  const DESKTOP_SIDEBAR_QUERY = "(min-width: 821px)";
+  const DESKTOP_SIDEBAR_STORAGE_KEY = "dsh-companion:desktop-sidebar-open";
   const EMPTY_VOICE_PLAYBACK = { current: 0, duration: 0, playing: false };
   const LONG_WAIT_MESSAGES = [
     "我还在认真想，陪我再等一小会儿呀",
@@ -64,12 +69,14 @@
     "我在这里，只是还在想怎么说更好",
   ] as const;
   let composer = createComposerState();
+  let composerInput: HTMLTextAreaElement;
+  let commandSuggestion: ComposerCommand | undefined;
   let stopping = false;
   let timeline: HTMLDivElement;
   let timelineReady = false;
   let timelineRevealFrame = 0;
   let detailAnchor: HTMLDivElement;
-  let sidebarOpen = typeof window !== "undefined" && window.matchMedia("(min-width: 821px)").matches;
+  let sidebarOpen = readDesktopSidebarPreference();
   let detailOpen = false;
   let lightbox: TimelineImage | undefined;
   let lightboxUrl = "";
@@ -96,10 +103,22 @@
   let waitingCycle = "";
   let waitingDelayTimer: ReturnType<typeof setTimeout> | undefined;
   let waitingRotationTimer: ReturnType<typeof setInterval> | undefined;
+  let contextMeterOpen = false;
+  let contextMeterButton: HTMLButtonElement;
+  let contextMeterPopover: HTMLElement;
+  let contextMeterReturnFocus: HTMLElement | undefined;
+  let continuityStatus: CompactionLifecycleState | undefined;
+  let continuityStatusKey = "";
+  let continuityStatusTimer: ReturnType<typeof setTimeout> | undefined;
 
   $: statusText = projection.status === "working" ? "正在陪你想" : projection.status === "reconnecting" ? "正在重新连接" : "已准备好";
   $: imageGenerationRunning = projection.items.some((item) => item.kind === "image" && (item.state === "running" || item.state === "loading"));
   $: typingVisible = projection.running && !imageGenerationRunning;
+  $: commandSuggestion = findComposerCommand(composer.draft);
+  $: contextCapacity = resolveContextCapacity(continuity?.contextPressure);
+  $: latestContinuityLifecycle = latestLifecycle(continuity?.lifecycle);
+  $: syncContinuityStatus(latestContinuityLifecycle);
+  $: if (!contextCapacity && contextMeterOpen) closeContextMeter(false);
   $: syncWaitingState(typingVisible, `${sessions.find((session) => session.selected)?.id ?? "none"}:${latestSettledReplyKey(projection)}`);
   $: if (projection) void reconcileProjection(projection);
 
@@ -111,11 +130,84 @@
     return "empty";
   }
 
+  function readDesktopSidebarPreference(): boolean {
+    if (typeof window === "undefined" || !window.matchMedia(DESKTOP_SIDEBAR_QUERY).matches) return false;
+    try { return window.localStorage.getItem(DESKTOP_SIDEBAR_STORAGE_KEY) !== "false"; }
+    catch { return true; }
+  }
+
+  function setSidebarOpen(open: boolean): void {
+    sidebarOpen = open;
+    if (typeof window === "undefined" || !window.matchMedia(DESKTOP_SIDEBAR_QUERY).matches) return;
+    try { window.localStorage.setItem(DESKTOP_SIDEBAR_STORAGE_KEY, String(open)); }
+    catch { /* storage may be unavailable in private browsing */ }
+  }
+
+  function onSidebarChange(event: Event): void {
+    setSidebarOpen((event.currentTarget as HTMLInputElement).checked);
+  }
+
+  function toggleSidebar(): void { setSidebarOpen(!sidebarOpen); }
+
   function clearWaitingTimers(): void {
     if (waitingDelayTimer !== undefined) clearTimeout(waitingDelayTimer);
     if (waitingRotationTimer !== undefined) clearInterval(waitingRotationTimer);
     waitingDelayTimer = undefined;
     waitingRotationTimer = undefined;
+  }
+
+  function latestLifecycle(value: CompanionContinuityView["lifecycle"]): CompactionLifecycleState | undefined {
+    const rows = value?.lifecycles ?? (value?.latest ? [value.latest] : []);
+    return [...rows].sort((left, right) => (left.endSeq ?? left.startSeq) - (right.endSeq ?? right.startSeq) || left.startSeq - right.startSeq).at(-1);
+  }
+
+  function clearContinuityStatusTimer(): void {
+    if (continuityStatusTimer !== undefined) clearTimeout(continuityStatusTimer);
+    continuityStatusTimer = undefined;
+  }
+
+  function syncContinuityStatus(lifecycle: CompactionLifecycleState | undefined): void {
+    const key = lifecycle ? `${lifecycle.compactionId}:${lifecycle.status}:${lifecycle.endSeq ?? ""}:${lifecycle.endedAt ?? ""}` : "";
+    if (key === continuityStatusKey) return;
+    clearContinuityStatusTimer();
+    continuityStatusKey = key;
+    continuityStatus = undefined;
+    if (!lifecycle) return;
+    if (lifecycle.status === "running") {
+      continuityStatus = lifecycle;
+      return;
+    }
+    const endedAt = typeof lifecycle.endedAt === "number" && Number.isFinite(lifecycle.endedAt) ? lifecycle.endedAt : Date.now();
+    const remaining = endedAt + COMPACTION_STATUS_DURATION_MS - Date.now();
+    if (remaining <= 0) return;
+    continuityStatus = lifecycle;
+    continuityStatusTimer = setTimeout(() => {
+      continuityStatus = undefined;
+      continuityStatusKey = key;
+      continuityStatusTimer = undefined;
+    }, remaining);
+  }
+
+  function openContextMeter(): void {
+    if (!contextCapacity) return;
+    contextMeterReturnFocus = document.activeElement as HTMLElement;
+    contextMeterOpen = true;
+    void tick().then(() => contextMeterPopover?.focus());
+  }
+
+  function closeContextMeter(restoreFocus = true): void {
+    contextMeterOpen = false;
+    const target = contextMeterReturnFocus;
+    contextMeterReturnFocus = undefined;
+    if (restoreFocus) target?.focus();
+  }
+
+  function toggleContextMeter(): void { if (contextMeterOpen) closeContextMeter(); else openContextMeter(); }
+
+  function onWindowPointerDown(event: PointerEvent): void {
+    if (!contextMeterOpen) return;
+    const target = event.target as Node | null;
+    if (!target || !(target as Element).closest?.(".companion-context-meter-wrap")) closeContextMeter(false);
   }
 
   function rotateWaitingCopy(): void {
@@ -354,6 +446,11 @@
   }
 
   function onKeydown(event: KeyboardEvent): void {
+    if (commandSuggestion && (event.key === "Tab" || event.key === "Enter") && !event.shiftKey && !event.isComposing && !composer.composing) {
+      event.preventDefault();
+      acceptCommandSuggestion();
+      return;
+    }
     if (shouldSubmitEnter(event, composer.composing)) {
       event.preventDefault();
       submit();
@@ -361,6 +458,11 @@
   }
 
   function setDraft(value: string): void { composer = reduceComposer(composer, { type: "input", value }); }
+  function acceptCommandSuggestion(): void {
+    if (!commandSuggestion) return;
+    setDraft(commandSuggestion.command);
+    void tick().then(() => composerInput?.focus());
+  }
   function onInput(event: Event): void { setDraft((event.currentTarget as HTMLTextAreaElement).value); }
   function onCompositionEnd(event: CompositionEvent): void { composer = reduceComposer(composer, { type: "compositionend", value: (event.currentTarget as HTMLTextAreaElement).value }); }
   function onCompositionStart(): void { composer = reduceComposer(composer, { type: "compositionstart" }); }
@@ -374,7 +476,7 @@
   async function selectSession(sessionId: string): Promise<void> {
     if (!actions.selectSession) return;
     await actions.selectSession(sessionId);
-    if (window.matchMedia("(max-width: 820px)").matches) sidebarOpen = false;
+    if (window.matchMedia("(max-width: 820px)").matches) setSidebarOpen(false);
   }
   function focusFirst(dialog: () => HTMLElement | undefined): void {
     void tick().then(() => {
@@ -463,7 +565,10 @@
     finishLightboxClose(fromHistory);
   }
   function onWindowKeydown(event: KeyboardEvent): void {
-    if (event.key === "Escape") return;
+    if (event.key === "Escape") {
+      if (contextMeterOpen) { event.preventDefault(); closeContextMeter(); return; }
+      return;
+    }
     if (lightbox && lightboxDialog) trapFocus(event, lightboxDialog);
   }
   function onPopState(): void { overlayHistory = false; if (lightbox) closeLightbox(true); }
@@ -472,23 +577,33 @@
   function showLightbox(item: TimelineImage): void { pushOverlayHistory(); openLightbox(item); }
   async function loadOlder(): Promise<void> { if (!actions.loadOlder || projection.loadingOlder) return; const previousHeight = timeline?.scrollHeight ?? 0; await actions.loadOlder(); await tick(); if (timeline) timeline.scrollTop += timeline.scrollHeight - previousHeight; }
 
+  onMount(() => {
+    const desktop = window.matchMedia(DESKTOP_SIDEBAR_QUERY);
+    const onDesktopChange = (event: MediaQueryListEvent): void => {
+      sidebarOpen = event.matches ? readDesktopSidebarPreference() : false;
+    };
+    desktop.addEventListener("change", onDesktopChange);
+    return () => desktop.removeEventListener("change", onDesktopChange);
+  });
+
   onDestroy(() => {
     if (timelineRevealFrame) cancelAnimationFrame(timelineRevealFrame);
     clearWaitingTimers();
+    clearContinuityStatusTimer();
     for (const audio of document.querySelectorAll<HTMLAudioElement>("#dsh-companion .companion-voice audio")) audio.pause();
     for (const url of Object.values(imageUrls)) if (url.startsWith("blob:")) URL.revokeObjectURL(url);
   });
 </script>
 
-<svelte:window on:keydown={onWindowKeydown} on:popstate={onPopState} on:resize={onWindowResize} />
+<svelte:window on:keydown={onWindowKeydown} on:pointerdown={onWindowPointerDown} on:popstate={onPopState} on:resize={onWindowResize} />
 
 <div id="dsh-companion" class="companion-shell" data-theme={scheme === "dark" ? "night-voyage" : "sticker-messenger"} data-testid="companion-root">
   <div class="cmp-drawer companion-app">
-    <input id="companion-session-drawer" class="cmp-drawer-toggle" type="checkbox" bind:checked={sidebarOpen} aria-label="显示对话列表" />
+    <input id="companion-session-drawer" class="cmp-drawer-toggle" type="checkbox" bind:checked={sidebarOpen} on:change={onSidebarChange} aria-label="显示对话列表" />
     <div class="cmp-drawer-content companion-content">
     <main class="companion-main" aria-label="Companion 私聊">
       <header class="companion-header">
-        <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-session-toggle" aria-label={sidebarOpen ? "收起对话列表" : "展开对话列表"} aria-controls="companion-session-list" aria-expanded={sidebarOpen} on:click={() => sidebarOpen = !sidebarOpen}><span aria-hidden="true">☰</span></button>
+        <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-session-toggle" aria-label={sidebarOpen ? "收起对话列表" : "展开对话列表"} aria-controls="companion-session-list" aria-expanded={sidebarOpen} on:click={toggleSidebar}><span aria-hidden="true">☰</span></button>
         <div bind:this={detailAnchor} class="companion-avatar-anchor">
           <button class="cmp-avatar cmp-avatar-placeholder cmp:rounded-full companion-avatar" aria-label="查看 Companion 关系资料" aria-expanded={detailOpen} on:click={toggleDetail}>
             <div class="companion-avatar-crop cmp:rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div>
@@ -591,6 +706,8 @@
                   </details>
                 </div>
               </article>
+            {:else if item.kind === "continuity"}
+              <div class="companion-continuity-record" data-testid={`continuity-record-${item.compactionId}`} aria-live="off">{item.text}</div>
             {:else}
               <div class="companion-recovery" role={item.tone === "error" ? "alert" : "status"}><p>{item.text}</p></div>
             {/if}
@@ -607,8 +724,36 @@
           </div>
         </div>
         <div class="companion-composer">
+          {#if commandSuggestion}
+            <div id="companion-command-suggestions" class="companion-command-suggestions" role="listbox" aria-label="命令补全">
+              <button id="companion-command-compact" class="cmp-btn cmp-btn-ghost companion-command-suggestion" type="button" role="option" aria-selected="true" on:click={acceptCommandSuggestion}>
+                <span class="companion-command-name">{commandSuggestion.command}</span>
+                <span class="companion-command-description">{commandSuggestion.description}</span>
+                <span class="companion-command-tab" aria-hidden="true">Tab</span>
+              </button>
+            </div>
+          {/if}
+          {#if continuityStatus}
+            <div class="companion-continuity-status" data-testid="companion-continuity-status" data-state={continuityStatus.status} role={continuityStatus.status === "failed" ? "alert" : "status"} aria-live="polite">
+              {#if continuityStatus.status === "running"}正在整理记忆…{:else if continuityStatus.status === "failed"}本次整理未完成，仍可继续对话{:else}整理记忆已完成{/if}
+            </div>
+          {/if}
           <div class="companion-compose-row">
-            <textarea class="cmp-textarea companion-textarea" aria-label="写消息" placeholder={"写给 " + identity.companionName + "…"} rows="1" value={composer.draft} on:input={onInput} on:compositionstart={onCompositionStart} on:compositionend={onCompositionEnd} on:keydown={onKeydown}></textarea>
+            <textarea bind:this={composerInput} class="cmp-textarea companion-textarea" aria-label="写消息" aria-autocomplete={commandSuggestion ? "list" : undefined} aria-controls={commandSuggestion ? "companion-command-suggestions" : undefined} placeholder={"写给 " + identity.companionName + "…"} rows="1" value={composer.draft} on:input={onInput} on:compositionstart={onCompositionStart} on:compositionend={onCompositionEnd} on:keydown={onKeydown}></textarea>
+            {#if contextCapacity}
+              <div class="companion-context-meter-wrap">
+                <button bind:this={contextMeterButton} class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-context-meter" class:companion-context-meter-open={contextMeterOpen} data-state={continuityStatus?.status === "running" ? "active" : continuityStatus?.status === "complete" ? "complete" : continuityStatus?.status === "failed" ? "failed" : contextCapacity.percentage >= 80 ? "warning" : "idle"} type="button" aria-label={`对话容量：${contextCapacity.percentage}%`} aria-expanded={contextMeterOpen} aria-controls="companion-context-popover" on:click={toggleContextMeter}>
+                  <svg viewBox="0 0 28 28" aria-hidden="true"><circle class="companion-context-meter-track" cx="14" cy="14" r="11"></circle><circle class="companion-context-meter-value" cx="14" cy="14" r="11" pathLength="100" style={`stroke-dashoffset:${100 - contextCapacity.percentage}`}></circle></svg>
+                </button>
+                {#if contextMeterOpen}
+                  <div bind:this={contextMeterPopover} id="companion-context-popover" class="cmp-card companion-context-popover" role="dialog" aria-labelledby="companion-context-popover-title" tabindex="-1">
+                    <h2 id="companion-context-popover-title">对话容量</h2>
+                    <p class="companion-context-percent">{contextCapacity.percentage}%</p>
+                    <p>{formatTokenCount(contextCapacity.usedTokens)} / {formatTokenCount(contextCapacity.contextWindow)}</p>
+                  </div>
+                {/if}
+              </div>
+            {/if}
             {#if projection.running && !composer.draft.trim()}
               <button class="cmp-btn cmp-btn-primary cmp-btn-circle companion-send" aria-label="停止当前回复" on:click={() => void stop()} disabled={!actions.stop || stopping}><Square size={15} fill="currentColor" aria-hidden="true" /></button>
             {:else}
@@ -623,7 +768,7 @@
     <div class="cmp-drawer-side companion-sidebar-layer">
       <label for="companion-session-drawer" class="cmp-drawer-overlay companion-sidebar-overlay" aria-label="关闭对话列表"></label>
       <aside id="companion-session-list" class="companion-sidebar" aria-label="对话列表">
-        <div class="companion-sidebar-head"><div><span class="companion-sidebar-eyebrow">{identity.companionName}</span><h2>我们的对话</h2></div><button class="cmp-btn cmp-btn-ghost cmp-btn-circle cmp-btn-sm" aria-label="关闭侧栏" on:click={() => sidebarOpen = false}>‹</button></div>
+        <div class="companion-sidebar-head"><div><span class="companion-sidebar-eyebrow">{identity.companionName}</span><h2>我们的对话</h2></div><button class="cmp-btn cmp-btn-ghost cmp-btn-circle cmp-btn-sm" aria-label="关闭侧栏" on:click={() => setSidebarOpen(false)}>‹</button></div>
         <nav class="companion-session-list">
           {#each sessions as session (session.id)}
             <button class="companion-session-item" class:selected={session.selected} aria-label={`切换到对话：${session.title}`} aria-current={session.selected ? "true" : undefined} on:click={() => void selectSession(session.id)}>

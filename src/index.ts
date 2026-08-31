@@ -2,3 +2,4 @@ export { apply, inject, name, SettingsSchema, SETTINGS_NAMESPACE, RPC_CHANNEL, S
 export * from "./domain.js";
 export * from "./media.js";
 export * from "./projection.js";
+export * from "./continuity.js";

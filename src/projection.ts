@@ -7,6 +7,7 @@ import {
   recognizeImageGenResult,
   ttsProjectionId,
 } from "./media.js";
+import { projectContinuityRecords, type CompanionContinuitySnapshot, type ContinuityRecord } from "./continuity.js";
 
 export type MessageSide = "incoming" | "outgoing";
 
@@ -55,7 +56,10 @@ export interface TimelineNotice {
   time?: number;
 }
 
-export type TimelineItem = TimelineText | TimelineImage | TimelineVoice | TimelineNotice;
+/** A quiet, durable completion marker for automatic conversation organization. */
+export interface TimelineContinuityRecord extends ContinuityRecord {}
+
+export type TimelineItem = TimelineText | TimelineImage | TimelineVoice | TimelineNotice | TimelineContinuityRecord;
 
 export interface CompanionProjection {
   items: readonly TimelineItem[];
@@ -206,7 +210,12 @@ function normalizeChatNode(value: unknown): Record<string, unknown> | undefined 
   const data = asRecord(wrapper.data);
   if (!data || typeof wrapper.key !== "string" || typeof wrapper.kind !== "string") return wrapper;
   if (wrapper.visibility === "hidden") return undefined;
-  return { ...data, key: wrapper.key, kind: wrapper.kind };
+  return {
+    ...data,
+    key: wrapper.key,
+    kind: wrapper.kind,
+    ...(typeof wrapper.id === "string" ? { id: wrapper.id } : {}),
+  };
 }
 
 function pendingNodes(snapshot: unknown): readonly unknown[] {
@@ -215,29 +224,48 @@ function pendingNodes(snapshot: unknown): readonly unknown[] {
 }
 
 /** Project only Companion-visible rows; ordinary Tool/reasoning nodes disappear. */
-export function projectConversation(snapshot: unknown, connected = true): CompanionProjection {
+export function projectConversation(snapshot: unknown, connected = true, continuity?: CompanionContinuitySnapshot | unknown): CompanionProjection {
   const root = asRecord(snapshot) ?? {};
   const items: TimelineItem[] = [];
   const admittedQueueIds = new Set<string>();
   const nodes = orderedNodes(snapshot);
+  const normalizedNodes = nodes.map(normalizeChatNode);
+  const continuityValue = continuity ?? root.continuity;
+  const continuityRecords = projectContinuityRecords(continuityValue, normalizedNodes.filter((node): node is Record<string, unknown> => node !== undefined));
+  const emittedRecords = new Set<string>();
+  const emitContinuityRecords = (predicate: (anchorSeq: number) => boolean): void => {
+    for (const record of continuityRecords) {
+      if (!emittedRecords.has(record.id) && predicate(record.anchorSeq)) {
+        items.push(record);
+        emittedRecords.add(record.id);
+      }
+    }
+  };
   for (let index = 0; index < nodes.length; index += 1) {
-    const node = normalizeChatNode(nodes[index]);
+    const node = normalizedNodes[index];
     if (!node) continue;
+    const sequence = typeof node.seq === "number" && Number.isSafeInteger(node.seq) ? node.seq : undefined;
+    if (sequence !== undefined) emitContinuityRecords((anchorSeq) => anchorSeq < sequence);
     const id = nodeId(node, `node-${index}`);
     const time = nodeTime(node);
     if (isUserNode(node)) {
       const text = textFromValue(node.text) ?? textFromValue(node.content) ?? "";
       if (text) items.push({ id, kind: "text", side: "outgoing", text, time });
+      if (sequence !== undefined) emitContinuityRecords((anchorSeq) => anchorSeq === sequence);
       continue;
     }
     if (isAssistantNode(node)) {
-      if (!isFinalized(node)) continue;
+      if (!isFinalized(node)) {
+        if (sequence !== undefined) emitContinuityRecords((anchorSeq) => anchorSeq === sequence);
+        continue;
+      }
       const text = assistantText(node);
       const passage = parseTtsPassage(text, true);
       const visibleText = passage ? `${text.slice(0, passage.start)}${text.slice(passage.end)}`.trim() : text;
       if (visibleText) items.push({ id, kind: "text", side: "incoming", text: visibleText, time });
       items.push(...assistantMedia(node, id, time));
       if (passage) items.push({ id: ttsProjectionId(id, passage), kind: "voice", side: "incoming", text: passage.text, status: "preparing", time });
+      if (sequence !== undefined) emitContinuityRecords((anchorSeq) => anchorSeq === sequence);
       continue;
     }
     if (isSteeringNode(node)) {
@@ -245,6 +273,7 @@ export function projectConversation(snapshot: unknown, connected = true): Compan
       const messageId = typeof node.messageId === "string" ? node.messageId : undefined;
       if (messageId) admittedQueueIds.add(messageId);
       if (text) items.push({ id, projectionKey: id, kind: "text", side: "outgoing", text, time });
+      if (sequence !== undefined) emitContinuityRecords((anchorSeq) => anchorSeq === sequence);
       continue;
     }
     const call = asRecord(node.call);
@@ -253,7 +282,9 @@ export function projectConversation(snapshot: unknown, connected = true): Compan
       const projectionId = image.attachment ? imageGenProjectionId(image.id, image.attachment.attachmentId) : `imagegen:${image.id}`;
       items.push({ id: projectionId, projectionKey: `imagegen:${image.id}`, kind: "image", side: "incoming", state: image.state, attachment: image.attachment, alt: image.alt, error: image.error, time });
     }
+    if (sequence !== undefined) emitContinuityRecords((anchorSeq) => anchorSeq === sequence);
   }
+  for (const record of continuityRecords) if (!emittedRecords.has(record.id)) items.push(record);
   const pending = pendingNodes(snapshot);
   for (let index = 0; index < pending.length; index += 1) {
     const row = asRecord(pending[index]);
@@ -298,7 +329,7 @@ function dedupeTimeline(items: readonly TimelineItem[]): TimelineItem[] {
   const result: TimelineItem[] = [];
   const positions = new Map<string, number>();
   for (const item of items) {
-    const key = item.projectionKey ?? item.id;
+    const key = ("projectionKey" in item && item.projectionKey) ? item.projectionKey : item.id;
     const position = positions.get(key);
     if (position !== undefined) {
       if (timelineRank(item) > timelineRank(result[position]!)) result[position] = item;

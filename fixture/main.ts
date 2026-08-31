@@ -6,6 +6,8 @@ import { companionStyles } from "../src/client/theme.js";
 import daisyStyles from "../src/client/daisy.css?inline";
 import tailwindStyles from "../src/client/tailwind.css?inline";
 import type { CompanionProjection } from "../src/projection.js";
+import type { CompanionContinuityView } from "../src/client/companion-bridge.js";
+import type { CompactionLifecycleState, ContextPressureProjection } from "../src/continuity.js";
 
 const fixtureDaisyStyles = `${daisyStyles}\n${tailwindStyles}`.replace(/:root:has\(input\.theme-controller\[value=[^)]+\]:checked\),?/gu, "").replace(/:root\b/gu, ":scope").replace(/\[data-theme=["']?(sticker-messenger|night-voyage)["']?\]/gu, ":scope[data-theme=$1]");
 const style = document.createElement("style"); style.textContent = `@font-face{font-family:'Companion Noto Sans SC';src:url('/fonts/NotoSansSC-Companion.woff2') format('woff2');font-weight:100 900;font-display:block}@scope (#dsh-companion){${fixtureDaisyStyles}}${companionStyles.replace('ui-rounded, "SF Pro Rounded", system-ui, sans-serif', '"Companion Noto Sans SC", ui-rounded, "SF Pro Rounded", system-ui, sans-serif')}`; document.head.appendChild(style);
@@ -40,6 +42,7 @@ const projection: CompanionProjection = {
 const root = document.getElementById("fixture")!;
 let revokedImageUrls = 0;
 let stopCalls = 0;
+let sendCalls = 0;
 const revokeObjectUrl = URL.revokeObjectURL.bind(URL);
 URL.revokeObjectURL = (url: string) => { revokedImageUrls += 1; revokeObjectUrl(url); };
 const fixtureProps: CompanionBridgeProps = {
@@ -51,7 +54,7 @@ const fixtureProps: CompanionBridgeProps = {
     { id: "first-hello", title: "第一次说晚安", updatedAt: now - 172_800_000, running: false, selected: false },
   ],
   identity: { companionName: "小灯", companionAvatar: svg, userName: "小岛", userAvatar: svg, preferredAddress: "小岛", signature: query.get("signature") === "empty" ? "" : "把平凡日子折成星星，等风来时再写一行很长很长的晚安", ...mood, affinity: 67, affinityStage: "亲近" },
-  actions: { send: async () => undefined, stop: async () => { stopCalls += 1; }, selectSession: async () => undefined, loadOlder: async () => undefined, attachmentUrl: async () => URL.createObjectURL(new Blob([svgDocument], { type: "image/svg+xml" })), prepareVoice: async (text: string) => { if (text.includes("失败")) throw new Error("fixture voice failure"); return "/kepos-tts/audio/fixture.mp3"; } },
+  actions: { send: async () => { sendCalls += 1; }, stop: async () => { stopCalls += 1; }, selectSession: async () => undefined, loadOlder: async () => undefined, attachmentUrl: async () => URL.createObjectURL(new Blob([svgDocument], { type: "image/svg+xml" })), prepareVoice: async (text: string) => { if (text.includes("失败")) throw new Error("fixture voice failure"); return "/kepos-tts/audio/fixture.mp3"; } },
   workspaceReady: true,
   sessionReady: true,
 };
@@ -68,6 +71,11 @@ declare global {
       setStatus(status: CompanionProjection["status"]): void;
       setRunning(running: boolean): void;
       finishImageGeneration(): void;
+      setCapacity(value: ContextPressureProjection | undefined): void;
+      startCompaction(id?: string): void;
+      finishCompaction(id?: string): void;
+      failCompaction(id?: string): void;
+      sendCalls(): number;
       stopCalls(): number;
       setIdentity(patch: Partial<CompanionBridgeProps["identity"]>): void;
       revoked(): number;
@@ -79,6 +87,13 @@ declare global {
 }
 let disposed = false;
 let unmountCount = 0;
+let lifecycleSeq = 1000;
+const lifecycleId = (id = "fixture-compaction"): string => id;
+function updateLifecycle(current: CompanionBridgeProps, state: CompactionLifecycleState): CompanionBridgeProps {
+  const rows = current.continuity?.lifecycle?.lifecycles ?? [];
+  const lifecycles = [...rows.filter((row) => row.compactionId !== state.compactionId), state].sort((left, right) => (left.endSeq ?? left.startSeq) - (right.endSeq ?? right.startSeq));
+  return { ...current, continuity: { ...current.continuity, lifecycle: { lifecycles, latest: lifecycles.at(-1) } } };
+}
 window.__companionFixture = {
   replaceImage() {
     propsStore.update((current) => ({ ...current, projection: { ...current.projection!, items: current.projection!.items.map((item) => item.kind === "image" && item.id === "imagegen:demo:img" ? { ...item, attachment: { ...item.attachment!, attachmentId: "demo-replacement" as never } } : item) } }));
@@ -90,6 +105,31 @@ window.__companionFixture = {
   setStatus(status) { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, status } })); },
   setRunning(running) { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, running } })); },
   finishImageGeneration() { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, items: current.projection!.items.filter((item) => item.id !== "imagegen:demo:loading") } })); },
+  setCapacity(value) { propsStore.update((current) => ({ ...current, continuity: { ...current.continuity, contextPressure: value } })); },
+  startCompaction(id) {
+    const compactionId = lifecycleId(id);
+    propsStore.update((current) => updateLifecycle(current, { compactionId, status: "running", startSeq: ++lifecycleSeq, startedAt: Date.now() }));
+  },
+  finishCompaction(id) {
+    const compactionId = lifecycleId(id);
+    const endedAt = Date.now();
+    propsStore.update((current) => {
+      const existing = current.continuity?.lifecycle?.lifecycles.find((row) => row.compactionId === compactionId);
+      const state: CompactionLifecycleState = { compactionId, status: "complete", startSeq: existing?.startSeq ?? ++lifecycleSeq, startedAt: existing?.startedAt ?? endedAt, endSeq: ++lifecycleSeq, endedAt };
+      const next = updateLifecycle(current, state);
+      const record = { id: `continuity:${compactionId}`, kind: "continuity" as const, side: "incoming" as const, tone: "success" as const, compactionId, text: "已整理对话", time: endedAt, anchorSeq: state.endSeq! };
+      return { ...next, projection: { ...next.projection!, items: [...next.projection!.items.filter((item) => item.id !== record.id), record] } };
+    });
+  },
+  failCompaction(id) {
+    const compactionId = lifecycleId(id);
+    const endedAt = Date.now();
+    propsStore.update((current) => {
+      const existing = current.continuity?.lifecycle?.lifecycles.find((row) => row.compactionId === compactionId);
+      return updateLifecycle(current, { compactionId, status: "failed", startSeq: existing?.startSeq ?? ++lifecycleSeq, startedAt: existing?.startedAt ?? endedAt, endSeq: ++lifecycleSeq, endedAt });
+    });
+  },
+  sendCalls: () => sendCalls,
   stopCalls: () => stopCalls,
   setIdentity(patch) { propsStore.update((current) => ({ ...current, identity: { ...current.identity!, ...patch } })); },
   revoked: () => revokedImageUrls,

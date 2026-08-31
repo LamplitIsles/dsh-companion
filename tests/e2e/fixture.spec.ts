@@ -100,6 +100,89 @@ test("draft edits stay local to the composer", async ({ page }) => {
   expect(timing).toBeLessThan(50);
 });
 
+test("offers and accepts the /compact command completion", async ({ page }) => {
+  await page.goto("/");
+  const textarea = page.getByRole("textbox", { name: "写消息" });
+  await textarea.fill("/co");
+  const suggestions = page.getByRole("listbox", { name: "命令补全" });
+  await expect(suggestions).toBeVisible();
+  await expect(suggestions).toContainText("整理记忆，让下一段对话自然接续");
+  await textarea.press("Tab");
+  await expect(textarea).toHaveValue("/compact");
+
+  await textarea.fill("/");
+  await textarea.press("Enter");
+  await expect(textarea).toHaveValue("/compact");
+  await expect.poll(() => page.evaluate(() => window.__companionFixture?.sendCalls() ?? 0)).toBe(0);
+
+  await textarea.fill("/");
+  await page.locator("#companion-command-compact").click();
+  await expect(textarea).toHaveValue("/compact");
+  await expect.poll(() => page.evaluate(() => window.__companionFixture?.sendCalls() ?? 0)).toBe(0);
+});
+
+test("keeps the capacity cue optional and makes its explanation keyboard reachable", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".companion-context-meter")).toHaveCount(0);
+  await page.evaluate(() => window.__companionFixture?.setCapacity({ pressureTokens: 8_000, projectedTokens: 18_432, contextWindow: 32_000 }));
+  const meter = page.getByRole("button", { name: "对话容量：58%" });
+  await expect(meter).toBeVisible();
+  await meter.click();
+  const popover = page.getByRole("dialog", { name: "对话容量" });
+  await expect(popover).toContainText("58%");
+  await expect(popover).toContainText("18k / 32k");
+  await expect(popover).not.toContainText("连续性摘要");
+  await page.keyboard.press("Escape");
+  await expect(popover).toHaveCount(0);
+  await expect(meter).toBeFocused();
+  await meter.click();
+  await page.locator(".companion-header").click();
+  await expect(popover).toHaveCount(0);
+});
+
+test("surfaces compaction lifecycle without exposing the private checkpoint", async ({ page }) => {
+  await page.clock.install();
+  await page.goto("/?theme=dark");
+  await page.evaluate(() => window.__companionFixture?.setCapacity({ projectedTokens: 20_000, contextWindow: 32_000 }));
+  await page.evaluate(() => window.__companionFixture?.startCompaction("active"));
+  await expect(page.getByTestId("companion-continuity-status")).toHaveText("正在整理记忆…");
+  await expect(page.locator(".companion-context-meter")).toHaveAttribute("data-state", "active");
+  await page.evaluate(() => window.__companionFixture?.finishCompaction("active"));
+  await expect(page.getByTestId("companion-continuity-status")).toHaveText("整理记忆已完成");
+  await expect(page.getByTestId("continuity-record-active")).toHaveText("已整理对话");
+  await expect(page.getByTestId("continuity-record-active")).not.toHaveAttribute("role", "status");
+  await expect(page.getByTestId("continuity-record-active")).toHaveAttribute("aria-live", "off");
+  await expect(page.getByTestId("companion-continuity-status")).toHaveAttribute("role", "status");
+  await expect(page.locator(".companion-continuity-record")).toHaveCount(1);
+  await expect(page.locator("body")).not.toContainText("private");
+  await page.clock.fastForward(8_001);
+  await expect(page.getByTestId("companion-continuity-status")).toHaveCount(0);
+
+  await page.evaluate(() => window.__companionFixture?.startCompaction("failed"));
+  await page.evaluate(() => window.__companionFixture?.failCompaction("failed"));
+  await expect(page.getByTestId("companion-continuity-status")).toHaveText("本次整理未完成，仍可继续对话");
+  await expect(page.locator(".companion-continuity-record")).toHaveCount(1);
+  await page.clock.fastForward(8_001);
+  await expect(page.getByTestId("companion-continuity-status")).toHaveCount(0);
+});
+
+test("keeps active continuity still and semantic across both authored themes", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  await page.evaluate(() => window.__companionFixture?.setCapacity({ projectedTokens: 24_000, contextWindow: 32_000 }));
+  await page.evaluate(() => window.__companionFixture?.startCompaction("theme"));
+  const meter = page.locator(".companion-context-meter");
+  await expect(meter).toHaveAttribute("data-state", "active");
+  await expect.poll(() => meter.evaluate((node) => getComputedStyle(node).animationName)).toBe("none");
+  const lightStroke = await meter.locator(".companion-context-meter-value").evaluate((node) => getComputedStyle(node).stroke);
+  await page.evaluate(() => window.__companionFixture?.setTheme("dark"));
+  await expect(page.getByTestId("companion-root")).toHaveAttribute("data-theme", "night-voyage");
+  await expect.poll(() => meter.locator(".companion-context-meter-value").evaluate((node) => getComputedStyle(node).stroke)).not.toBe(lightStroke);
+  const darkStroke = await meter.locator(".companion-context-meter-value").evaluate((node) => getComputedStyle(node).stroke);
+  expect(darkStroke).not.toBe(lightStroke);
+  await expect(page.getByTestId("companion-continuity-status")).toHaveText("正在整理记忆…");
+});
+
 test("uses image progress instead of a duplicate typing indicator, then resumes typing", async ({ page }) => {
   await page.goto("/");
   const indicator = page.getByTestId("companion-typing-indicator");
@@ -179,12 +262,21 @@ test("drawer uses one checkbox state across desktop and Pixel-sized layouts", as
     await expect.poll(() => page.locator(".companion-sidebar-overlay").evaluate((node) => getComputedStyle(node).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
     await page.locator(".companion-sidebar-overlay").click({ position: { x: 390, y: 120 } });
     await expect(toggle).not.toBeChecked();
+    await expect.poll(() => page.evaluate(() => window.localStorage.getItem("dsh-companion:desktop-sidebar-open"))).toBeNull();
+    await page.reload();
+    await expect(toggle).not.toBeChecked();
     await expect.poll(() => headerToggle.evaluate((node) => getComputedStyle(node).getPropertyValue("-webkit-tap-highlight-color"))).toBe("rgba(0, 0, 0, 0)");
   } else {
     await expect(toggle).toBeChecked();
     await headerToggle.click();
     await expect(toggle).not.toBeChecked();
+    await expect.poll(() => page.evaluate(() => window.localStorage.getItem("dsh-companion:desktop-sidebar-open"))).toBe("false");
+    await page.reload();
+    await expect(toggle).not.toBeChecked();
     await headerToggle.click();
+    await expect(toggle).toBeChecked();
+    await expect.poll(() => page.evaluate(() => window.localStorage.getItem("dsh-companion:desktop-sidebar-open"))).toBe("true");
+    await page.reload();
     await expect(toggle).toBeChecked();
   }
 });

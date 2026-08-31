@@ -13,6 +13,7 @@ import { submitCompanionInput } from "./admission.js";
 import { companionSessionOpenPlan } from "./session-opening.js";
 import type { ClientSettings } from "./settings.js";
 import { RPC_CHANNEL as TTS_CHANNEL, RPC_ENDPOINT as TTS_ENDPOINT } from "./tts-contract.js";
+import { CONTINUITY_VIEW_TARGET, type CompanionContinuitySnapshot, type ContextPressureProjection } from "../continuity.js";
 
 export interface CompanionRootInjected {
   ctx: ClientContext;
@@ -100,7 +101,10 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
   const [scheme, setScheme] = useState<"light" | "dark">(() => themeRuntime?.getTheme?.().active?.colorScheme === "dark" ? "dark" : "light");
   const [recoveryKey, setRecoveryKey] = useState(0);
   const session = selectedSessionId ? ctx.sessions.binding(selectedSessionId as never)?.session : undefined;
-  const sessionSnapshot = useSnapshot<ConversationSnapshot>(session, session ? session.getSnapshot() : ({ sessionId: "", chat: { order: [], nodes: {}, locations: {}, timeline: {}, legacy: { nodes: [] } }, nodes: [], turnTimings: new Map(), turnEnds: new Map(), partial: null, runningCalls: [], pending: [], queue: [], running: false, subagent: null, composerPhase: "ready", removed: false, openState: "cold", openError: null, hasMore: false, loadingOlder: false, promptError: null, blank: true, lastAgentError: null } as unknown as ConversationSnapshot));
+  const sessionSnapshot = useSnapshot<ConversationSnapshot>(session, session ? session.getSnapshot() : ({ sessionId: "", views: { get: () => undefined }, chat: { order: [], nodes: {}, locations: {}, timeline: {}, legacy: { nodes: [] } }, nodes: [], turnTimings: new Map(), turnEnds: new Map(), partial: null, runningCalls: [], pending: [], queue: [], running: false, subagent: null, composerPhase: "ready", removed: false, openState: "cold", openError: null, hasMore: false, loadingOlder: false, promptError: null, blank: true, lastAgentError: null } as unknown as ConversationSnapshot));
+  const contextPressureSource = session?.projections?.faceOf("contextPressure") as { getSnapshot(): ContextPressureProjection | undefined; subscribe(listener: () => void): () => void } | undefined;
+  const contextPressure = useSnapshot<ContextPressureProjection | undefined>(contextPressureSource, undefined);
+  const continuityLifecycle = sessionSnapshot.views.get(CONTINUITY_VIEW_TARGET) as CompanionContinuitySnapshot | undefined;
   const ttsCache = useRef<TtsPreparationCache>();
   if (!ttsCache.current) ttsCache.current = new TtsPreparationCache();
 
@@ -150,7 +154,8 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
 
   useEffect(() => () => { ttsCache.current?.dispose(); }, []);
 
-  const projection = useMemo(() => projectConversation(sessionSnapshot, Boolean(hostDescription)), [sessionSnapshot, hostDescription]);
+  const continuity = useMemo(() => ({ contextPressure, lifecycle: continuityLifecycle }), [contextPressure, continuityLifecycle]);
+  const projection = useMemo(() => projectConversation(sessionSnapshot, Boolean(hostDescription), continuity.lifecycle), [sessionSnapshot, hostDescription, continuity.lifecycle]);
   const identity = useMemo(() => {
     const state = relationship.state;
     const source = relationship.identity ?? configured;
@@ -210,6 +215,7 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
     projection,
     identity,
     scheme,
+    continuity,
     actions,
     sessions,
     workspaceReady: Boolean(workspace && relationship.workspacePresent),
