@@ -12,6 +12,7 @@ import { companionStyles } from "./client/theme.js";
 import daisyStyles from "./client/daisy.css?inline";
 import tailwindStyles from "./client/tailwind.css?inline";
 import settingsCardStyles from "./client/CompanionSettingsCard.module.css?inline";
+import { registerCompanionContinuity } from "./continuity.js";
 
 export const name = "dsh-companion" as const;
 export const inject = ["connection", "locale", "sessions", "settingsScope", "slots", "theme", "workspaces"] as const;
@@ -49,6 +50,7 @@ export function installSettingsStyles(ctx: ClientContext): () => void {
 
 export function apply(ctx: ClientContext): void {
   installSettingsStyles(ctx);
+  registerCompanionContinuity(ctx);
   const settings = ctx.settingsScope.bind({ namespace: SETTINGS_NAMESPACE, decode: decodeClientSettings });
   const connection = (ctx as unknown as { connection: { rpc: { call(channel: string, endpoint: string, payload: unknown, signal?: AbortSignal): Promise<{ ok: boolean; value?: unknown; error?: { message: string } }> } } }).connection;
   const configuredWorkspace = (): string => {

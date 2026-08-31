@@ -4,6 +4,16 @@ export interface ComposerState {
   lastSubmitted?: string;
 }
 
+export interface ComposerCommand {
+  command: string;
+  label: string;
+  description: string;
+}
+
+export const COMPOSER_COMMANDS: readonly ComposerCommand[] = [
+  { command: "/compact", label: "整理当前对话", description: "压缩上下文，让下一段对话自然接续" },
+];
+
 export type ComposerEvent =
   | { type: "input"; value: string }
   | { type: "compositionstart" }
@@ -31,4 +41,10 @@ export function reduceComposer(state: ComposerState, event: ComposerEvent): Comp
 
 export function shouldSubmitEnter(event: { key: string; shiftKey?: boolean; isComposing?: boolean }, composing: boolean): boolean {
   return event.key === "Enter" && !event.shiftKey && !event.isComposing && !composing;
+}
+
+/** Return the one Companion command that can complete the slash prefix being typed. */
+export function findComposerCommand(draft: string): ComposerCommand | undefined {
+  if (!draft.startsWith("/") || /\s/u.test(draft)) return undefined;
+  return COMPOSER_COMMANDS.find((command) => command.command.startsWith(draft));
 }

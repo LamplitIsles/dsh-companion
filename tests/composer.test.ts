@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createComposerState, reduceComposer, shouldSubmitEnter } from "../src/client/composer.js";
+import { createComposerState, findComposerCommand, reduceComposer, shouldSubmitEnter } from "../src/client/composer.js";
 import { queueCompanionPrompt, submitCompanionInput } from "../src/client/admission.js";
 import { changedSettingsPayload, mergeCleanSettingsDraft, relationshipControlsWritable } from "../src/client/settings.js";
 import { companionSessionOpenPlan } from "../src/client/session-opening.js";
@@ -13,6 +13,16 @@ describe("IME composer", () => {
     expect(shouldSubmitEnter({ key: "Enter" }, state.composing)).toBe(true);
     state = reduceComposer(state, { type: "submit" });
     expect(state).toMatchObject({ draft: "", lastSubmitted: "你好呀" });
+  });
+});
+
+describe("Companion command completion", () => {
+  it("offers /compact only for a non-whitespace slash prefix", () => {
+    expect(findComposerCommand("/")).toMatchObject({ command: "/compact", label: "整理当前对话" });
+    expect(findComposerCommand("/comp")).toMatchObject({ command: "/compact" });
+    expect(findComposerCommand("/compact ")).toBeUndefined();
+    expect(findComposerCommand("/unknown")).toBeUndefined();
+    expect(findComposerCommand("普通消息")).toBeUndefined();
   });
 });
 

@@ -1,4 +1,5 @@
 import type { CompanionProjection } from "../projection.js";
+import type { CompanionContinuitySnapshot, ContextPressureProjection } from "../continuity.js";
 
 export interface CompanionIdentityView {
   companionName: string;
@@ -30,6 +31,13 @@ export interface CompanionSessionView {
   selected: boolean;
 }
 
+export interface CompanionContinuityView {
+  /** Host-projected context pressure; absent means the meter is unavailable. */
+  contextPressure?: ContextPressureProjection;
+  /** Session-scoped compaction lifecycle facts from the public view registry. */
+  lifecycle?: CompanionContinuitySnapshot;
+}
+
 export interface CompanionBridgeProps {
   projection: CompanionProjection;
   identity: CompanionIdentityView;
@@ -38,6 +46,7 @@ export interface CompanionBridgeProps {
   sessions: CompanionSessionView[];
   workspaceReady: boolean;
   sessionReady: boolean;
+  continuity?: CompanionContinuityView;
   onAdvanced?: () => void;
   onRecovery?: () => void;
 }
