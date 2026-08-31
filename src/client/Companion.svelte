@@ -744,7 +744,6 @@
               <div class="companion-context-meter-wrap">
                 <button bind:this={contextMeterButton} class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-context-meter" class:companion-context-meter-open={contextMeterOpen} data-state={continuityStatus?.status === "running" ? "active" : continuityStatus?.status === "complete" ? "complete" : continuityStatus?.status === "failed" ? "failed" : contextCapacity.percentage >= 80 ? "warning" : "idle"} type="button" aria-label={`对话容量：${contextCapacity.percentage}%`} aria-expanded={contextMeterOpen} aria-controls="companion-context-popover" on:click={toggleContextMeter}>
                   <svg viewBox="0 0 28 28" aria-hidden="true"><circle class="companion-context-meter-track" cx="14" cy="14" r="11"></circle><circle class="companion-context-meter-value" cx="14" cy="14" r="11" pathLength="100" style={`stroke-dashoffset:${100 - contextCapacity.percentage}`}></circle></svg>
-                  <span class="companion-sr-only">{contextCapacity.percentage}%</span>
                 </button>
                 {#if contextMeterOpen}
                   <div bind:this={contextMeterPopover} id="companion-context-popover" class="cmp-card companion-context-popover" role="dialog" aria-labelledby="companion-context-popover-title" tabindex="-1">
