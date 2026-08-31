@@ -182,9 +182,15 @@ try {
   await voice.locator("audio").waitFor({ state: "attached", timeout: 20_000 });
   const audio = voice.locator("audio");
   if (await audio.getAttribute("src") !== "/companion-assembled-smoke/voice.mp3") throw new Error("Companion TTS RPC did not prepare the test-owned audio route");
-  const audioResponse = page.waitForResponse((response) => response.url().endsWith("/companion-assembled-smoke/voice.mp3") && response.ok());
+  await page.waitForFunction(() => {
+    const element = document.querySelector('[data-testid^="voice-"] audio');
+    return element instanceof HTMLAudioElement && Number.isFinite(element.duration) && element.duration > 0 && element.paused;
+  }, undefined, { timeout: 20_000 });
   await voice.locator(".companion-voice-control").click();
-  await audioResponse;
+  await page.waitForFunction(() => {
+    const element = document.querySelector('[data-testid^="voice-"] audio');
+    return element instanceof HTMLAudioElement && !element.paused;
+  }, undefined, { timeout: 20_000 });
   await page.locator(".companion-session-item").last().click();
   await page.locator(".companion-bubble").getByText("Earlier packed conversation", { exact: true }).waitFor({ state: "visible", timeout: 20_000 });
   if (browserFailures.length) throw new Error(`assembled browser failures:\n${browserFailures.join("\n")}`);

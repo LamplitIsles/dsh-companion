@@ -54,6 +54,7 @@
   const LONG_WAIT_DELAY_MS = 12_000;
   const LONG_WAIT_ROTATION_MS = 9_000;
   const VOICE_WAVEFORM_BAR_COUNT = 28;
+  const EMPTY_VOICE_PLAYBACK = { current: 0, duration: 0, playing: false };
   const LONG_WAIT_MESSAGES = [
     "我还在认真想，陪我再等一小会儿呀",
     "正在把想说的话轻轻理好……",
@@ -208,17 +209,24 @@
   }
 
   function voiceState(id: string): { current: number; duration: number; playing: boolean } {
-    return voicePlayback[id] ?? { current: 0, duration: 0, playing: false };
+    return voicePlayback[id] ?? EMPTY_VOICE_PLAYBACK;
   }
 
-  function formatDuration(value: number): string {
-    if (!Number.isFinite(value) || value < 0) return "0:00";
-    const seconds = Math.floor(value);
+  function formatVoiceSeconds(value: number, rounding: "floor" | "ceil" = "floor"): string {
+    if (!Number.isFinite(value) || value <= 0) return "0:00";
+    const seconds = rounding === "ceil" ? Math.ceil(value) : Math.floor(value);
     return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   }
 
-  function voiceProgress(id: string): number {
-    const state = voiceState(id);
+  function hasVoiceDuration(state: { duration: number }): boolean { return state.duration > 0; }
+  function voiceTimestamp(state: { current: number; duration: number }): string | undefined {
+    if (state.duration <= 0) return undefined;
+    return state.current > 0 && state.current < state.duration
+      ? formatVoiceSeconds(state.current)
+      : formatVoiceSeconds(state.duration, "ceil");
+  }
+
+  function voiceProgress(state: { current: number; duration: number }): number {
     return state.duration > 0 ? Math.min(1, Math.max(0, state.current / state.duration)) : 0;
   }
 
@@ -235,6 +243,31 @@
     return control.closest(".companion-voice")?.querySelector<HTMLAudioElement>("audio") ?? undefined;
   }
 
+  function trackVoiceAudio(node: HTMLAudioElement, id: string): { destroy(): void } {
+    const loaded = (event: Event) => onVoiceLoaded(id, event);
+    const time = (event: Event) => onVoiceTime(id, event);
+    const play = () => onVoicePlay(id);
+    const pause = () => onVoicePause(id);
+    const ended = (event: Event) => onVoiceEnded(id, event);
+    const error = () => failVoice(id);
+    node.addEventListener("loadedmetadata", loaded);
+    node.addEventListener("timeupdate", time);
+    node.addEventListener("play", play);
+    node.addEventListener("pause", pause);
+    node.addEventListener("ended", ended);
+    node.addEventListener("error", error);
+    return {
+      destroy() {
+        node.removeEventListener("loadedmetadata", loaded);
+        node.removeEventListener("timeupdate", time);
+        node.removeEventListener("play", play);
+        node.removeEventListener("pause", pause);
+        node.removeEventListener("ended", ended);
+        node.removeEventListener("error", error);
+      },
+    };
+  }
+
   function failVoice(id: string): void {
     const nextUrls = { ...voiceUrls }; delete nextUrls[id]; voiceUrls = nextUrls;
     voiceErrors = { ...voiceErrors, [id]: "语音暂时无法播放，文字内容仍可查看。" };
@@ -249,6 +282,7 @@
     if (!audio) return;
     for (const other of document.querySelectorAll<HTMLAudioElement>("#dsh-companion .companion-voice audio")) if (other !== audio && !other.paused) other.pause();
     try {
+      if (audio.ended) audio.currentTime = 0;
       if (audio.paused) await audio.play();
       else audio.pause();
     } catch {
@@ -266,14 +300,23 @@
 
   function onVoicePlay(id: string): void { updateVoicePlayback(id, { playing: true }); }
   function onVoicePause(id: string): void { updateVoicePlayback(id, { playing: false }); }
-  function onVoiceEnded(id: string): void { updateVoicePlayback(id, { playing: false }); }
+  function onVoiceEnded(id: string, event: Event): void {
+    const audio = event.target as HTMLAudioElement;
+    const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : voiceState(id).duration;
+    updateVoicePlayback(id, { current: duration, duration, playing: false });
+  }
   function onVoiceLoaded(id: string, event: Event): void {
     const audio = event.target as HTMLAudioElement;
-    updateVoicePlayback(id, { duration: Number.isFinite(audio.duration) ? audio.duration : 0, current: audio.currentTime });
+    if (!Number.isFinite(audio.duration) || audio.duration <= 0) {
+      failVoice(id);
+      return;
+    }
+    updateVoicePlayback(id, { duration: audio.duration, current: audio.currentTime });
   }
   function onVoiceTime(id: string, event: Event): void {
     const audio = event.target as HTMLAudioElement;
-    updateVoicePlayback(id, { current: audio.currentTime, duration: Number.isFinite(audio.duration) ? audio.duration : voiceState(id).duration });
+    const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : voiceState(id).duration;
+    updateVoicePlayback(id, { current: audio.currentTime, duration });
   }
 
   function onScroll(): void {
@@ -514,20 +557,21 @@
                 </div>
               </article>
             {:else if item.kind === "voice"}
+              {@const playback = voicePlayback[item.id] ?? EMPTY_VOICE_PLAYBACK}
               <article class="cmp-chat cmp-chat-start companion-row incoming" data-testid={`voice-${item.id}`}>
                 <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder cmp:rounded-full message-avatar"><div class="companion-avatar-crop cmp:rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div></div>
                 <div class="cmp-chat-bubble companion-bubble companion-voice" role="region" aria-label="语音播放器">
                   {#if voiceUrls[item.id]}
-                    <audio class="companion-audio" preload="none" src={voiceUrls[item.id]} aria-hidden="true" tabindex="-1" on:loadedmetadata={(event) => onVoiceLoaded(item.id, event)} on:timeupdate={(event) => onVoiceTime(item.id, event)} on:play={() => onVoicePlay(item.id)} on:pause={() => onVoicePause(item.id)} on:ended={() => onVoiceEnded(item.id)} on:error={() => failVoice(item.id)}></audio>
-                    <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-voice-control" aria-label={voiceState(item.id).playing ? "暂停语音" : "播放语音"} on:click={(event) => void toggleVoice(item, event.currentTarget)}>
-                      {#if voiceState(item.id).playing}<Pause size={18} fill="currentColor" aria-hidden="true" />{:else}<Play size={18} fill="currentColor" aria-hidden="true" />{/if}
+                    <audio class="companion-audio" preload="metadata" src={voiceUrls[item.id]} aria-hidden="true" tabindex="-1" use:trackVoiceAudio={item.id}></audio>
+                    <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-voice-control" aria-label={playback.playing ? "暂停语音" : "播放语音"} on:click={(event) => void toggleVoice(item, event.currentTarget)}>
+                      {#if playback.playing}<Pause size={18} fill="currentColor" aria-hidden="true" />{:else}<Play size={18} fill="currentColor" aria-hidden="true" />{/if}
                     </button>
                     <div class="companion-voice-player">
                       <div class="companion-voice-waveform">
-                        {#each voiceWaveform(item.id) as height, index}<span class:played={(index + 1) / VOICE_WAVEFORM_BAR_COUNT <= voiceProgress(item.id)} style={`--voice-bar:${height}%`} aria-hidden="true"></span>{/each}
-                        <input class="companion-voice-seek" type="range" min="0" max={voiceState(item.id).duration || 0} step="0.1" value={voiceState(item.id).current} disabled={!voiceState(item.id).duration} aria-label="语音进度" aria-valuetext={`${formatDuration(voiceState(item.id).current)} / ${formatDuration(voiceState(item.id).duration)}`} on:input={(event) => seekVoice(event, item.id)} />
+                        {#each voiceWaveform(item.id) as height, index}<span class:played={(index + 1) / VOICE_WAVEFORM_BAR_COUNT <= voiceProgress(playback)} style={`--voice-bar:${height}%`} aria-hidden="true"></span>{/each}
+                        <input class="companion-voice-seek" type="range" min="0" max={playback.duration || 0} step="0.1" value={playback.current} disabled={!hasVoiceDuration(playback)} aria-label="语音进度" aria-valuetext={hasVoiceDuration(playback) ? `${formatVoiceSeconds(playback.current)} / ${formatVoiceSeconds(playback.duration, "ceil")}` : "正在加载语音时长"} on:input={(event) => seekVoice(event, item.id)} />
                       </div>
-                      <div class="companion-voice-meta"><span role="timer" aria-live="off">{formatDuration(voiceState(item.id).current)} / {formatDuration(voiceState(item.id).duration)}</span>{#if voiceErrors[item.id]}<span role="alert">播放失败</span>{/if}</div>
+                      <div class="companion-voice-meta">{#if voiceTimestamp(playback)}<span role="timer" aria-live="off">{voiceTimestamp(playback)}</span>{:else}<span role="status">加载时长…</span>{/if}{#if voiceErrors[item.id]}<span role="alert">播放失败</span>{/if}</div>
                     </div>
                   {:else}
                     <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-voice-control" aria-label={voicePreparing[item.id] ? "正在准备语音" : voiceErrors[item.id] ? "重试语音" : "播放语音"} on:click={(event) => void toggleVoice(item, event.currentTarget)} disabled={!actions.prepareVoice || voicePreparing[item.id]}>
@@ -535,7 +579,7 @@
                     </button>
                     <div class="companion-voice-player">
                       <div class="companion-voice-waveform">{#each voiceWaveform(item.id) as height}<span style={`--voice-bar:${height}%`} aria-hidden="true"></span>{/each}</div>
-                      <div class="companion-voice-meta">{#if voicePreparing[item.id]}<span role="status">准备中</span>{:else if voiceErrors[item.id]}<span role="alert">播放失败</span>{:else}<span>0:00</span>{/if}</div>
+                      <div class="companion-voice-meta">{#if voicePreparing[item.id]}<span role="status">准备中</span>{:else if voiceErrors[item.id]}<span role="alert">播放失败</span>{:else}<span role="status">准备中</span>{/if}</div>
                     </div>
                   {/if}
                   <details class="companion-transcript" open={Boolean(voiceErrors[item.id])}>

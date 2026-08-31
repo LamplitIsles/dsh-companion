@@ -13,7 +13,19 @@ test("fixture has complete media states, accessible overlays, and no duplicate i
   await expect.poll(() => playVoice.evaluate((node) => getComputedStyle(node).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
   await expect(voice.locator(".companion-voice-waveform")).toBeVisible();
   await expect(voice.getByRole("slider", { name: "语音进度" })).toBeAttached();
-  await expect(voice.getByRole("timer")).toContainText("0:00");
+  const voiceTimer = voice.getByRole("timer");
+  await expect(voiceTimer).toHaveText("0:01");
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>('[data-testid="voice-voice:demo:1:abc"] audio')!;
+    Object.defineProperties(audio, {
+      currentTime: { configurable: true, value: 7 },
+      duration: { configurable: true, value: 19 },
+    });
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(voiceTimer).toHaveText("0:07");
+  await page.evaluate(() => document.querySelector<HTMLAudioElement>('[data-testid="voice-voice:demo:1:abc"] audio')!.dispatchEvent(new Event("ended")));
+  await expect(voiceTimer).toHaveText("0:19");
   await expect(voice.getByText("转文字")).toBeVisible();
   await expect(page.getByTestId("voice-voice:demo:failed").getByRole("button", { name: "重试语音" }).locator("svg")).toHaveCount(1);
   const avatar = page.getByRole("button", { name: "查看 Companion 关系资料" });
