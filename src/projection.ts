@@ -264,13 +264,25 @@ export function projectConversation(snapshot: unknown, connected = true): Compan
 }
 
 function dedupeTimeline(items: readonly TimelineItem[]): TimelineItem[] {
-  const seen = new Set<string>();
-  return items.filter((item) => {
+  const result: TimelineItem[] = [];
+  const positions = new Map<string, number>();
+  for (const item of items) {
     const key = item.projectionKey ?? item.id;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+    const position = positions.get(key);
+    if (position !== undefined) {
+      if (timelineRank(item) > timelineRank(result[position]!)) result[position] = item;
+      continue;
+    }
+    positions.set(key, result.length);
+    result.push(item);
+  }
+  return result;
+}
+
+function timelineRank(item: TimelineItem): number {
+  if (item.kind === "image") return item.state === "ready" || item.state === "failed" ? 2 : 1;
+  if (item.kind === "text") return item.pending || item.streaming ? 1 : 2;
+  return 2;
 }
 
 export function deriveStatus(input: { connected: boolean; running: boolean; openState?: string }): "ready" | "working" | "reconnecting" {

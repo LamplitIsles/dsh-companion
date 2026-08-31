@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { imageGenProjectionId, parseTtsPassage, recognizeImageGenResult, ttsProjectionId } from "../src/media.js";
+import { TtsPreparationCache, validateTtsPayload } from "../src/client/voice-cache.js";
 
 describe("companion media", () => {
   it("parses one finalized bounded passage and ignores fenced code", () => {
@@ -16,5 +17,27 @@ describe("companion media", () => {
     expect(recognizeImageGenResult({ kind: "tool-call", name: "kepos_image_generate", callId: "c1" }, "n")).toMatchObject({ id: "c1", state: "running" });
     expect(imageGenProjectionId("c1", "a1")).toBe("imagegen:c1:a1");
     expect(ttsProjectionId("n", { start: 1, digest: "abc" })).toBe("tts:n:1:abc");
+  });
+});
+
+describe("Kepos TTS browser contract", () => {
+  it("accepts the real bounded same-origin route payload and caches it once", async () => {
+    const payload = { mediaType: "audio/mpeg", url: "/kepos-tts/audio/abc", bytes: 2401 };
+    expect(validateTtsPayload(payload)).toEqual(payload);
+    let calls = 0;
+    const cache = new TtsPreparationCache();
+    const prepared = await Promise.all([
+      cache.prepare("s1", "你好", { synthesize: async () => { calls += 1; return payload; } }),
+      cache.prepare("s1", "你好", { synthesize: async () => { calls += 1; return payload; } }),
+    ]);
+    expect(prepared).toEqual([prepared[0], prepared[0]]);
+    expect(prepared[0]?.url).toBe("/kepos-tts/audio/abc");
+    expect(calls).toBe(1);
+  });
+
+  it("rejects cross-origin, wrong media type, and unbounded route payloads", () => {
+    expect(() => validateTtsPayload({ mediaType: "audio/mpeg", url: "https://elsewhere.invalid/audio", bytes: 1 }, "http://localhost")).toThrow("audio-invalid");
+    expect(() => validateTtsPayload({ mediaType: "audio/ogg", url: "/kepos-tts/audio/a", bytes: 1 })).toThrow("audio-invalid");
+    expect(() => validateTtsPayload({ mediaType: "audio/mpeg", url: "/kepos-tts/audio/a", bytes: 0 })).toThrow("audio-invalid");
   });
 });

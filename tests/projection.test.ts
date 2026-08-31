@@ -26,7 +26,19 @@ describe("chat projection", () => {
   it("keeps one keyed ImageGen row while a call settles", () => {
     const running = projectConversation({ nodes: [{ kind: "tool-call", seq: 1, callId: "call-1", name: "kepos_image_generate", state: "running" }] });
     const ready = projectConversation({ nodes: [{ kind: "tool-result", seq: 1, callId: "call-1", name: "kepos_image_generate", content: [{ type: "image", attachment: { attachmentId: "att-1", mediaType: "image/png" } }] }] });
+    const replay = projectConversation({ nodes: [
+      { kind: "tool-call", seq: 1, callId: "call-1", name: "kepos_image_generate", state: "running" },
+      { kind: "tool-result", seq: 2, callId: "call-1", name: "kepos_image_generate", content: [{ type: "image", attachment: { attachmentId: "att-1", mediaType: "image/png" } }] },
+    ] });
     expect(running.items[0]).toMatchObject({ id: "imagegen:call-1", projectionKey: "imagegen:call-1", state: "running" });
     expect(ready.items[0]).toMatchObject({ id: "imagegen:call-1:att-1", projectionKey: "imagegen:call-1", state: "ready" });
+    expect(replay.items).toHaveLength(1);
+    expect(replay.items[0]).toMatchObject({ id: "imagegen:call-1:att-1", state: "ready" });
+  });
+
+  it("uses the live connection observable even while a Session snapshot remains mounted", () => {
+    const sessionSnapshot = { nodes: [{ kind: "assistant", seq: 1, text: "仍在这里" }], openState: "open", running: false };
+    expect(projectConversation(sessionSnapshot, false).status).toBe("reconnecting");
+    expect(projectConversation(sessionSnapshot, true).status).toBe("ready");
   });
 });

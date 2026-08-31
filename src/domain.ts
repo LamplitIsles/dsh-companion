@@ -311,9 +311,17 @@ export class CompanionStateStore {
   private loadPromise: Promise<void> | undefined;
   private writeTail: Promise<void> = Promise.resolve();
   private readonly listeners = new Set<(state: CompanionState) => void>();
+  private readonly waiters = new Set<{
+    since: number;
+    resolve: (value: { revision: number; state: CompanionState }) => void;
+    reject: (error: unknown) => void;
+    signal?: AbortSignal;
+    abort?: () => void;
+  }>();
   private readonly turnTotals = new Map<string, number>();
   private readonly fs?: CompanionFileSystem;
   private readonly filePath?: string;
+  private revision = 0;
 
   constructor(options: CompanionStateStoreOptions) {
     this.workspacePath = options.workspacePath;
@@ -327,9 +335,39 @@ export class CompanionStateStore {
     return { ...this.state, ...(this.state.note === undefined ? {} : { note: this.state.note }) };
   }
 
+  /** A persisted snapshot is only available after the first load settles. */
+  getLoadedSnapshot(): CompanionState | undefined {
+    return this.loaded ? this.getSnapshot() : undefined;
+  }
+
+  getRevision(): number { return this.revision; }
+
   subscribe(listener: (state: CompanionState) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /** Resolve when persisted relationship state changes after `since`. */
+  async waitForChange(since: number, signal?: AbortSignal): Promise<{ revision: number; state: CompanionState }> {
+    await this.load(signal);
+    if (this.revision > since) return { revision: this.revision, state: this.getSnapshot() };
+    return new Promise((resolve, reject) => {
+      const waiter: {
+        since: number;
+        resolve: (value: { revision: number; state: CompanionState }) => void;
+        reject: (error: unknown) => void;
+        signal?: AbortSignal;
+        abort?: () => void;
+      } = { since, resolve, reject, signal };
+      const abort = () => {
+        this.waiters.delete(waiter);
+        reject(signal?.reason ?? new Error("aborted"));
+      };
+      waiter.abort = abort;
+      if (signal?.aborted) { abort(); return; }
+      signal?.addEventListener("abort", abort, { once: true });
+      this.waiters.add(waiter);
+    });
   }
 
   /** Adopt a newly saved default without rewriting an established state. */
@@ -374,6 +412,8 @@ export class CompanionStateStore {
       }
     }
     this.loaded = true;
+    this.revision += 1;
+    this.notify();
   }
 
   private async ensureParentDirectory(signal?: AbortSignal): Promise<void> {
@@ -394,7 +434,19 @@ export class CompanionStateStore {
       await nodeFs.rename(temporary, this.filePath);
     }
     this.state = next;
-    for (const listener of this.listeners) listener(this.getSnapshot());
+    this.revision += 1;
+    this.notify();
+  }
+
+  private notify(): void {
+    const snapshot = this.getSnapshot();
+    for (const listener of this.listeners) listener(snapshot);
+    for (const waiter of [...this.waiters]) {
+      if (this.revision <= waiter.since) continue;
+      this.waiters.delete(waiter);
+      if (waiter.signal && waiter.abort) waiter.signal.removeEventListener("abort", waiter.abort);
+      waiter.resolve({ revision: this.revision, state: snapshot });
+    }
   }
 
   private enqueue(task: () => Promise<void>): Promise<void> {
@@ -427,12 +479,21 @@ export class CompanionStateStore {
   }
 
   async resetAffinity(signal?: AbortSignal): Promise<CompanionState> {
+    this.turnTotals.clear();
     return this.update((current) => ({ ...current, affinity: this.defaultAffinity }), signal);
+  }
+
+  async setAffinity(value: unknown, signal?: AbortSignal): Promise<CompanionState> {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 100) {
+      throw new CompanionValidationError("亲近度必须是 0 到 100 的整数。");
+    }
+    this.turnTotals.clear();
+    return this.update((current) => ({ ...current, affinity: value }), signal);
   }
 
   /** Start a fresh per-turn cumulative affinity budget. */
   beginTurn(turnId: string): void {
-    this.turnTotals.set(turnId, 0);
+    if (!this.turnTotals.has(turnId)) this.turnTotals.set(turnId, 0);
     if (this.turnTotals.size > 32) this.turnTotals.delete(this.turnTotals.keys().next().value as string);
   }
 
@@ -506,9 +567,16 @@ export function selectCompanionSession(
   workspaceId: string,
   sessions: readonly SessionCandidate[],
   rememberedId?: string,
+  ownership: { sessionIds?: readonly string[]; archivedSessionIds?: readonly string[] } = {},
 ): string | undefined {
+  const authoritativeIds = ownership.sessionIds ? new Set(ownership.sessionIds) : undefined;
+  const archivedIds = new Set(ownership.archivedSessionIds ?? []);
   const members = sessions.filter((session) =>
-    session.workspaceId === workspaceId && !session.archived && !session.subagent && session.origin !== "subagent",
+    (authoritativeIds ? authoritativeIds.has(session.id) : session.workspaceId === workspaceId)
+      && !archivedIds.has(session.id)
+      && !session.archived
+      && !session.subagent
+      && session.origin !== "subagent",
   );
   if (rememberedId && members.some((session) => session.id === rememberedId)) return rememberedId;
   const recent = members

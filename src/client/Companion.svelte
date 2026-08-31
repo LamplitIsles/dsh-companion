@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, tick } from "svelte";
-  import type { CompanionProjection, TimelineItem, TimelineImage, TimelineVoice } from "../projection.js";
+  import type { CompanionProjection, TimelineImage, TimelineVoice } from "../projection.js";
   import { createComposerState, reduceComposer, shouldSubmitEnter } from "./composer.js";
 
   export interface CompanionIdentityView {
@@ -14,12 +14,11 @@
     mood: string;
     intensity: number;
     moodNote?: string;
-    affinity: number;
-    affinityStage: string;
+    affinity?: number;
+    affinityStage?: string;
   }
   export interface CompanionActions {
-    send: (text: string, mode: "queue" | "steer") => Promise<void>;
-    retry?: (text: string) => Promise<void>;
+    send: (text: string) => Promise<void>;
     loadOlder?: () => Promise<void>;
     attachmentUrl?: (attachment: unknown) => Promise<string>;
     prepareVoice?: (text: string) => Promise<string>;
@@ -38,16 +37,23 @@
   let detailOpen = false;
   let lightbox: TimelineImage | undefined;
   let lightboxUrl = "";
-  let activeVoice: string | undefined;
   let voiceUrls: Record<string, string> = {};
   let voiceErrors: Record<string, string> = {};
   let voicePreparing: Record<string, boolean> = {};
+  let voicePlayback: Record<string, { current: number; duration: number; playing: boolean; ended: boolean }> = {};
   let imageUrls: Record<string, string> = {};
   let imageErrors: Record<string, string> = {};
+  let imageSources: Record<string, string> = {};
+  let imageLoads: Record<string, string> = {};
   let wasNearBottom = true;
   let liveAnnouncement = "";
-  let focusedBeforeOverlay: HTMLElement | undefined;
+  let detailReturnFocus: HTMLElement | undefined;
+  let lightboxReturnFocus: HTMLElement | undefined;
+  let detailDialog: HTMLElement;
+  let lightboxDialog: HTMLElement;
+  let overlayHistory = false;
   let statusText = "";
+  const intensityLabels: Record<number, string> = { 1: "轻微", 2: "明显", 3: "强烈" };
 
   $: statusText = projection.status === "working" ? "正在陪你想" : projection.status === "reconnecting" ? "正在重新连接" : "已准备好";
   $: if (projection) void reconcileProjection(projection);
@@ -60,13 +66,40 @@
     if (nearBottom && !value.loadingOlder) timeline.scrollTop = timeline.scrollHeight;
     wasNearBottom = nearBottom;
     liveAnnouncement = value.promptError ?? value.lastAgentError ?? "";
+    const wantedImages = new Map<string, TimelineImage>();
+    for (const item of value.items) if (item.kind === "image" && item.state === "ready" && item.attachment) wantedImages.set(item.id, item);
+    for (const [id, url] of Object.entries(imageUrls)) {
+      const item = wantedImages.get(id);
+      if (!item || imageSources[id] !== imageSource(item)) revokeImage(id, url);
+    }
+    for (const item of wantedImages.values()) {
+      const source = imageSource(item);
+      if (!imageUrls[item.id] && imageLoads[item.id] !== source && actions.attachmentUrl) void loadImage(item, source);
+    }
     for (const item of value.items) {
-      if (item.kind === "image" && item.state === "ready" && item.attachment && !imageUrls[item.id] && actions.attachmentUrl) {
-        try { imageUrls = { ...imageUrls, [item.id]: await actions.attachmentUrl(item.attachment) }; }
-        catch { imageErrors = { ...imageErrors, [item.id]: "图片暂时无法显示。" }; }
-      }
       if (item.kind === "voice" && !voiceUrls[item.id] && !voiceErrors[item.id] && actions.prepareVoice) void prepareVoice(item);
     }
+  }
+
+  function imageSource(item: TimelineImage): string { return `${item.attachment?.attachmentId ?? ""}:${item.attachment?.mediaType ?? ""}`; }
+  function revokeImage(id: string, url = imageUrls[id]): void {
+    if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
+    const urls = { ...imageUrls }; const sources = { ...imageSources }; const errors = { ...imageErrors };
+    delete urls[id]; delete sources[id]; delete errors[id];
+    imageUrls = urls; imageSources = sources; imageErrors = errors;
+  }
+  async function loadImage(item: TimelineImage, source: string): Promise<void> {
+    if (!actions.attachmentUrl || imageLoads[item.id] === source) return;
+    imageLoads = { ...imageLoads, [item.id]: source };
+    try {
+      const url = await actions.attachmentUrl(item.attachment);
+      const live = projection.items.find((candidate) => candidate.kind === "image" && candidate.id === item.id) as TimelineImage | undefined;
+      if (live && imageSource(live) === source) {
+        if (imageUrls[item.id] && imageUrls[item.id] !== url) revokeImage(item.id);
+        imageUrls = { ...imageUrls, [item.id]: url }; imageSources = { ...imageSources, [item.id]: source };
+      } else if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+    } catch { imageErrors = { ...imageErrors, [item.id]: "图片暂时无法显示。" }; }
+    finally { const loads = { ...imageLoads }; delete loads[item.id]; imageLoads = loads; }
   }
 
   async function prepareVoice(item: TimelineVoice): Promise<void> {
@@ -75,6 +108,60 @@
     try { voiceUrls = { ...voiceUrls, [item.id]: await actions.prepareVoice(item.text) }; }
     catch { voiceErrors = { ...voiceErrors, [item.id]: "语音暂时无法播放，文字稿仍可查看。" }; }
     finally { const next = { ...voicePreparing }; delete next[item.id]; voicePreparing = next; }
+  }
+
+  function updateVoicePlayback(id: string, patch: Partial<{ current: number; duration: number; playing: boolean; ended: boolean }>): void {
+    voicePlayback = { ...voicePlayback, [id]: { current: 0, duration: 0, playing: false, ended: false, ...voicePlayback[id], ...patch } };
+  }
+
+  function voiceState(id: string): { current: number; duration: number; playing: boolean; ended: boolean } {
+    return voicePlayback[id] ?? { current: 0, duration: 0, playing: false, ended: false };
+  }
+
+  function formatDuration(value: number): string {
+    if (!Number.isFinite(value) || value < 0) return "0:00";
+    const seconds = Math.floor(value);
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  }
+
+  function audioFor(control: Element): HTMLAudioElement | undefined {
+    return control.closest(".companion-voice")?.querySelector<HTMLAudioElement>("audio") ?? undefined;
+  }
+
+  async function toggleVoice(item: TimelineVoice, control: Element): Promise<void> {
+    if (!voiceUrls[item.id]) {
+      await prepareVoice(item);
+      await tick();
+    }
+    const audio = audioFor(control);
+    if (!audio) return;
+    for (const other of document.querySelectorAll<HTMLAudioElement>("#dsh-companion .companion-voice audio")) if (other !== audio && !other.paused) other.pause();
+    try {
+      if (audio.paused) await audio.play();
+      else audio.pause();
+    } catch {
+      voiceErrors = { ...voiceErrors, [item.id]: "语音暂时无法播放，文字稿仍可查看。" };
+    }
+  }
+
+  function seekVoice(event: Event, id: string): void {
+    const audio = audioFor(event.currentTarget as Element);
+    const value = Number((event.currentTarget as HTMLInputElement).value);
+    if (!audio || !Number.isFinite(value)) return;
+    audio.currentTime = value;
+    updateVoicePlayback(id, { current: value, ended: false });
+  }
+
+  function onVoicePlay(id: string): void { updateVoicePlayback(id, { playing: true, ended: false }); }
+  function onVoicePause(id: string): void { updateVoicePlayback(id, { playing: false }); }
+  function onVoiceEnded(id: string): void { updateVoicePlayback(id, { playing: false, ended: true }); }
+  function onVoiceLoaded(id: string, event: Event): void {
+    const audio = event.target as HTMLAudioElement;
+    updateVoicePlayback(id, { duration: Number.isFinite(audio.duration) ? audio.duration : 0, current: audio.currentTime });
+  }
+  function onVoiceTime(id: string, event: Event): void {
+    const audio = event.target as HTMLAudioElement;
+    updateVoicePlayback(id, { current: audio.currentTime, duration: Number.isFinite(audio.duration) ? audio.duration : voiceState(id).duration });
   }
 
   function onScroll(): void {
@@ -86,7 +173,7 @@
     const text = composer.draft.trim();
     if (!text || composer.composing) return;
     composer = reduceComposer(composer, { type: "submit" });
-    void actions.send(text, projection.running ? "queue" : "steer").catch(() => {
+    void actions.send(text).catch(() => {
       composer = { ...composer, draft: text };
       liveAnnouncement = "消息发送失败，内容已保留，可以重试。";
     });
@@ -103,24 +190,44 @@
   function onInput(event: Event): void { setDraft((event.currentTarget as HTMLTextAreaElement).value); }
   function onCompositionEnd(event: CompositionEvent): void { composer = reduceComposer(composer, { type: "compositionend", value: (event.currentTarget as HTMLTextAreaElement).value }); }
   function onCompositionStart(): void { composer = reduceComposer(composer, { type: "compositionstart" }); }
-  function openDetail(): void { focusedBeforeOverlay = document.activeElement as HTMLElement; detailOpen = true; }
-  function closeDetail(): void { detailOpen = false; focusedBeforeOverlay?.focus(); focusedBeforeOverlay = undefined; }
+  function focusFirst(dialog: () => HTMLElement | undefined): void {
+    void tick().then(() => {
+      const target = dialog();
+      (target?.querySelector<HTMLElement>("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])") ?? target)?.focus();
+    });
+  }
+  function trapFocus(event: KeyboardEvent, dialog: HTMLElement): void {
+    if (event.key !== "Tab") return;
+    const focusable = [...dialog.querySelectorAll<HTMLElement>("button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")].filter((node) => !node.hasAttribute("hidden"));
+    if (!focusable.length) { event.preventDefault(); dialog.focus(); return; }
+    const first = focusable[0]!; const last = focusable[focusable.length - 1]!;
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  }
+  function closeHistory(): void { if (overlayHistory) { overlayHistory = false; history.back(); } }
+  function openDetail(): void { detailReturnFocus = document.activeElement as HTMLElement; detailOpen = true; focusFirst(() => detailDialog); }
+  function closeDetail(fromHistory = false): void { detailOpen = false; if (!fromHistory) closeHistory(); detailReturnFocus?.focus(); detailReturnFocus = undefined; }
   function openLightbox(item: TimelineImage): void {
-    focusedBeforeOverlay = document.activeElement as HTMLElement;
+    lightboxReturnFocus = document.activeElement as HTMLElement;
     lightbox = item;
     lightboxUrl = imageUrls[item.id] ?? "";
+    focusFirst(() => lightboxDialog);
   }
-  function closeLightbox(): void { lightbox = undefined; lightboxUrl = ""; focusedBeforeOverlay?.focus(); focusedBeforeOverlay = undefined; }
-  function onWindowKeydown(event: KeyboardEvent): void { if (event.key === "Escape") { if (lightbox) closeLightbox(); else if (detailOpen) closeDetail(); } }
-  function onPopState(): void { if (lightbox) closeLightbox(); else if (detailOpen) closeDetail(); }
-  function pushOverlayHistory(): void { history.pushState({ companionOverlay: true }, ""); }
+  function closeLightbox(fromHistory = false): void { lightbox = undefined; lightboxUrl = ""; if (!fromHistory) closeHistory(); lightboxReturnFocus?.focus(); lightboxReturnFocus = undefined; }
+  function onWindowKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape") { if (lightbox) closeLightbox(); else if (detailOpen) closeDetail(); return; }
+    if (lightbox && lightboxDialog) trapFocus(event, lightboxDialog);
+    else if (detailOpen && detailDialog) trapFocus(event, detailDialog);
+  }
+  function onPopState(): void { overlayHistory = false; if (lightbox) closeLightbox(true); else if (detailOpen) closeDetail(true); }
+  function pushOverlayHistory(): void { if (!overlayHistory) { history.pushState({ companionOverlay: true }, ""); overlayHistory = true; } }
   function showDetail(): void { pushOverlayHistory(); openDetail(); }
   function showLightbox(item: TimelineImage): void { pushOverlayHistory(); openLightbox(item); }
   async function loadOlder(): Promise<void> { if (!actions.loadOlder || projection.loadingOlder) return; const previousHeight = timeline?.scrollHeight ?? 0; await actions.loadOlder(); await tick(); if (timeline) timeline.scrollTop += timeline.scrollHeight - previousHeight; }
 
   onDestroy(() => {
+    for (const audio of document.querySelectorAll<HTMLAudioElement>("#dsh-companion .companion-voice audio")) audio.pause();
     for (const url of Object.values(imageUrls)) if (url.startsWith("blob:")) URL.revokeObjectURL(url);
-    for (const url of Object.values(voiceUrls)) if (url.startsWith("blob:")) URL.revokeObjectURL(url);
   });
 </script>
 
@@ -187,10 +294,17 @@
             {:else if item.kind === "voice"}
               <article class="companion-row incoming" data-testid={`voice-${item.id}`}>
                 <div class="cmp-avatar cmp-avatar-placeholder" style="width:32px;height:32px">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div>
-                <div class="companion-bubble companion-voice">
-                  {#if voiceUrls[item.id]}<audio controls preload="none" src={voiceUrls[item.id]} aria-label="Companion 语音消息" on:play={() => activeVoice = item.id} on:pause={() => activeVoice = undefined} on:ended={() => activeVoice = undefined}></audio>
-                  {:else}<button class="cmp-btn cmp-btn-primary cmp-btn-sm" on:click={() => void prepareVoice(item)} disabled={!actions.prepareVoice || voicePreparing[item.id]}>{voicePreparing[item.id] ? "准备中…" : voiceErrors[item.id] ? "重试播放" : "播放语音"}</button>{/if}
-                  <details><summary>文字稿</summary><p>{item.text}</p></details>
+                <div class="companion-bubble companion-voice" class:is-playing={voiceState(item.id).playing}>
+                  {#if voiceUrls[item.id]}
+                    <audio class="companion-audio" preload="none" src={voiceUrls[item.id]} aria-hidden="true" tabindex="-1" on:loadedmetadata={(event) => onVoiceLoaded(item.id, event)} on:timeupdate={(event) => onVoiceTime(item.id, event)} on:play={() => onVoicePlay(item.id)} on:pause={() => onVoicePause(item.id)} on:ended={() => onVoiceEnded(item.id)} on:error={() => voiceErrors = { ...voiceErrors, [item.id]: "语音暂时无法播放，文字稿仍可查看。" }}></audio>
+                    <button class="cmp-btn cmp-btn-primary cmp-btn-sm companion-voice-control" aria-label={voiceState(item.id).playing ? "暂停语音" : "播放语音"} on:click={(event) => void toggleVoice(item, event.currentTarget)}>{voiceState(item.id).playing ? "暂停" : "播放"}</button>
+                    <div class="companion-voice-progress">
+                      <input class="cmp-range cmp-range-sm" type="range" min="0" max={voiceState(item.id).duration || 0} step="0.1" value={voiceState(item.id).current} disabled={!voiceState(item.id).duration} aria-label="语音进度" on:input={(event) => seekVoice(event, item.id)} />
+                      <span aria-live="off">{formatDuration(voiceState(item.id).current)} / {formatDuration(voiceState(item.id).duration)}</span>
+                    </div>
+                    <span class="companion-voice-state" role="status">{voiceState(item.id).playing ? "播放中" : voiceState(item.id).ended ? "已播放" : "可播放"}</span>
+                  {:else}<button class="cmp-btn cmp-btn-primary cmp-btn-sm" on:click={(event) => void toggleVoice(item, event.currentTarget)} disabled={!actions.prepareVoice || voicePreparing[item.id]}>{voicePreparing[item.id] ? "准备中…" : voiceErrors[item.id] ? "重试播放" : "播放语音"}</button>{/if}
+                  <details open={Boolean(voiceErrors[item.id])}><summary>文字稿</summary><p>{item.text}</p></details>
                 </div>
               </article>
             {:else}
@@ -208,32 +322,28 @@
         </div>
       {/if}
     </main>
-    <aside class="companion-side" aria-label="关系摘要">
-      <div class="companion-side-card">
-        <div class="companion-mood-orb" aria-hidden="true"></div>
-        <div style="text-align:center"><strong>{identity.moodLabel}</strong><div class="companion-signature">心情 · {identity.intensity === 1 ? "轻微" : identity.intensity === 2 ? "明显" : "强烈"}</div></div>
-        <button class="cmp-btn cmp-btn-ghost" style="width:100%;margin-top:18px" on:click={showDetail}>查看关系资料</button>
-      </div>
-    </aside>
   </div>
 </div>
 
 {#if detailOpen}
   <div class="companion-detail" role="presentation" on:click={(event) => event.currentTarget === event.target && closeDetail()}>
-    <section class="companion-detail-card cmp-modal-box" role="dialog" aria-modal="true" aria-labelledby="relationship-title">
+    <dialog bind:this={detailDialog} open class="companion-detail-card cmp-modal-box" aria-labelledby="relationship-title">
       <button class="cmp-btn cmp-btn-ghost cmp-btn-sm" style="float:right" aria-label="关闭关系资料" on:click={closeDetail}>×</button>
       <div class="cmp-avatar cmp-avatar-placeholder" style="width:78px;height:78px;margin:4px auto 16px">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt={identity.companionName} />{:else}<span aria-hidden="true">✦</span>{/if}</div>
       <h2 id="relationship-title" style="text-align:center;margin:0">{identity.companionName}</h2>
       <p style="text-align:center;opacity:.7;overflow-wrap:anywhere">{identity.signature || "还没有签名"}</p>
-      <dl style="display:grid;grid-template-columns:1fr auto;gap:10px;margin-top:22px"><dt>心情</dt><dd>{identity.moodLabel} · {identity.intensity === 1 ? "轻微" : identity.intensity === 2 ? "明显" : "强烈"}</dd>{#if identity.moodNote}<dt>心情短句</dt><dd style="max-width:220px;text-align:right;overflow-wrap:anywhere">{identity.moodNote}</dd>{/if}<dt>亲近度</dt><dd>{identity.affinity} · {identity.affinityStage}</dd></dl>
+      <dl style="display:grid;grid-template-columns:1fr auto;gap:10px;margin-top:22px"><dt>心情</dt><dd>{identity.moodLabel} · {intensityLabels[identity.intensity]}</dd>{#if identity.moodNote}<dt>心情短句</dt><dd style="max-width:220px;text-align:right;overflow-wrap:anywhere">{identity.moodNote}</dd>{/if}<dt>亲近度</dt><dd>{identity.affinity === undefined ? "加载中…" : `${identity.affinity} · ${identity.affinityStage}`}</dd></dl>
       <button class="cmp-btn cmp-btn-primary" style="width:100%;margin-top:22px" on:click={closeDetail}>知道了</button>
-    </section>
+    </dialog>
   </div>
 {/if}
 {#if lightbox}
   <div class="companion-lightbox" role="presentation" on:click={(event) => event.currentTarget === event.target && closeLightbox()}>
-    <button class="cmp-btn cmp-btn-neutral" style="position:fixed;top:18px;right:18px" aria-label="关闭大图" on:click={closeLightbox}>×</button>
-    {#if lightboxUrl}<img src={lightboxUrl} alt={lightbox.alt} />{:else}<div class="cmp-loading cmp-loading-spinner"></div>{/if}
+    <dialog bind:this={lightboxDialog} open class="companion-lightbox-dialog cmp-modal-box" aria-labelledby="lightbox-title">
+      <h2 id="lightbox-title" class="sr-only">图片预览：{lightbox.alt}</h2>
+      <button class="cmp-btn cmp-btn-neutral" style="position:fixed;top:18px;right:18px" aria-label="关闭大图" on:click={closeLightbox}>×</button>
+      {#if lightboxUrl}<img src={lightboxUrl} alt={lightbox.alt} />{:else}<div class="cmp-loading cmp-loading-spinner"></div>{/if}
+    </dialog>
   </div>
 {/if}
 <div class="sr-only" aria-live="assertive">{liveAnnouncement}</div>

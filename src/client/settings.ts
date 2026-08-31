@@ -15,6 +15,10 @@ export interface ClientSettings {
   defaultAffinity: number;
 }
 
+export function relationshipControlsWritable(readOnly: boolean, saving: boolean): boolean {
+  return !readOnly && !saving;
+}
+
 const MEDIA_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 
 export function decodeClientSettings(value: unknown): ClientSettings | undefined {

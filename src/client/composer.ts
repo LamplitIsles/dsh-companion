@@ -32,7 +32,3 @@ export function reduceComposer(state: ComposerState, event: ComposerEvent): Comp
 export function shouldSubmitEnter(event: { key: string; shiftKey?: boolean; isComposing?: boolean }, composing: boolean): boolean {
   return event.key === "Enter" && !event.shiftKey && !event.isComposing && !composing;
 }
-
-export function insertNewline(value: string, start: number, end = start): string {
-  return `${value.slice(0, start)}\n${value.slice(end)}`;
-}

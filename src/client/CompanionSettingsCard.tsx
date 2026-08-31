@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import type { SettingsScope, SettingsScopeSnapshot } from "@deepseek-ai/dsh-client-runtime/client";
-import { readAvatar, settingsPayload, type ClientSettings } from "./settings.js";
+import { readAvatar, relationshipControlsWritable, settingsPayload, type ClientSettings } from "./settings.js";
 import styles from "./CompanionSettingsCard.module.css";
 
 export interface CompanionSettingsCardProps {
   scope: SettingsScope<ClientSettings>;
   currentAffinity?: () => Promise<number | undefined>;
   resetAffinity?: () => Promise<void>;
+  setAffinity?: (value: number) => Promise<void>;
+  clearSignature?: () => Promise<void>;
 }
 
-export function CompanionSettingsCard({ scope, currentAffinity, resetAffinity }: CompanionSettingsCardProps): JSX.Element | null {
+export function CompanionSettingsCard({ scope, currentAffinity, resetAffinity, setAffinity, clearSignature }: CompanionSettingsCardProps): JSX.Element | null {
   const [snapshot, setSnapshot] = useState<SettingsScopeSnapshot<ClientSettings>>(() => scope.getSnapshot());
   const empty: ClientSettings = { workspaceId: "", companionName: "Companion", userName: "你", preferredAddress: "你", defaultAffinity: 50 };
   const [draft, setDraft] = useState<ClientSettings>(() => snapshot.value ?? empty);
@@ -17,9 +19,11 @@ export function CompanionSettingsCard({ scope, currentAffinity, resetAffinity }:
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [affinity, setAffinity] = useState<number | undefined>();
+  const [affinity, setCurrentAffinity] = useState<number | undefined>();
+  const [affinityDraft, setAffinityDraft] = useState("50");
   useEffect(() => scope.subscribe(() => setSnapshot(scope.getSnapshot())), [scope]);
-  useEffect(() => { if (currentAffinity) void currentAffinity().then(setAffinity).catch(() => undefined); }, [currentAffinity]);
+  useEffect(() => { if (currentAffinity) void currentAffinity().then(setCurrentAffinity).catch(() => undefined); }, [currentAffinity]);
+  useEffect(() => { if (affinity !== undefined) setAffinityDraft(String(affinity)); }, [affinity]);
   const accepted = snapshot.value ?? empty;
   const dirty = useMemo(() => JSON.stringify(settingsPayload(draft)) !== JSON.stringify(settingsPayload(accepted)), [draft, accepted]);
   // External commits may replace the accepted snapshot, but a rejected or
@@ -27,6 +31,7 @@ export function CompanionSettingsCard({ scope, currentAffinity, resetAffinity }:
   useEffect(() => { if (!saving && !error && !dirty && snapshot.value) setDraft(snapshot.value); }, [snapshot.value, saving, error, dirty]);
   if (snapshot.status === "loading" || snapshot.status === "unavailable") return null;
   const readOnly = !snapshot.writable;
+  const controlsWritable = relationshipControlsWritable(readOnly, saving);
   const set = <K extends keyof ClientSettings>(key: K, value: ClientSettings[K]) => setDraft((current) => ({ ...current, [key]: value }));
   async function save(): Promise<void> {
     if (readOnly || !dirty) return;
@@ -39,6 +44,12 @@ export function CompanionSettingsCard({ scope, currentAffinity, resetAffinity }:
     finally { setSaving(false); }
   }
   function discard(): void { setDraft(accepted); setError(""); setStatus("已撤销未保存的更改"); }
+  async function correctAffinity(): Promise<void> {
+    const value = Number(affinityDraft);
+    if (!Number.isSafeInteger(value) || value < 0 || value > 100) { setError("亲近度必须是 0 到 100 的整数。"); return; }
+    try { await setAffinity?.(value); setCurrentAffinity(value); setStatus("亲近度已更新"); setError(""); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "亲近度更新失败。"); }
+  }
   async function avatar(kind: "companionAvatar" | "userAvatar", event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = event.currentTarget.files?.[0];
     if (!file) return;
@@ -66,7 +77,9 @@ export function CompanionSettingsCard({ scope, currentAffinity, resetAffinity }:
       </div>
       {error && <p className={styles.error} role="alert">{error}</p>}
       <div className={styles.affinity}>当前亲近度：{affinity === undefined ? "加载中…" : affinity}</div>
-      {resetAffinity && <button className={styles.button} onClick={() => void resetAffinity().then(() => currentAffinity?.().then(setAffinity)).catch((cause) => setError(cause instanceof Error ? cause.message : "重置失败。"))} disabled={readOnly || saving}>重置为默认亲近度</button>}
+      {resetAffinity && <button className={styles.button} onClick={() => void resetAffinity().then(() => currentAffinity?.().then(setCurrentAffinity)).catch((cause) => setError(cause instanceof Error ? cause.message : "重置失败。"))} disabled={!controlsWritable}>重置为默认亲近度</button>}
+      {setAffinity && <div className={styles.relationshipControl}><label className={styles.label}>直接校正亲近度（0–100）<input className={styles.input} type="number" min="0" max="100" step="1" value={affinityDraft} onChange={(event) => setAffinityDraft(event.currentTarget.value)} disabled={!controlsWritable} /></label><button className={styles.button} type="button" onClick={() => void correctAffinity()} disabled={!controlsWritable}>校正亲近度</button></div>}
+      {clearSignature && <button className={styles.button} type="button" onClick={() => void clearSignature().then(() => setStatus("签名已清除")).catch((cause) => setError(cause instanceof Error ? cause.message : "签名清除失败。"))} disabled={!controlsWritable}>清除 Companion 签名</button>}
       <div className={styles.actions}><span className={styles.status} role="status" aria-live="polite">{readOnly ? "当前设置为只读" : status}</span>{dirty && <button type="button" className={styles.button} onClick={discard} disabled={saving}>撤销</button>}<button type="button" className={`${styles.button} ${styles.primary}`} onClick={() => void save()} disabled={readOnly || !dirty || saving}>保存</button></div>
     </div>}
   </li>;

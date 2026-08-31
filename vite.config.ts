@@ -1,9 +1,10 @@
 import { defineConfig } from "vite";
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { svelte, vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 
 export default defineConfig({
-  plugins: [react(), svelte({ preprocess: vitePreprocess() })],
+  plugins: [tailwindcss(), react(), svelte({ preprocess: vitePreprocess() })],
   build: {
     // Host entries and browser entries share the publishable dist directory.
     // Keep the files emitted by tsup when Vite writes client.js/client.css.

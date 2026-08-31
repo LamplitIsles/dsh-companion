@@ -22,6 +22,8 @@
 .avatar { width: 48px; height: 48px; flex: none; border-radius: 50%; object-fit: cover; background: var(--dsw-alias-bg-layer-2); }
 .avatarRow input[type="file"] { min-width: 0; color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .affinity { margin: 14px 0 8px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.relationshipControl { display:flex; align-items:end; gap:8px; margin:8px 0; }
+.relationshipControl .label { flex:1; display:grid; gap:5px; }
 .actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--dsw-alias-border-l2); }
 .button { min-height: 36px; padding: 7px 14px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; color: var(--dsw-alias-label-secondary); background: transparent; font: inherit; cursor: pointer; }
 .button:hover:not(:disabled) { border-color: var(--dsw-alias-label-dimmed); color: var(--dsw-alias-label-primary); }

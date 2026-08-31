@@ -10,6 +10,19 @@ const outputPath = "dist/client.js";
 // classic script. Vite is still the right compiler for this mixed Svelte/React
 // entry, so convert its already-bundled ESM output to CJS and place it inside
 // the same lazy factory hand-off emitted by DSH's own client packages.
+let esm = await readFile(esmPath, "utf8");
+const daisyMarker = "/*! tailwindcss";
+const daisyStart = esm.indexOf(daisyMarker);
+if (daisyStart < 0) throw new Error("Expected the processed daisyUI stylesheet in the client bundle.");
+const literalStart = esm.lastIndexOf("`", daisyStart);
+const literalEnd = esm.indexOf("`", daisyStart);
+if (literalStart < 0 || literalEnd < daisyStart) throw new Error("Could not scope the processed daisyUI stylesheet.");
+// Tailwind/daisyUI compile before this step. Its primitives are deliberately
+// injected only under the Companion root, including generated utility
+// selectors, so the host's document receives neither Preflight nor CSS leaks.
+esm = `${esm.slice(0, literalStart + 1)}@scope (#dsh-companion){${esm.slice(literalStart + 1, literalEnd)}}${esm.slice(literalEnd)}`;
+await writeFile(esmPath, esm);
+
 await build({
   entryPoints: [esmPath],
   bundle: true,
@@ -42,3 +55,4 @@ await rm(cjsPath, { force: true });
 await rm(esmPath, { force: true });
 await rm(`${esmPath}.map`, { force: true });
 await rm(`${outputPath}.map`, { force: true });
+await rm("dist/client.css", { force: true });

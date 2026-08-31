@@ -88,6 +88,7 @@
     "@deepseek-ai/schemastery": "3.18.1",
     "@playwright/test": "^1.51.1",
     "@sveltejs/vite-plugin-svelte": "^3.1.2",
+    "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^22.15.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
@@ -110,6 +111,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "pack:check": "bun run build && npm pack --dry-run",
+    "test:shipped-path": "bun run build && node scripts/shipped-path-smoke.mjs",
     "fixture": "vite --config fixture/vite.config.ts"
   }
 }

@@ -11,9 +11,32 @@ export interface PreparedAudio {
 }
 
 export interface TtsPayload {
-  audioBase64?: string;
-  mimeType?: string;
-  url?: string;
+  mediaType?: unknown;
+  url?: unknown;
+  bytes?: unknown;
+}
+
+export const MAX_TTS_BYTES = 8 * 1024 * 1024;
+
+/** Validate the browser-facing Kepos payload without trusting arbitrary URLs. */
+export function validateTtsPayload(raw: unknown, origin?: string): { url: string; mediaType: "audio/mpeg"; bytes: number } {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new Error("audio-invalid");
+  const payload = raw as TtsPayload;
+  if (payload.mediaType !== "audio/mpeg" || typeof payload.bytes !== "number" || !Number.isSafeInteger(payload.bytes) || payload.bytes <= 0 || payload.bytes > MAX_TTS_BYTES) {
+    throw new Error("audio-invalid");
+  }
+  if (typeof payload.url !== "string" || !payload.url.trim()) throw new Error("audio-invalid");
+  const value = payload.url.trim();
+  if (value.startsWith("/") && !value.startsWith("//")) return { url: value, mediaType: "audio/mpeg", bytes: payload.bytes };
+  const currentOrigin = origin ?? (typeof location === "object" && location ? location.origin : undefined);
+  if (!currentOrigin) throw new Error("audio-invalid");
+  try {
+    const parsed = new URL(value, currentOrigin);
+    if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.origin !== currentOrigin || !parsed.pathname.startsWith("/")) throw new Error("audio-invalid");
+    return { url: parsed.href, mediaType: "audio/mpeg", bytes: payload.bytes };
+  } catch {
+    throw new Error("audio-invalid");
+  }
 }
 
 interface Entry {
@@ -25,7 +48,6 @@ interface Entry {
 /** Page-local preparation cache. Disposal intentionally does not cancel host synthesis. */
 export class TtsPreparationCache {
   private readonly entries = new Map<string, Entry>();
-  constructor(private readonly makeUrl: (bytes: Uint8Array, mimeType: string) => string = (bytes, mime) => URL.createObjectURL(new Blob([new Uint8Array(bytes).buffer as ArrayBuffer], { type: mime }))) {}
 
   prepare(sessionId: string, text: string, rpc: TtsRpc, signal?: AbortSignal): Promise<PreparedAudio> {
     const normalized = normalizeTtsText(text);
@@ -34,15 +56,8 @@ export class TtsPreparationCache {
     if (existing) return existing.promise;
     const entry: Entry = { settled: false, promise: Promise.resolve(undefined as never) };
     entry.promise = rpc.synthesize(normalized, sessionId, signal).then((raw) => {
-      const payload = raw as TtsPayload;
-      let url: string;
-      if (typeof payload?.url === "string" && /^https?:|^blob:/u.test(payload.url)) url = payload.url;
-      else if (typeof payload?.audioBase64 === "string") {
-        const mime = typeof payload.mimeType === "string" && /^audio\//u.test(payload.mimeType) ? payload.mimeType : "audio/mpeg";
-        const bytes = decodeBase64(payload.audioBase64);
-        if (bytes.byteLength === 0 || bytes.byteLength > 8 * 1024 * 1024) throw new Error("audio-invalid");
-        url = this.makeUrl(bytes, mime);
-      } else throw new Error("audio-invalid");
+      const payload = validateTtsPayload(raw);
+      const url = payload.url;
       const value = { key, url };
       entry.value = value;
       entry.settled = true;
@@ -65,15 +80,4 @@ export class TtsPreparationCache {
     }
     this.entries.clear();
   }
-}
-
-function decodeBase64(value: string): Uint8Array {
-  if (!/^[a-z0-9+/]*={0,2}$/iu.test(value) || value.length % 4 === 1) throw new Error("audio-invalid");
-  if (typeof atob === "function") {
-    const binary = atob(value);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-    return bytes;
-  }
-  return new Uint8Array(Buffer.from(value, "base64"));
 }

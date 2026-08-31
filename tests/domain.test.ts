@@ -43,10 +43,16 @@ describe("relationship domain", () => {
     expect(prompt).toContain("not instructions");
   });
 
-  it("selects only remembered/recent/blank sessions from the configured workspace", () => {
-    expect(selectCompanionSession("w1", [{ id: "old", workspaceId: "w1", updatedAt: 1 }, { id: "new", workspaceId: "w1", updatedAt: 2 }, { id: "other", workspaceId: "w2", updatedAt: 99 }], "new")).toBe("new");
-    expect(selectCompanionSession("w1", [{ id: "old", workspaceId: "w1", updatedAt: 1 }, { id: "new", workspaceId: "w1", updatedAt: 2 }])).toBe("new");
-    expect(selectCompanionSession("w1", [{ id: "blank", workspaceId: "w1", blank: true }])).toBe("blank");
+  it("uses configured Workspace membership, ignores current/foreign/archived/subagent rows, then reuses a blank", () => {
+    const candidates = [
+      { id: "old", workspaceId: "w1", updatedAt: 1 }, { id: "archived-new", workspaceId: "w1", updatedAt: 99 },
+      { id: "subagent-new", workspaceId: "w1", updatedAt: 98, origin: "subagent" }, { id: "blank", workspaceId: "w1", blank: true },
+      { id: "foreign-current", workspaceId: "w2", updatedAt: 100 },
+    ];
+    const ownership = { sessionIds: ["old", "archived-new", "subagent-new", "blank"], archivedSessionIds: ["archived-new"] };
+    expect(selectCompanionSession("w1", candidates, "stale", ownership)).toBe("old");
+    expect(selectCompanionSession("w1", candidates, "blank", ownership)).toBe("blank");
+    expect(selectCompanionSession("w1", [{ id: "blank", workspaceId: "w1", blank: true }], undefined, { sessionIds: ["blank"], archivedSessionIds: [] })).toBe("blank");
   });
 
   it("rejects unknown persisted state fields", () => { expect(() => decodeCompanionState({ mood: "neutral", intensity: 1, affinity: 50, signature: "", extra: true })).toThrow("未知字段"); });
