@@ -4,6 +4,7 @@ import {
   continuityViewDefinition,
   formatApproximateTokens,
   projectContinuityRecords,
+  registerCompanionContinuity,
   resolveContextCapacity,
   roundTokenEstimate,
   type CompanionContinuitySnapshot,
@@ -45,6 +46,43 @@ describe("Companion context capacity", () => {
 });
 
 describe("Companion compaction lifecycle", () => {
+  it("disposes both registry contributions so a fresh registration can reuse their keys", () => {
+    const eventDefinitions = new Map<string, unknown>();
+    const viewDefinitions = new Map<string, unknown>();
+    const events = {
+      register(definition: { kind: string }) {
+        if (eventDefinitions.has(definition.kind)) throw new Error("duplicate event key");
+        eventDefinitions.set(definition.kind, definition);
+        return () => {
+          if (eventDefinitions.get(definition.kind) === definition) eventDefinitions.delete(definition.kind);
+        };
+      },
+    };
+    const views = {
+      register(definition: { target: string }) {
+        if (viewDefinitions.has(definition.target)) throw new Error("duplicate view key");
+        viewDefinitions.set(definition.target, definition);
+        return () => {
+          if (viewDefinitions.get(definition.target) === definition) viewDefinitions.delete(definition.target);
+        };
+      },
+    };
+    const ctx = { conversationEvents: events, conversationViews: views } as never;
+
+    const dispose = registerCompanionContinuity(ctx);
+    expect(eventDefinitions.has("dsh-companion:compaction-lifecycle")).toBe(true);
+    expect(viewDefinitions.has("dsh-companion:continuity")).toBe(true);
+    dispose();
+    dispose();
+    expect(eventDefinitions.size).toBe(0);
+    expect(viewDefinitions.size).toBe(0);
+
+    const disposeFresh = registerCompanionContinuity(ctx);
+    expect(eventDefinitions.size).toBe(1);
+    expect(viewDefinitions.size).toBe(1);
+    disposeFresh();
+  });
+
   it("turns a public start/end pair into one ordered view node", () => {
     const start = event("compaction/start", 10);
     const startMatch = compactionLifecycleDefinition.match(start);

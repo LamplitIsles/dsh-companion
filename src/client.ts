@@ -50,7 +50,8 @@ export function installSettingsStyles(ctx: ClientContext): () => void {
 
 export function apply(ctx: ClientContext): void {
   installSettingsStyles(ctx);
-  registerCompanionContinuity(ctx);
+  const disposeContinuity = registerCompanionContinuity(ctx);
+  if (typeof ctx.effect === "function") ctx.effect(() => disposeContinuity, "dsh-companion: continuity registrations");
   const settings = ctx.settingsScope.bind({ namespace: SETTINGS_NAMESPACE, decode: decodeClientSettings });
   const connection = (ctx as unknown as { connection: { rpc: { call(channel: string, endpoint: string, payload: unknown, signal?: AbortSignal): Promise<{ ok: boolean; value?: unknown; error?: { message: string } }> } } }).connection;
   const configuredWorkspace = (): string => {

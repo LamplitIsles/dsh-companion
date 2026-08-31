@@ -707,7 +707,7 @@
                 </div>
               </article>
             {:else if item.kind === "continuity"}
-              <div class="companion-continuity-record" data-testid={`continuity-record-${item.compactionId}`} role="status" aria-label="整理记录"><span class="companion-continuity-record-label">整理记录</span><span>{item.text}</span></div>
+              <div class="companion-continuity-record" data-testid={`continuity-record-${item.compactionId}`} aria-live="off"><span class="companion-continuity-record-label">整理记录</span><span>{item.text}</span></div>
             {:else}
               <div class="companion-recovery" role={item.tone === "error" ? "alert" : "status"}><p>{item.text}</p></div>
             {/if}

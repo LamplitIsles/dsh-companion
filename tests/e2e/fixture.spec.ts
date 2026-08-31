@@ -151,6 +151,9 @@ test("surfaces compaction lifecycle without exposing the private checkpoint", as
   await page.evaluate(() => window.__companionFixture?.finishCompaction("active", 18_432));
   await expect(page.getByTestId("companion-continuity-status")).toHaveText("整理记忆已完成");
   await expect(page.getByTestId("continuity-record-active")).toContainText("已整理对话 · 收纳约 18k tokens");
+  await expect(page.getByTestId("continuity-record-active")).not.toHaveAttribute("role", "status");
+  await expect(page.getByTestId("continuity-record-active")).toHaveAttribute("aria-live", "off");
+  await expect(page.getByTestId("companion-continuity-status")).toHaveAttribute("role", "status");
   await expect(page.locator(".companion-continuity-record")).toHaveCount(1);
   await expect(page.locator("body")).not.toContainText("private");
   await page.clock.fastForward(8_001);

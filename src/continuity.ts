@@ -3,7 +3,6 @@ import type {} from "@deepseek-ai/dsh-compaction/types";
 import type { ContextPressureProjection } from "@deepseek-ai/dsh-token-meter/client";
 import type {
   ChatConversationViewNode,
-  CompactionSummaryNode,
   ConversationNodeDefinition,
   ConversationTimelineSnapshot,
   ConversationViewBuilder,
@@ -80,9 +79,6 @@ export function resolveContextCapacity(value: ContextPressureProjection | unknow
     percentage: Math.min(100, Math.max(0, Math.round((selected / record.contextWindow) * 100))),
   };
 }
-
-/** Backward-readable alias for consumers that call this a pressure resolution. */
-export const resolveContextPressure = resolveContextCapacity;
 
 /** Round a token estimate to a quiet, human-scale value for Companion copy. */
 export function roundTokenEstimate(value: unknown): number | undefined {
@@ -191,10 +187,23 @@ export const continuityViewDefinition: ConversationViewDefinition<CompactionLife
   create: () => new ContinuityViewBuilder(),
 };
 
-/** Register both contributions on the existing public DSH registries. */
-export function registerCompanionContinuity(ctx: Context): void {
-  ctx.conversationEvents.register(compactionLifecycleDefinition);
-  ctx.conversationViews.register(continuityViewDefinition);
+/** Register both contributions and return one idempotent composite disposer. */
+export function registerCompanionContinuity(ctx: Context): () => void {
+  const disposeEvents = ctx.conversationEvents.register(compactionLifecycleDefinition);
+  try {
+    const disposeViews = ctx.conversationViews.register(continuityViewDefinition);
+    let disposed = false;
+    return () => {
+      if (disposed) return;
+      disposed = true;
+      disposeViews();
+      disposeEvents();
+    };
+  }
+  catch (error) {
+    disposeEvents();
+    throw error;
+  }
 }
 
 function lifecycleRows(value: unknown): readonly CompactionLifecycleState[] {
@@ -311,11 +320,6 @@ export function projectContinuityRecords(
     })
     .filter((item): item is ContinuityRecord => item !== undefined)
     .sort((left, right) => left.anchorSeq - right.anchorSeq || left.compactionId.localeCompare(right.compactionId));
-}
-
-export function isCompactionSummaryNode(value: unknown): value is CompactionSummaryNode {
-  const record = asRecord(value);
-  return record?.kind === "compaction";
 }
 
 export type { ContextPressureProjection };
