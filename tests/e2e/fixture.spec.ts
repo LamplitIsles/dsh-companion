@@ -145,6 +145,65 @@ test("admits photos from the library or desktop paste and sends them as a draft"
   expect(cameraClicks).toBe(1);
 });
 
+test("renders a deferred text-and-two-image send immediately and replaces it atomically", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => window.__companionFixture?.deferSend());
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL9pwAAAABJRU5ErkJggg==", "base64");
+  await page.locator("#companion-image-library").setInputFiles([
+    { name: "first.png", mimeType: "image/png", buffer: png },
+    { name: "second.png", mimeType: "image/png", buffer: png },
+  ]);
+  const textarea = page.getByRole("textbox", { name: "写消息" });
+  await textarea.fill("两张照片");
+  await page.getByRole("button", { name: "发送消息" }).click();
+
+  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(1);
+  await expect(page.locator('[data-testid^="image-optimistic:"]')).toHaveCount(2);
+  await expect(page.locator('[data-testid^="image-optimistic:"] .companion-media img')).toHaveCount(2);
+  await expect(textarea).toBeDisabled();
+  await page.evaluate(() => window.__companionFixture?.resolveSend());
+  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(1);
+
+  await page.evaluate(() => window.__companionFixture?.confirmSend());
+  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid^="image-optimistic:"]')).toHaveCount(0);
+  await expect(page.getByText("两张照片", { exact: true })).toHaveCount(1);
+  await expect(textarea).toBeEnabled();
+  await expect.poll(() => page.evaluate(() => window.__companionFixture?.revoked() ?? 0)).toBeGreaterThanOrEqual(2);
+});
+
+test("restores rejected batches, keeps transport ambiguity, and clears old-session sends", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => window.__companionFixture?.deferSend());
+  const textarea = page.getByRole("textbox", { name: "写消息" });
+  await textarea.fill("请恢复我");
+  await page.getByRole("button", { name: "发送消息" }).click();
+  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(1);
+  await page.evaluate(() => window.__companionFixture?.rejectSend());
+  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(0);
+  await expect(textarea).toHaveValue("请恢复我");
+  await expect(textarea).toBeEnabled();
+  await expect(page.getByRole("button", { name: "重试消息" })).toHaveCount(0);
+
+  await textarea.fill("传输不确定");
+  await page.getByRole("button", { name: "发送消息" }).click();
+  await page.evaluate(() => window.__companionFixture?.transportFail());
+  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(1);
+  await expect(page.locator(".companion-presence")).toContainText("正在重新连接");
+  await page.evaluate(() => window.__companionFixture?.refreshAuthoritative());
+  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(0);
+  await expect(textarea).toHaveValue("传输不确定");
+
+  await textarea.fill("不要跨对话");
+  await page.getByRole("button", { name: "发送消息" }).click();
+  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(1);
+  await page.evaluate(() => window.__companionFixture?.switchSession("weekend-plan"));
+  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(0);
+  await expect(textarea).toHaveValue("");
+  await page.evaluate(() => window.__companionFixture?.rejectSend());
+  await expect(textarea).toHaveValue("");
+});
+
 test("offers and accepts the /compact command completion", async ({ page }) => {
   await page.goto("/");
   const textarea = page.getByRole("textbox", { name: "写消息" });

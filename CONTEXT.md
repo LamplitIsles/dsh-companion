@@ -19,3 +19,7 @@ _Avoid_: 对话总结, 整理结果
 **整理记录**:
 The small, non-expandable timeline notice that a 整理记忆 completed. It reveals no 连续性摘要 content.
 _Avoid_: 压缩摘要卡片
+
+**发送批次**:
+One ordinary Companion composer submission, containing optional text and zero or more selected images while the Host write is being confirmed.
+It is transient client presentation; the Host conversation projection remains authoritative.

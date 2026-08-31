@@ -16,6 +16,10 @@ export interface TimelineText {
   projectionKey?: string;
   kind: "text";
   side: MessageSide;
+  /** Durable source kind used by optimistic-send reconciliation. */
+  origin?: "user" | "steering";
+  /** Internal marker for the client-only sending overlay. */
+  optimistic?: boolean;
   text: string;
   pending?: boolean;
   failed?: boolean;
@@ -29,8 +33,14 @@ export interface TimelineImage {
   projectionKey?: string;
   kind: "image";
   side: MessageSide;
+  /** Durable source kind used by optimistic-send reconciliation. */
+  origin?: "user" | "steering";
+  /** Internal marker for the client-only sending overlay. */
+  optimistic?: boolean;
   state: "loading" | "ready" | "failed" | "running";
   attachment?: ImageAttachmentRef;
+  /** Page-local preview used by the optimistic sending overlay. */
+  previewUrl?: string;
   alt: string;
   error?: string;
   time?: number;
@@ -70,6 +80,10 @@ export interface CompanionProjection {
   hasMore: boolean;
   loadingOlder: boolean;
   promptError?: string;
+  /** Stable identity for a prompt result, used to distinguish a new rejection. */
+  promptErrorKey?: string;
+  /** Original prompt operation, when the runtime provides it. */
+  promptErrorOp?: string;
   lastAgentError?: string;
 }
 
@@ -157,7 +171,7 @@ function assistantText(node: Record<string, unknown>): string {
   return parts.join("");
 }
 
-function nodeMedia(node: Record<string, unknown>, id: string, side: MessageSide, time?: number): TimelineItem[] {
+function nodeMedia(node: Record<string, unknown>, id: string, side: MessageSide, time?: number, origin?: "user" | "steering"): TimelineItem[] {
   const items: TimelineItem[] = [];
   const blocks = contentOf(node);
   let imageIndex = 0;
@@ -170,6 +184,7 @@ function nodeMedia(node: Record<string, unknown>, id: string, side: MessageSide,
         id: imageProjectionId(id, imageIndex++),
         kind: "image",
         side,
+        ...(origin ? { origin } : {}),
         state: "ready",
         attachment,
         alt: attachment.name ?? (side === "incoming" ? "Companion 图片" : "图片"),
@@ -180,7 +195,7 @@ function nodeMedia(node: Record<string, unknown>, id: string, side: MessageSide,
   // A node may use a single attachment property rather than content[].
   if (items.length === 0 && node.attachment && imageFromContent([{ type: "image", attachment: node.attachment }])) {
     const attachment = imageFromContent([{ type: "image", attachment: node.attachment }])!;
-    items.push({ id: imageProjectionId(id, 0), kind: "image", side, state: "ready", attachment, alt: attachment.name ?? "图片", time });
+    items.push({ id: imageProjectionId(id, 0), kind: "image", side, ...(origin ? { origin } : {}), state: "ready", attachment, alt: attachment.name ?? "图片", time });
   }
   return items;
 }
@@ -250,8 +265,8 @@ export function projectConversation(snapshot: unknown, connected = true, continu
     const time = nodeTime(node);
     if (isUserNode(node)) {
       const text = textFromValue(node.text) ?? textFromValue(node.content) ?? "";
-      if (text) items.push({ id, kind: "text", side: "outgoing", text, time });
-      items.push(...nodeMedia(node, id, "outgoing", time));
+      if (text) items.push({ id, kind: "text", side: "outgoing", origin: "user", text, time });
+      items.push(...nodeMedia(node, id, "outgoing", time, "user"));
       if (sequence !== undefined) emitContinuityRecords((anchorSeq) => anchorSeq === sequence);
       continue;
     }
@@ -273,7 +288,7 @@ export function projectConversation(snapshot: unknown, connected = true, continu
       const text = textFromValue(node.text) ?? textFromValue(node.content) ?? "";
       const messageId = typeof node.messageId === "string" ? node.messageId : undefined;
       if (messageId) admittedQueueIds.add(messageId);
-      if (text) items.push({ id, projectionKey: id, kind: "text", side: "outgoing", text, time });
+      if (text) items.push({ id, projectionKey: id, kind: "text", side: "outgoing", origin: "steering", text, time });
       if (sequence !== undefined) emitContinuityRecords((anchorSeq) => anchorSeq === sequence);
       continue;
     }
@@ -296,6 +311,7 @@ export function projectConversation(snapshot: unknown, connected = true, continu
     if (text) items.push({ id: `pending:${identity}`, kind: "text", side: "outgoing", text, pending: true });
   }
   const promptError = asRecord(root.promptError);
+  const promptErrorKey = promptError ? stableValueKey(root.promptError) : undefined;
   const error = asRecord(promptError?.error);
   const promptErrorNotice = promptError?.op === "stop"
     ? "暂时无法停止当前回复，请重试。"
@@ -322,8 +338,18 @@ export function projectConversation(snapshot: unknown, connected = true, continu
     hasMore: root.hasMore === true,
     loadingOlder: root.loadingOlder === true,
     ...(promptErrorAnnouncement ? { promptError: promptErrorAnnouncement } : {}),
+    ...(promptErrorKey ? { promptErrorKey } : {}),
+    ...(typeof promptError?.op === "string" ? { promptErrorOp: promptError.op } : {}),
     ...(lastError ? { lastAgentError: lastError } : {}),
   };
+}
+
+function stableValueKey(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function dedupeTimeline(items: readonly TimelineItem[]): TimelineItem[] {
