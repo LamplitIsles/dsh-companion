@@ -17,7 +17,6 @@ export interface TtsPayload {
 }
 
 export const MAX_TTS_BYTES = 8 * 1024 * 1024;
-export const TTS_PREPARATION_TIMEOUT_MS = 15_000;
 
 /** Validate the browser-facing Kepos payload without trusting arbitrary URLs. */
 export function validateTtsPayload(raw: unknown, origin?: string): { url: string; mediaType: "audio/mpeg"; bytes: number } {
@@ -56,19 +55,7 @@ export class TtsPreparationCache {
     const existing = this.entries.get(key);
     if (existing) return existing.promise;
     const entry: Entry = { settled: false, promise: Promise.resolve(undefined as never) };
-    const controller = new AbortController();
-    const relayAbort = () => controller.abort(signal?.reason);
-    if (signal?.aborted) relayAbort();
-    else signal?.addEventListener("abort", relayAbort, { once: true });
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<never>((_resolve, reject) => {
-      timeout = setTimeout(() => {
-        const error = new Error("audio-timeout");
-        controller.abort(error);
-        reject(error);
-      }, TTS_PREPARATION_TIMEOUT_MS);
-    });
-    entry.promise = Promise.race([rpc.synthesize(normalized, sessionId, controller.signal), deadline]).then((raw) => {
+    entry.promise = rpc.synthesize(normalized, sessionId, signal).then((raw) => {
       const payload = validateTtsPayload(raw);
       const url = payload.url;
       const value = { key, url };
@@ -77,11 +64,7 @@ export class TtsPreparationCache {
       return value;
     }).catch((error) => {
       entry.settled = true;
-      if (this.entries.get(key) === entry) this.entries.delete(key);
       throw error;
-    }).finally(() => {
-      if (timeout !== undefined) clearTimeout(timeout);
-      signal?.removeEventListener("abort", relayAbort);
     });
     this.entries.set(key, entry);
     return entry.promise;

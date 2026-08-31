@@ -179,14 +179,16 @@ try {
   if (await page.locator(".companion-session-item").count() !== 2) throw new Error("Companion did not project both Workspace sessions into its sidebar");
   if (await page.locator(".companion-bubble strong").textContent() !== "incoming" || await page.locator(".companion-bubble li").textContent() !== "Markdown item") throw new Error("packed Companion did not render Markdown");
   const voice = page.locator('[data-testid^="voice-"]');
-  await voice.locator("audio").waitFor({ state: "attached", timeout: 20_000 });
+  if (await voice.count() !== 2) throw new Error("Companion did not project both finalized voice messages");
   const audio = voice.locator("audio");
-  if (await audio.getAttribute("src") !== "/companion-assembled-smoke/voice.mp3") throw new Error("Companion TTS RPC did not prepare the test-owned audio route");
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid^="voice-"] audio').length === 2, undefined, { timeout: 4_000 });
+  const audioSources = await audio.evaluateAll((elements) => elements.map((element) => element.getAttribute("src")).sort());
+  if (JSON.stringify(audioSources) !== JSON.stringify(["/companion-assembled-smoke/first.mp3", "/companion-assembled-smoke/second.mp3"])) throw new Error("Companion lost a concurrent TTS RPC result");
   await page.waitForFunction(() => {
-    const element = document.querySelector('[data-testid^="voice-"] audio');
-    return element instanceof HTMLAudioElement && Number.isFinite(element.duration) && element.duration > 0 && element.paused;
+    const elements = [...document.querySelectorAll('[data-testid^="voice-"] audio')];
+    return elements.length === 2 && elements.every((element) => element instanceof HTMLAudioElement && Number.isFinite(element.duration) && element.duration > 0 && element.paused);
   }, undefined, { timeout: 20_000 });
-  await voice.locator(".companion-voice-control").click();
+  await voice.first().locator(".companion-voice-control").click();
   await page.waitForFunction(() => {
     const element = document.querySelector('[data-testid^="voice-"] audio');
     return element instanceof HTMLAudioElement && !element.paused;

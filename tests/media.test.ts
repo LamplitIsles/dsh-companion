@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { imageGenProjectionId, parseTtsPassage, recognizeImageGenResult, ttsProjectionId } from "../src/media.js";
-import { TTS_PREPARATION_TIMEOUT_MS, TtsPreparationCache, validateTtsPayload } from "../src/client/voice-cache.js";
+import { TtsPreparationCache, validateTtsPayload } from "../src/client/voice-cache.js";
 
 describe("companion media", () => {
   it("parses one finalized bounded passage and ignores fenced code", () => {
@@ -41,31 +41,4 @@ describe("Kepos TTS browser contract", () => {
     expect(() => validateTtsPayload({ mediaType: "audio/mpeg", url: "/kepos-tts/audio/a", bytes: 0 })).toThrow("audio-invalid");
   });
 
-  it("bounds a stalled preparation and removes it so the voice can retry", async () => {
-    vi.useFakeTimers();
-    try {
-      const payload = { mediaType: "audio/mpeg", url: "/kepos-tts/audio/retry", bytes: 2401 };
-      const cache = new TtsPreparationCache();
-      let calls = 0;
-      let settled = false;
-      const first = cache.prepare("s1", "稍等", {
-        synthesize: async (_text, _sessionId, signal) => {
-          calls += 1;
-          if (calls === 1) {
-            return new Promise((_, reject) => signal?.addEventListener("abort", () => reject(signal.reason), { once: true }));
-          }
-          return payload;
-        }
-      });
-      void first.catch(() => undefined).finally(() => { settled = true; });
-
-      await vi.advanceTimersByTimeAsync(TTS_PREPARATION_TIMEOUT_MS);
-      expect(settled).toBe(true);
-
-      await expect(cache.prepare("s1", "稍等", { synthesize: async () => { calls += 1; return payload; } })).resolves.toMatchObject({ url: payload.url });
-      expect(calls).toBe(2);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
 });

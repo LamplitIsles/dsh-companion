@@ -199,7 +199,10 @@
     if (!actions.prepareVoice || voiceUrls[item.id] || voicePreparing[item.id]) return;
     voicePreparing = { ...voicePreparing, [item.id]: true };
     const nextErrors = { ...voiceErrors }; delete nextErrors[item.id]; voiceErrors = nextErrors;
-    try { voiceUrls = { ...voiceUrls, [item.id]: await actions.prepareVoice(item.text) }; }
+    try {
+      const url = await actions.prepareVoice(item.text);
+      voiceUrls = { ...voiceUrls, [item.id]: url };
+    }
     catch { voiceErrors = { ...voiceErrors, [item.id]: "语音暂时无法播放，文字内容仍可查看。" }; }
     finally { const next = { ...voicePreparing }; delete next[item.id]; voicePreparing = next; }
   }

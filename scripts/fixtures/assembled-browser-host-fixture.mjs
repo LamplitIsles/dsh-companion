@@ -49,7 +49,15 @@ export async function* apply(ctx) {
     turn: 1,
     step: 1,
     message: createAssistantMessage({
-      content: [{ type: "text", text: "Packed runtime **incoming** message.\n\n- Markdown item\n\n[[tts:text]]Packed runtime voice message.[[/tts:text]]" }],
+      content: [{ type: "text", text: "Packed runtime **incoming** message.\n\n- Markdown item\n\n[[tts:text]]Packed runtime first voice message.[[/tts:text]]" }],
+      source: { provider: "assembled-smoke", model: "assembled-smoke" },
+    }),
+  }, { surfaceOp: "append" });
+  session.append("assistant/message", {
+    turn: 1,
+    step: 2,
+    message: createAssistantMessage({
+      content: [{ type: "text", text: "[[tts:text]]Packed runtime second voice message.[[/tts:text]]" }],
       source: { provider: "assembled-smoke", model: "assembled-smoke" },
     }),
   }, { surfaceOp: "append" });
@@ -60,19 +68,30 @@ export async function* apply(ctx) {
     if (endpoint !== "synthesize" || typeof payload !== "object" || payload === null) {
       return { ok: false, error: { code: "bad-request", message: "invalid assembled TTS request", details: {} } };
     }
-    return { ok: true, value: { mediaType: "audio/mpeg", url: "/companion-assembled-smoke/voice.mp3", bytes: audio.byteLength } };
+    const text = typeof payload.text === "string" ? payload.text : "";
+    if (text.includes("first")) await new Promise((resolve) => setTimeout(resolve, 30));
+    const name = text.includes("second") ? "second" : "first";
+    return { ok: true, value: { mediaType: "audio/mpeg", url: `/companion-assembled-smoke/${name}.mp3`, bytes: audio.byteLength } };
   }, { authority: "trusted-host" });
-  const disposeRoute = ctx.webServer.register({
+  const disposeFirstRoute = ctx.webServer.register({
     kind: "exact",
-    path: "/companion-assembled-smoke/voice.mp3",
+    path: "/companion-assembled-smoke/first.mp3",
     handler: (_request, response) => {
       response.writeHead(200, { "content-type": "audio/mpeg", "content-length": String(audio.byteLength), "cache-control": "no-store" });
       response.end(audio);
     },
   });
-
+  const disposeSecondRoute = ctx.webServer.register({
+    kind: "exact",
+    path: "/companion-assembled-smoke/second.mp3",
+    handler: (_request, response) => {
+      response.writeHead(200, { "content-type": "audio/mpeg", "content-length": String(audio.byteLength), "cache-control": "no-store" });
+      response.end(audio);
+    },
+  });
   yield async () => {
-    disposeRoute();
+    disposeFirstRoute();
+    disposeSecondRoute();
     await disposeRpc();
   };
 }
