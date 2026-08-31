@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
+  import { Camera, CameraErrorCode } from "@capacitor/camera";
   import LoaderCircle from "lucide-svelte/icons/loader-circle";
   import ImagePlus from "lucide-svelte/icons/image-plus";
   import MessageSquareText from "lucide-svelte/icons/message-square-text";
@@ -15,7 +16,7 @@
   import type { PendingSubmissionRetirement } from "@deepseek-ai/dsh-api-session-controller/client";
   import { CompanionPreControllerError } from "./admission.js";
   import { createComposerState, findComposerCommand, reduceComposer, shouldSubmitEnter, type ComposerCommand } from "./composer.js";
-  import { createImageDrafts, imageFilesFromClipboard, imageIntakeError, IMAGE_ACCEPT, releaseImageDrafts, type CompanionImageDraft } from "./image-drafts.js";
+  import { createImageDrafts, imageFileFromCapturedMedia, imageFilesFromClipboard, imageIntakeError, IMAGE_ACCEPT, releaseImageDrafts, type CompanionImageDraft } from "./image-drafts.js";
   import { INTENSITY_LABELS } from "./relationship.js";
   import Markdown from "./Markdown.svelte";
   import relationshipBackground from "./assets/relationship-night-voyage.webp";
@@ -79,7 +80,6 @@
   let composer = createComposerState();
   let composerInput: HTMLTextAreaElement;
   let photoLibraryInput: HTMLInputElement;
-  let cameraInput: HTMLInputElement;
   let commandSuggestion: ComposerCommand | undefined;
   let stopping = false;
   let timeline: HTMLDivElement;
@@ -555,6 +555,24 @@
     event.preventDefault();
     addImages(images);
   }
+
+  function isCameraCancellation(error: unknown): boolean {
+    if (!error || typeof error !== "object") return false;
+    const code = "code" in error ? (error as { code?: unknown }).code : undefined;
+    if (code !== undefined) return code === CameraErrorCode.TakePhotoCancelled;
+    const message = "message" in error ? (error as { message?: unknown }).message : undefined;
+    return typeof message === "string" && /(?:user\s+)?cancel(?:led|ed)\s+photos\s+app|取消(?:了)?拍照/iu.test(message);
+  }
+
+  async function capturePhoto(): Promise<void> {
+    try {
+      const result = await Camera.takePhoto({ saveToGallery: false, includeMetadata: true });
+      addImages([await imageFileFromCapturedMedia(result)]);
+    } catch (error) {
+      if (!isCameraCancellation(error)) liveAnnouncement = "拍照失败，请重试。";
+    }
+  }
+
   function removeImage(draft: CompanionImageDraft): void {
     releaseImageDrafts([draft]);
     imageDrafts = imageDrafts.filter((candidate) => candidate !== draft);
@@ -570,7 +588,7 @@
     if (!held) return;
     suppressImagePickerClick = true;
     event.preventDefault();
-    cameraInput?.click();
+    void capturePhoto();
   }
   function clearImagePickerPointer(): void { imagePickerPointer = undefined; }
   function choosePhoto(): void {
@@ -864,7 +882,6 @@
           {/if}
           <div class="companion-compose-row">
             <input bind:this={photoLibraryInput} id="companion-image-library" class="cmp-file-input companion-image-input" type="file" accept={IMAGE_ACCEPT} multiple tabindex="-1" aria-hidden="true" on:change={onImageInput} />
-            <input bind:this={cameraInput} id="companion-image-camera" class="cmp-file-input companion-image-input" type="file" accept={IMAGE_ACCEPT} capture="environment" tabindex="-1" aria-hidden="true" on:change={onImageInput} />
             <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-attach" type="button" aria-label="选择照片；长按拍照" title="选择照片；长按拍照" disabled={!imageLimits} on:pointerdown={onImagePickerPointerDown} on:pointerup={onImagePickerPointerUp} on:pointercancel={clearImagePickerPointer} on:contextmenu|preventDefault on:click={choosePhoto}><ImagePlus size={19} strokeWidth={2} aria-hidden="true" /></button>
             <textarea bind:this={composerInput} class="cmp-textarea companion-textarea" aria-label="写消息" aria-autocomplete={commandSuggestion ? "list" : undefined} aria-controls={commandSuggestion ? "companion-command-suggestions" : undefined} placeholder={"写给 " + identity.companionName + "…"} rows="1" value={composer.draft} on:input={onInput} on:paste={onPaste} on:compositionstart={onCompositionStart} on:compositionend={onCompositionEnd} on:keydown={onKeydown}></textarea>
             {#if contextCapacity}

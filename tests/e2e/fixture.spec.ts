@@ -101,6 +101,20 @@ test("draft edits stay local to the composer", async ({ page }) => {
 });
 
 test("admits photos from the library or desktop paste and sends them as a draft", async ({ page }) => {
+  await page.addInitScript(() => {
+    const cameraFixture = { cancel: false, fail: false, options: undefined as unknown };
+    const capacitor = ((window as unknown as { Capacitor?: Record<string, unknown> }).Capacitor ??= {});
+    const headers = Array.isArray(capacitor.PluginHeaders) ? capacitor.PluginHeaders : [];
+    capacitor.PluginHeaders = [...headers, { name: "Camera", methods: [{ name: "takePhoto", rtype: "promise" }] }];
+    capacitor.nativePromise = (plugin: string, method: string, options: unknown) => {
+      if (plugin !== "Camera" || method !== "takePhoto") return Promise.reject(new Error("unexpected-plugin-call"));
+      cameraFixture.options = options;
+      if (cameraFixture.cancel) return Promise.reject({ code: "OS-PLUG-CAMR-0006", message: "cancelled" });
+      if (cameraFixture.fail) return Promise.reject(new Error("camera-failed"));
+      return Promise.resolve({ type: 0, saved: false, webPath: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL9pwAAAABJRU5ErkJggg==", metadata: { format: "png" } });
+    };
+    (window as unknown as { __cameraFixture?: typeof cameraFixture }).__cameraFixture = cameraFixture;
+  });
   await page.goto("/");
   const textarea = page.getByRole("textbox", { name: "写消息" });
   const send = page.getByRole("button", { name: "发送消息" });
@@ -130,19 +144,31 @@ test("admits photos from the library or desktop paste and sends them as a draft"
   await drafts.getByRole("button", { name: "移除图片" }).click();
   await expect(drafts).toHaveCount(0);
 
-  const cameraClicks = await page.evaluate(async () => {
-    const camera = document.querySelector<HTMLInputElement>("#companion-image-camera")!;
-    const picker = document.querySelector<HTMLButtonElement>("[aria-label='选择照片；长按拍照']")!;
-    let clicks = 0;
-    const count = () => { clicks += 1; };
-    camera.addEventListener("click", count);
-    picker.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch", pointerId: 9 }));
-    await new Promise((resolve) => window.setTimeout(resolve, 475));
-    picker.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerType: "touch", pointerId: 9 }));
-    camera.removeEventListener("click", count);
-    return clicks;
+  const picker = page.getByRole("button", { name: "选择照片；长按拍照" });
+  await picker.dispatchEvent("pointerdown", { bubbles: true, pointerType: "touch", pointerId: 9 });
+  await page.waitForTimeout(475);
+  await picker.dispatchEvent("pointerup", { bubbles: true, pointerType: "touch", pointerId: 9 });
+  await expect(drafts.getByRole("img", { name: "camera-photo.png" })).toBeVisible();
+  await expect(send).toBeEnabled();
+  expect(await page.evaluate(() => (window as unknown as { __cameraFixture?: { options?: unknown } }).__cameraFixture?.options)).toEqual({ cameraDirection: "REAR", saveToGallery: false, includeMetadata: true });
+
+  await page.evaluate(() => { (window as unknown as { __cameraFixture?: { cancel: boolean } }).__cameraFixture!.cancel = true; });
+  await picker.dispatchEvent("pointerdown", { bubbles: true, pointerType: "touch", pointerId: 10 });
+  await page.waitForTimeout(475);
+  await picker.dispatchEvent("pointerup", { bubbles: true, pointerType: "touch", pointerId: 10 });
+  await expect(drafts.getByRole("img", { name: "camera-photo.png" })).toBeVisible();
+  await expect(textarea).toBeEnabled();
+
+  await page.evaluate(() => {
+    const fixture = (window as unknown as { __cameraFixture?: { cancel: boolean; fail: boolean } }).__cameraFixture!;
+    fixture.cancel = false;
+    fixture.fail = true;
   });
-  expect(cameraClicks).toBe(1);
+  await picker.dispatchEvent("pointerdown", { bubbles: true, pointerType: "touch", pointerId: 11 });
+  await page.waitForTimeout(475);
+  await picker.dispatchEvent("pointerup", { bubbles: true, pointerType: "touch", pointerId: 11 });
+  await expect(page.locator(".companion-sr-only").last()).toHaveText("拍照失败，请重试。");
+  await expect(textarea).toBeEnabled();
 });
 
 test("renders a deferred text-and-two-image send immediately and replaces it atomically", async ({ page }) => {
