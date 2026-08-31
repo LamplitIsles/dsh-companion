@@ -34,6 +34,8 @@ Messages sent during a reply use DSH's durable FIFO queue and remain separate tu
 
 DSH continues to stream and persist model output internally, while Companion shows assistant text only after its message is finalized. The typing bubble gains a slowly rotating, non-repeating companion note after a 12-second wait; stopping or completing the reply clears that transient timer state.
 
+While ImageGen is running, its image skeleton and “正在画一张图…” status replace the generic typing bubble. If the agent resumes text generation after the image settles, the typing indicator returns with a fresh long-wait timer.
+
 The Companion deliberately does not include a Workspace picker, session list/new-chat flow, model or preset controls, permissions/approvals, reasoning, Trajectory, generic Tool cards, prompt-injection inspection, file upload, voice input, notifications, or multi-contact UI.
 
 ## Configuration and recovery

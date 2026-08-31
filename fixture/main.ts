@@ -67,6 +67,7 @@ declare global {
       setTheme(theme: "light" | "dark"): void;
       setStatus(status: CompanionProjection["status"]): void;
       setRunning(running: boolean): void;
+      finishImageGeneration(): void;
       stopCalls(): number;
       setIdentity(patch: Partial<CompanionBridgeProps["identity"]>): void;
       revoked(): number;
@@ -88,6 +89,7 @@ window.__companionFixture = {
   setTheme(theme) { propsStore.update((current) => ({ ...current, scheme: theme })); },
   setStatus(status) { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, status } })); },
   setRunning(running) { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, running } })); },
+  finishImageGeneration() { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, items: current.projection!.items.filter((item) => item.id !== "imagegen:demo:loading") } })); },
   stopCalls: () => stopCalls,
   setIdentity(patch) { propsStore.update((current) => ({ ...current, identity: { ...current.identity!, ...patch } })); },
   revoked: () => revokedImageUrls,

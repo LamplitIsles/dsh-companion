@@ -77,9 +77,14 @@ test("draft edits stay local to the composer", async ({ page }) => {
   expect(timing).toBeLessThan(50);
 });
 
-test("shows an incoming typing indicator only while the companion is running", async ({ page }) => {
+test("uses image progress instead of a duplicate typing indicator, then resumes typing", async ({ page }) => {
   await page.goto("/");
   const indicator = page.getByTestId("companion-typing-indicator");
+  const drawing = page.getByText("正在画一张图…", { exact: true });
+  await expect(drawing).toBeVisible();
+  await expect(drawing).toHaveAttribute("role", "status");
+  await expect(indicator).toHaveCount(0);
+  await page.evaluate(() => window.__companionFixture?.finishImageGeneration());
   await expect(indicator).toBeVisible();
   await expect(indicator).toHaveAccessibleName("小灯正在输入");
   await page.evaluate(() => window.__companionFixture?.setRunning(false));
@@ -89,6 +94,7 @@ test("shows an incoming typing indicator only while the companion is running", a
 test("warms up a long typing wait with rotating non-repeating companion copy", async ({ page }) => {
   await page.clock.install();
   await page.goto("/");
+  await page.evaluate(() => window.__companionFixture?.finishImageGeneration());
   const indicator = page.getByTestId("companion-typing-indicator");
   await expect(indicator.locator(".companion-waiting-copy")).toHaveCount(0);
   await page.clock.fastForward(12_000);

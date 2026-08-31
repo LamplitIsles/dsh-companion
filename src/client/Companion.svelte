@@ -82,6 +82,8 @@
   let overlayHistory = false;
   let lightboxCloseFromHistory = false;
   let statusText = "";
+  let imageGenerationRunning = false;
+  let typingVisible = false;
   let waitingCopy = "";
   let waitingCycle = "";
   let waitingDelayTimer: ReturnType<typeof setTimeout> | undefined;
@@ -89,7 +91,9 @@
   const intensityLabels: Record<number, string> = { 1: "轻微", 2: "明显", 3: "强烈" };
 
   $: statusText = projection.status === "working" ? "正在陪你想" : projection.status === "reconnecting" ? "正在重新连接" : "已准备好";
-  $: syncWaitingState(projection.running, `${sessions.find((session) => session.selected)?.id ?? "none"}:${latestSettledReplyKey(projection)}`);
+  $: imageGenerationRunning = projection.items.some((item) => item.kind === "image" && (item.state === "running" || item.state === "loading"));
+  $: typingVisible = projection.running && !imageGenerationRunning;
+  $: syncWaitingState(typingVisible, `${sessions.find((session) => session.selected)?.id ?? "none"}:${latestSettledReplyKey(projection)}`);
   $: if (projection) void reconcileProjection(projection);
 
   function latestSettledReplyKey(value: CompanionProjection): string {
@@ -477,7 +481,7 @@
               <article class="cmp-chat cmp-chat-start companion-row incoming" data-testid={`image-${item.id}`}>
                 <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder cmp:rounded-full message-avatar"><div class="companion-avatar-crop cmp:rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div></div>
                 <div class="cmp-chat-bubble companion-media">
-                  {#if item.state === "running" || item.state === "loading"}<div class="cmp-skeleton" style="height:260px"></div><div style="padding:12px">正在画一张图…</div>
+                  {#if item.state === "running" || item.state === "loading"}<div class="cmp-skeleton" style="height:260px" aria-hidden="true"></div><div style="padding:12px" role="status">正在画一张图…</div>
                   {:else if imageUrls[item.id]}<button class="companion-media-button" aria-label={"查看大图：" + item.alt} on:click={() => showLightbox(item)}><img src={imageUrls[item.id]} alt={item.alt} /></button>
                   {:else if imageErrors[item.id] || item.state === "failed"}<div role="alert" style="padding:22px">{item.error || imageErrors[item.id] || "图片暂时无法显示。"}</div>
                   {:else}<div class="cmp-loading cmp-loading-spinner" style="margin:32px auto"></div>{/if}
@@ -503,7 +507,7 @@
               <div class="companion-recovery" role={item.tone === "error" ? "alert" : "status"}><p>{item.text}</p></div>
             {/if}
           {/each}
-          {#if projection.running}
+          {#if typingVisible}
             <article class="cmp-chat cmp-chat-start companion-row incoming" data-testid="companion-typing-indicator" role="status" aria-label={`${identity.companionName}正在输入`}>
               <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder cmp:rounded-full message-avatar">
                 <div class="companion-avatar-crop cmp:rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div>
