@@ -106,7 +106,7 @@ test("offers and accepts the /compact command completion", async ({ page }) => {
   await textarea.fill("/co");
   const suggestions = page.getByRole("listbox", { name: "命令补全" });
   await expect(suggestions).toBeVisible();
-  await expect(suggestions).toContainText("压缩上下文，让下一段对话自然接续");
+  await expect(suggestions).toContainText("整理记忆，让下一段对话自然接续");
   await textarea.press("Tab");
   await expect(textarea).toHaveValue("/compact");
 
@@ -147,7 +147,7 @@ test("surfaces compaction lifecycle without exposing the private checkpoint", as
   await page.evaluate(() => window.__companionFixture?.startCompaction("active"));
   await expect(page.getByTestId("companion-continuity-status")).toHaveText("正在整理记忆…");
   await expect(page.locator(".companion-context-meter")).toHaveAttribute("data-state", "active");
-  await page.evaluate(() => window.__companionFixture?.finishCompaction("active", 18_432));
+  await page.evaluate(() => window.__companionFixture?.finishCompaction("active"));
   await expect(page.getByTestId("companion-continuity-status")).toHaveText("整理记忆已完成");
   await expect(page.getByTestId("continuity-record-active")).toHaveText("已整理对话");
   await expect(page.getByTestId("continuity-record-active")).not.toHaveAttribute("role", "status");

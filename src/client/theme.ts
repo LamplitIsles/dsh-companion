@@ -110,7 +110,6 @@ export const companionStyles = `
 #dsh-companion .companion-continuity-status[data-state="complete"]{color:var(--color-success)}
 #dsh-companion .companion-continuity-status[data-state="failed"]{color:var(--color-error)}
 #dsh-companion .companion-continuity-record{display:flex;max-width:min(76vw,620px);align-items:center;gap:8px;margin:16px auto;padding:7px 12px;border:1px solid color-mix(in srgb,var(--color-base-content) 10%,transparent);border-radius:999px;color:color-mix(in srgb,var(--color-base-content) 60%,transparent);font-size:.7rem;line-height:1.35;text-align:center}
-#dsh-companion .companion-continuity-record-label{color:var(--color-success);font-weight:700;white-space:nowrap}
 #dsh-companion[data-theme="sticker-messenger"] .companion-context-meter[data-state="active"]{--context-meter-color:var(--color-primary)}
 #dsh-companion[data-theme="sticker-messenger"] .companion-context-popover{border-radius:18px}
 #dsh-companion[data-theme="night-voyage"] .companion-context-meter[data-state="active"]{--context-meter-color:var(--color-secondary)}

@@ -11,7 +11,7 @@ export interface ComposerCommand {
 }
 
 export const COMPOSER_COMMANDS: readonly ComposerCommand[] = [
-  { command: "/compact", label: "整理当前对话", description: "压缩上下文，让下一段对话自然接续" },
+  { command: "/compact", label: "整理当前对话", description: "整理记忆，让下一段对话自然接续" },
 ];
 
 export type ComposerEvent =

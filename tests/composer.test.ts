@@ -18,7 +18,7 @@ describe("IME composer", () => {
 
 describe("Companion command completion", () => {
   it("offers /compact only for a non-whitespace slash prefix", () => {
-    expect(findComposerCommand("/")).toMatchObject({ command: "/compact", label: "整理当前对话" });
+    expect(findComposerCommand("/")).toMatchObject({ command: "/compact", label: "整理当前对话", description: "整理记忆，让下一段对话自然接续" });
     expect(findComposerCommand("/comp")).toMatchObject({ command: "/compact" });
     expect(findComposerCommand("/compact ")).toBeUndefined();
     expect(findComposerCommand("/unknown")).toBeUndefined();

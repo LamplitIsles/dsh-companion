@@ -73,7 +73,7 @@ declare global {
       finishImageGeneration(): void;
       setCapacity(value: ContextPressureProjection | undefined): void;
       startCompaction(id?: string): void;
-      finishCompaction(id?: string, releasedTokens?: number): void;
+      finishCompaction(id?: string): void;
       failCompaction(id?: string): void;
       sendCalls(): number;
       stopCalls(): number;
@@ -110,17 +110,14 @@ window.__companionFixture = {
     const compactionId = lifecycleId(id);
     propsStore.update((current) => updateLifecycle(current, { compactionId, status: "running", startSeq: ++lifecycleSeq, startedAt: Date.now() }));
   },
-  finishCompaction(id, releasedTokens = 18_000) {
+  finishCompaction(id) {
     const compactionId = lifecycleId(id);
     const endedAt = Date.now();
     propsStore.update((current) => {
       const existing = current.continuity?.lifecycle?.lifecycles.find((row) => row.compactionId === compactionId);
       const state: CompactionLifecycleState = { compactionId, status: "complete", startSeq: existing?.startSeq ?? ++lifecycleSeq, startedAt: existing?.startedAt ?? endedAt, endSeq: ++lifecycleSeq, endedAt };
       const next = updateLifecycle(current, state);
-      const estimate = typeof releasedTokens === "number" && Number.isFinite(releasedTokens) && releasedTokens >= 0
-        ? ` · 收纳约 ${releasedTokens >= 1000 ? `${Math.round(releasedTokens / 1000)}k tokens` : `${Math.round(releasedTokens / 100) * 100} tokens`}`
-        : "";
-      const record = { id: `continuity:${compactionId}`, kind: "continuity" as const, side: "incoming" as const, tone: "success" as const, compactionId, text: `已整理对话${estimate}`, time: endedAt, anchorSeq: state.endSeq! };
+      const record = { id: `continuity:${compactionId}`, kind: "continuity" as const, side: "incoming" as const, tone: "success" as const, compactionId, text: "已整理对话", time: endedAt, anchorSeq: state.endSeq! };
       return { ...next, projection: { ...next.projection!, items: [...next.projection!.items.filter((item) => item.id !== record.id), record] } };
     });
   },
