@@ -1,5 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -146,6 +147,10 @@ try {
   vm.runInNewContext(clientCode, { window: { __ModuleLoader__: { load(spec) { loaded = spec; } } } });
   if (loaded?.id !== manifest.name || typeof loaded.factory !== "function" || !clientCode.includes("@scope (#dsh-companion)") || !clientCode.includes(".cmp-btn") || clientCode.includes("@import") || clientCode.includes("theme-controller") || /(^|[},])\s*(html|:root)\s*\{/u.test(clientCode)) {
     throw new Error("packed client lacks a scoped, generated daisyUI bundle");
+  }
+  const clientRuntime = loaded.factory(createRequire(import.meta.url));
+  for (const service of ["conversationEvents", "conversationViews"]) {
+    if (!clientRuntime.inject?.includes(service)) throw new Error(`packed client lacks required ${service} injection`);
   }
 
   browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ?? "/run/current-system/sw/bin/chromium" });

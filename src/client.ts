@@ -15,7 +15,7 @@ import settingsCardStyles from "./client/CompanionSettingsCard.module.css?inline
 import { registerCompanionContinuity } from "./continuity.js";
 
 export const name = "dsh-companion" as const;
-export const inject = ["connection", "locale", "sessions", "settingsScope", "slots", "theme", "workspaces"] as const;
+export const inject = ["connection", "conversationEvents", "conversationViews", "locale", "sessions", "settingsScope", "slots", "theme", "workspaces"] as const;
 
 const SETTINGS_NAMESPACE = "dsh-companion";
 
