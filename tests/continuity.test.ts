@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   compactionLifecycleDefinition,
   continuityViewDefinition,
-  formatApproximateTokens,
+  formatTokenCount,
   projectContinuityRecords,
   registerCompanionContinuity,
   resolveContextCapacity,
@@ -38,10 +38,10 @@ describe("Companion context capacity", () => {
     expect(resolveContextCapacity({ pressureTokens: Number.NaN, contextWindow: 100 })).toBeUndefined();
   });
 
-  it("rounds release estimates to quiet human-scale copy", () => {
+  it("rounds capacity counts to compact human-scale copy", () => {
     expect(roundTokenEstimate(18_432)).toBe(18_000);
-    expect(formatApproximateTokens(18_432)).toBe("18k tokens");
-    expect(formatApproximateTokens(432)).toBe("400 tokens");
+    expect(formatTokenCount(18_432)).toBe("18k");
+    expect(formatTokenCount(432)).toBe("400");
   });
 });
 
@@ -110,9 +110,9 @@ describe("Companion compaction lifecycle", () => {
     expect(failed.status).toBe("failed");
     const completed: CompactionLifecycleState = { compactionId: "safe", status: "complete", startSeq: 3, startedAt: 300, endSeq: 5, endedAt: 500 };
     const records = projectContinuityRecords({ lifecycles: [completed, completed] }, [{ kind: "compaction", id: "safe", seq: 5, shadowedTokenCount: 18_432, summary: "PRIVATE CONTINUITY SUMMARY" }]);
-    expect(records).toEqual([expect.objectContaining({ text: "已整理对话 · 收纳约 18k tokens" })]);
+    expect(records).toEqual([expect.objectContaining({ text: "已整理对话" })]);
     expect(JSON.stringify(records)).not.toContain("PRIVATE CONTINUITY SUMMARY");
-    expect(projectContinuityRecords({ lifecycles: [completed] }, [{ kind: "compaction", id: "safe", data: { seq: 5, shadowedTokenCount: 18_432, summary: "PRIVATE" } }])).toEqual([expect.objectContaining({ text: "已整理对话 · 收纳约 18k tokens" })]);
+    expect(projectContinuityRecords({ lifecycles: [completed] }, [{ kind: "compaction", id: "safe", data: { seq: 5, shadowedTokenCount: 18_432, summary: "PRIVATE" } }])).toEqual([expect.objectContaining({ text: "已整理对话" })]);
     expect(projectContinuityRecords({ lifecycles: [failed] }, [])).toEqual([]);
   });
 

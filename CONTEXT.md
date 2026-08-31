@@ -17,5 +17,5 @@ The private checkpoint produced by 整理记忆 for the next model request. It i
 _Avoid_: 对话总结, 整理结果
 
 **整理记录**:
-The small, non-expandable timeline notice that a 整理记忆 completed and roughly how much context it released. It reveals no 连续性摘要 content.
+The small, non-expandable timeline notice that a 整理记忆 completed. It reveals no 连续性摘要 content.
 _Avoid_: 压缩摘要卡片

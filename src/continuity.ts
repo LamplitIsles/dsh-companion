@@ -87,12 +87,12 @@ export function roundTokenEstimate(value: unknown): number | undefined {
   return Math.round(value / unit) * unit;
 }
 
-/** Format an already-validated token count without exposing provider details. */
-export function formatApproximateTokens(value: unknown): string | undefined {
+/** Format an already-validated token count for the compact capacity display. */
+export function formatTokenCount(value: unknown): string | undefined {
   const rounded = roundTokenEstimate(value);
   if (rounded === undefined) return undefined;
-  if (rounded >= 1_000) return `${Math.round(rounded / 1_000)}k tokens`;
-  return `${rounded} tokens`;
+  if (rounded >= 1_000) return `${Math.round(rounded / 1_000)}k`;
+  return String(rounded);
 }
 
 function eventCompactionId(event: SessionEvent): string | undefined {
@@ -257,10 +257,7 @@ function evidenceFromNode(node: Record<string, unknown>): CompactionEvidence | u
   };
 }
 
-function completionText(evidence: CompactionEvidence | undefined): string {
-  const released = formatApproximateTokens(evidence?.shadowedTokenCount);
-  return released === undefined ? "已整理对话" : `已整理对话 · 收纳约 ${released}`;
-}
+function completionText(): string { return "已整理对话"; }
 
 export interface ContinuityRecord {
   readonly id: string;
@@ -283,7 +280,7 @@ export function completionRecordForLifecycle(lifecycle: CompactionLifecycleState
     side: "incoming",
     tone: "success",
     compactionId: lifecycle.compactionId,
-    text: completionText(evidence),
+    text: completionText(),
     ...(lifecycle.endedAt === undefined ? {} : { time: lifecycle.endedAt }),
     anchorSeq,
   };

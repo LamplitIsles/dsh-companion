@@ -125,13 +125,12 @@ test("keeps the capacity cue optional and makes its explanation keyboard reachab
   await page.goto("/");
   await expect(page.locator(".companion-context-meter")).toHaveCount(0);
   await page.evaluate(() => window.__companionFixture?.setCapacity({ pressureTokens: 8_000, projectedTokens: 18_432, contextWindow: 32_000 }));
-  const meter = page.getByRole("button", { name: "对话容量：约 58%" });
+  const meter = page.getByRole("button", { name: "对话容量：58%" });
   await expect(meter).toBeVisible();
   await meter.click();
   const popover = page.getByRole("dialog", { name: "对话容量" });
-  await expect(popover).toContainText("约 58%");
-  await expect(popover).toContainText("约 18k tokens / 32k tokens");
-  await expect(popover).toContainText("估算值，会随下一次对话更新");
+  await expect(popover).toContainText("58%");
+  await expect(popover).toContainText("18k / 32k");
   await expect(popover).not.toContainText("连续性摘要");
   await page.keyboard.press("Escape");
   await expect(popover).toHaveCount(0);
@@ -150,7 +149,7 @@ test("surfaces compaction lifecycle without exposing the private checkpoint", as
   await expect(page.locator(".companion-context-meter")).toHaveAttribute("data-state", "active");
   await page.evaluate(() => window.__companionFixture?.finishCompaction("active", 18_432));
   await expect(page.getByTestId("companion-continuity-status")).toHaveText("整理记忆已完成");
-  await expect(page.getByTestId("continuity-record-active")).toContainText("已整理对话 · 收纳约 18k tokens");
+  await expect(page.getByTestId("continuity-record-active")).toHaveText("已整理对话");
   await expect(page.getByTestId("continuity-record-active")).not.toHaveAttribute("role", "status");
   await expect(page.getByTestId("continuity-record-active")).toHaveAttribute("aria-live", "off");
   await expect(page.getByTestId("companion-continuity-status")).toHaveAttribute("role", "status");

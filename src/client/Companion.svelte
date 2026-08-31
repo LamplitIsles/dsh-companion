@@ -7,7 +7,7 @@
   import Play from "lucide-svelte/icons/play";
   import RotateCcw from "lucide-svelte/icons/rotate-ccw";
   import Square from "lucide-svelte/icons/square";
-  import { COMPACTION_STATUS_DURATION_MS, formatApproximateTokens, resolveContextCapacity, type CompactionLifecycleState } from "../continuity.js";
+  import { COMPACTION_STATUS_DURATION_MS, formatTokenCount, resolveContextCapacity, type CompactionLifecycleState } from "../continuity.js";
   import type { CompanionProjection, TimelineImage, TimelineVoice } from "../projection.js";
   import type { CompanionContinuityView } from "./companion-bridge.js";
   import { createComposerState, findComposerCommand, reduceComposer, shouldSubmitEnter, type ComposerCommand } from "./composer.js";
@@ -742,16 +742,15 @@
             <textarea bind:this={composerInput} class="cmp-textarea companion-textarea" aria-label="写消息" aria-autocomplete={commandSuggestion ? "list" : undefined} aria-controls={commandSuggestion ? "companion-command-suggestions" : undefined} placeholder={"写给 " + identity.companionName + "…"} rows="1" value={composer.draft} on:input={onInput} on:compositionstart={onCompositionStart} on:compositionend={onCompositionEnd} on:keydown={onKeydown}></textarea>
             {#if contextCapacity}
               <div class="companion-context-meter-wrap">
-                <button bind:this={contextMeterButton} class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-context-meter" class:companion-context-meter-open={contextMeterOpen} data-state={continuityStatus?.status === "running" ? "active" : continuityStatus?.status === "complete" ? "complete" : continuityStatus?.status === "failed" ? "failed" : contextCapacity.percentage >= 80 ? "warning" : "idle"} type="button" aria-label={`对话容量：约 ${contextCapacity.percentage}%`} aria-expanded={contextMeterOpen} aria-controls="companion-context-popover" on:click={toggleContextMeter}>
+                <button bind:this={contextMeterButton} class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-context-meter" class:companion-context-meter-open={contextMeterOpen} data-state={continuityStatus?.status === "running" ? "active" : continuityStatus?.status === "complete" ? "complete" : continuityStatus?.status === "failed" ? "failed" : contextCapacity.percentage >= 80 ? "warning" : "idle"} type="button" aria-label={`对话容量：${contextCapacity.percentage}%`} aria-expanded={contextMeterOpen} aria-controls="companion-context-popover" on:click={toggleContextMeter}>
                   <svg viewBox="0 0 28 28" aria-hidden="true"><circle class="companion-context-meter-track" cx="14" cy="14" r="11"></circle><circle class="companion-context-meter-value" cx="14" cy="14" r="11" pathLength="100" style={`stroke-dashoffset:${100 - contextCapacity.percentage}`}></circle></svg>
-                  <span class="companion-sr-only">约 {contextCapacity.percentage}%</span>
+                  <span class="companion-sr-only">{contextCapacity.percentage}%</span>
                 </button>
                 {#if contextMeterOpen}
                   <div bind:this={contextMeterPopover} id="companion-context-popover" class="cmp-card companion-context-popover" role="dialog" aria-labelledby="companion-context-popover-title" tabindex="-1">
                     <h2 id="companion-context-popover-title">对话容量</h2>
-                    <p class="companion-context-percent">约 {contextCapacity.percentage}%</p>
-                    <p>约 {formatApproximateTokens(contextCapacity.usedTokens)} / {formatApproximateTokens(contextCapacity.contextWindow)}</p>
-                    <p class="companion-context-note">估算值，会随下一次对话更新</p>
+                    <p class="companion-context-percent">{contextCapacity.percentage}%</p>
+                    <p>{formatTokenCount(contextCapacity.usedTokens)} / {formatTokenCount(contextCapacity.contextWindow)}</p>
                   </div>
                 {/if}
               </div>
