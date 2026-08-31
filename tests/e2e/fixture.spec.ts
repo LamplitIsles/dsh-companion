@@ -153,6 +153,7 @@ test("drawer uses one checkbox state across desktop and Pixel-sized layouts", as
     await expect(toggle).not.toBeChecked();
     await headerToggle.click();
     await expect(toggle).toBeChecked();
+    await expect.poll(() => page.locator(".companion-sidebar-overlay").evaluate((node) => getComputedStyle(node).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
     await page.locator(".companion-sidebar-overlay").click({ position: { x: 390, y: 120 } });
     await expect(toggle).not.toBeChecked();
   } else {
