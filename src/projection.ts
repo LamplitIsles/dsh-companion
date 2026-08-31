@@ -1,0 +1,300 @@
+import type { ImageAttachmentRef } from "@deepseek-ai/dsh-attachment";
+import {
+  imageFromContent,
+  imageGenProjectionId,
+  imageProjectionId,
+  parseTtsPassage,
+  recognizeImageGenResult,
+  ttsProjectionId,
+} from "./media.js";
+
+export type MessageSide = "incoming" | "outgoing";
+
+export interface TimelineText {
+  id: string;
+  projectionKey?: string;
+  kind: "text";
+  side: MessageSide;
+  text: string;
+  streaming?: boolean;
+  pending?: boolean;
+  failed?: boolean;
+  time?: number;
+  replyTo?: string;
+}
+
+export interface TimelineImage {
+  id: string;
+  /** Stable source key used when a durable ImageGen call settles into its attachment. */
+  projectionKey?: string;
+  kind: "image";
+  side: "incoming";
+  state: "loading" | "ready" | "failed" | "running";
+  attachment?: ImageAttachmentRef;
+  alt: string;
+  error?: string;
+  time?: number;
+}
+
+export interface TimelineVoice {
+  id: string;
+  projectionKey?: string;
+  kind: "voice";
+  side: "incoming";
+  text: string;
+  status: "preparing";
+  time?: number;
+}
+
+export interface TimelineNotice {
+  id: string;
+  projectionKey?: string;
+  kind: "notice";
+  side: "incoming";
+  tone: "info" | "error";
+  text: string;
+  time?: number;
+}
+
+export type TimelineItem = TimelineText | TimelineImage | TimelineVoice | TimelineNotice;
+
+export interface CompanionProjection {
+  items: readonly TimelineItem[];
+  pendingCount: number;
+  running: boolean;
+  status: "ready" | "working" | "reconnecting";
+  openState: "cold" | "loading" | "open" | "error";
+  hasMore: boolean;
+  loadingOlder: boolean;
+  promptError?: string;
+  lastAgentError?: string;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function nodeId(node: Record<string, unknown>, fallback: string): string {
+  for (const key of ["id", "key", "seq", "messageId", "callId"]) {
+    const value = node[key];
+    if (typeof value === "string" || typeof value === "number") return String(value);
+  }
+  return fallback;
+}
+
+function nodeTime(node: Record<string, unknown>): number | undefined {
+  for (const key of ["time", "createdAt", "timestamp"]) {
+    if (typeof node[key] === "number") return node[key] as number;
+  }
+  return undefined;
+}
+
+function textFromValue(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    const parts = value.map(textFromValue).filter((part): part is string => part !== undefined);
+    return parts.length ? parts.join("") : undefined;
+  }
+  const record = asRecord(value);
+  if (!record) return undefined;
+  for (const key of ["text", "content", "preview", "message"]) {
+    if (typeof record[key] === "string") return record[key] as string;
+  }
+  if (Array.isArray(record.content)) {
+    const parts = record.content.map(textFromValue).filter((part): part is string => part !== undefined);
+    if (parts.length) return parts.join("");
+  }
+  return undefined;
+}
+
+function contentOf(node: Record<string, unknown>): readonly unknown[] {
+  if (Array.isArray(node.blocks)) return node.blocks;
+  if (Array.isArray(node.content)) return node.content;
+  if (Array.isArray(node.message)) return node.message;
+  return [];
+}
+
+function kindOf(node: Record<string, unknown>): string {
+  return typeof node.kind === "string" ? node.kind : typeof node.role === "string" ? node.role : "";
+}
+
+function isUserNode(node: Record<string, unknown>): boolean {
+  const kind = kindOf(node).toLowerCase();
+  return kind.includes("user") || kind.includes("human") || node.role === "user";
+}
+
+function isAssistantNode(node: Record<string, unknown>): boolean {
+  const kind = kindOf(node).toLowerCase();
+  return kind.includes("assistant") || kind === "model" || node.role === "assistant";
+}
+
+function isFinalized(node: Record<string, unknown>): boolean {
+  if (node.finalized === false || node.streaming === true || node.partial === true) return false;
+  if (node.status === "streaming" || node.status === "running") return false;
+  return true;
+}
+
+function assistantText(node: Record<string, unknown>): string {
+  const direct = textFromValue(node.text);
+  if (direct !== undefined) return direct;
+  const parts = contentOf(node).map(textFromValue).filter((part): part is string => part !== undefined);
+  return parts.join("");
+}
+
+function assistantMedia(node: Record<string, unknown>, id: string, time?: number): TimelineItem[] {
+  const items: TimelineItem[] = [];
+  const blocks = contentOf(node);
+  let imageIndex = 0;
+  for (const block of blocks) {
+    const record = asRecord(block);
+    if (!record) continue;
+    const attachment = imageFromContent([record]);
+    if (attachment) {
+      items.push({
+        id: imageProjectionId(id, imageIndex++),
+        kind: "image",
+        side: "incoming",
+        state: "ready",
+        attachment,
+        alt: attachment.name ?? "Companion image",
+        time,
+      });
+    }
+  }
+  // A node may use a single attachment property rather than content[].
+  if (items.length === 0 && node.attachment && imageFromContent([{ type: "image", attachment: node.attachment }])) {
+    const attachment = imageFromContent([{ type: "image", attachment: node.attachment }])!;
+    items.push({ id: imageProjectionId(id, 0), kind: "image", side: "incoming", state: "ready", attachment, alt: attachment.name ?? "Companion image", time });
+  }
+  return items;
+}
+
+function orderedNodes(snapshot: unknown): readonly unknown[] {
+  const root = asRecord(snapshot);
+  if (!root) return [];
+  const chat = asRecord(root.chat);
+  if (chat) {
+    const legacy = asRecord(chat.legacy);
+    if (legacy && Array.isArray(legacy.nodes)) return legacy.nodes;
+    if (Array.isArray(chat.nodes)) return chat.nodes;
+    const store = asRecord(chat.nodes);
+    const order = Array.isArray(chat.order) ? chat.order : [];
+    if (store && typeof store.get === "function" && order.length) {
+      return order.map((key) => (store.get as (key: string) => unknown)(String(key))).filter(Boolean);
+    }
+  }
+  if (Array.isArray(root.nodes)) return root.nodes;
+  return [];
+}
+
+function pendingNodes(snapshot: unknown): readonly unknown[] {
+  const root = asRecord(snapshot);
+  return root && Array.isArray(root.queue) ? root.queue : [];
+}
+
+/** Project only Companion-visible rows; ordinary Tool/reasoning nodes disappear. */
+export function projectConversation(snapshot: unknown, connected = true): CompanionProjection {
+  const root = asRecord(snapshot) ?? {};
+  const items: TimelineItem[] = [];
+  const nodes = orderedNodes(snapshot);
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = asRecord(nodes[index]);
+    if (!node) continue;
+    const id = nodeId(node, `node-${index}`);
+    const time = nodeTime(node);
+    if (isUserNode(node)) {
+      const text = textFromValue(node.text) ?? textFromValue(node.content) ?? "";
+      if (text) items.push({ id, kind: "text", side: "outgoing", text, time });
+      continue;
+    }
+    if (isAssistantNode(node)) {
+      const text = assistantText(node);
+      const passage = parseTtsPassage(text, isFinalized(node));
+      const visibleText = passage ? `${text.slice(0, passage.start)}${text.slice(passage.end)}`.trim() : text;
+      if (visibleText) items.push({ id, kind: "text", side: "incoming", text: visibleText, streaming: !isFinalized(node), time });
+      items.push(...assistantMedia(node, id, time));
+      if (passage) items.push({ id: ttsProjectionId(id, passage), kind: "voice", side: "incoming", text: passage.text, status: "preparing", time });
+      continue;
+    }
+    const call = asRecord(node.call);
+    const image = recognizeImageGenResult({ ...node, name: node.name ?? node.toolName ?? call?.name, callId: node.callId ?? nodeId(node, id) }, id);
+    if (image) {
+      const projectionId = image.attachment ? imageGenProjectionId(image.id, image.attachment.attachmentId) : `imagegen:${image.id}`;
+      items.push({ id: projectionId, projectionKey: `imagegen:${image.id}`, kind: "image", side: "incoming", state: image.state, attachment: image.attachment, alt: image.alt, error: image.error, time });
+    }
+  }
+  const partial = asRecord(root.partial);
+  if (partial) {
+    const id = nodeId(partial, `partial-${partial.turn ?? "reply"}`);
+    const text = assistantText(partial);
+    if (text) items.push({ id, kind: "text", side: "incoming", text, streaming: true });
+  }
+  const pending = pendingNodes(snapshot);
+  const durableIds = new Set(items.filter((item): item is TimelineText => item.kind === "text" && item.side === "outgoing").map((item) => item.id));
+  for (let index = 0; index < pending.length; index += 1) {
+    const row = asRecord(pending[index]);
+    if (!row) continue;
+    const identity = typeof row.messageId === "string" ? row.messageId : typeof row.id === "string" ? row.id : `pending-${index}`;
+    if (durableIds.has(identity)) continue;
+    const text = typeof row.text === "string" ? row.text : textFromValue(row.content) ?? "";
+    if (text) items.push({ id: `pending:${identity}`, kind: "text", side: "outgoing", text, pending: true });
+  }
+  const promptError = asRecord(root.promptError);
+  if (promptError) {
+    const error = asRecord(promptError.error);
+    items.push({ id: "prompt-error", kind: "notice", side: "incoming", tone: "error", text: typeof error?.message === "string" ? error.message : "这条消息没有发送成功，可以重试。" });
+  }
+  const lastError = typeof root.lastAgentError === "string" ? root.lastAgentError : undefined;
+  if (lastError) items.push({ id: "agent-error", kind: "notice", side: "incoming", tone: "error", text: lastError });
+  const openState = root.openState === "error" ? "error" : root.openState === "loading" ? "loading" : root.openState === "cold" ? "cold" : "open";
+  const running = root.running === true;
+  return {
+    items: dedupeTimeline(items),
+    pendingCount: items.filter((item) => item.kind === "text" && item.pending).length,
+    running,
+    status: deriveStatus({ connected, running, openState }),
+    openState,
+    hasMore: root.hasMore === true,
+    loadingOlder: root.loadingOlder === true,
+    ...(promptError ? { promptError: "这条消息没有发送成功，可以重试。" } : {}),
+    ...(lastError ? { lastAgentError: lastError } : {}),
+  };
+}
+
+function dedupeTimeline(items: readonly TimelineItem[]): TimelineItem[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = item.projectionKey ?? item.id;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function deriveStatus(input: { connected: boolean; running: boolean; openState?: string }): "ready" | "working" | "reconnecting" {
+  if (!input.connected || input.openState === "error" || input.openState === "loading") return "reconnecting";
+  return input.running ? "working" : "ready";
+}
+
+export interface ScrollPlan {
+  follow: boolean;
+  preserveAnchor: boolean;
+  showNewMessageAffordance: boolean;
+  previousHeight?: number;
+}
+
+export function scrollPlan(input: { scrollTop: number; scrollHeight: number; clientHeight: number; nearBottomPx?: number; prepending?: boolean; previousHeight?: number }): ScrollPlan {
+  const threshold = input.nearBottomPx ?? 96;
+  const distance = input.scrollHeight - input.clientHeight - input.scrollTop;
+  if (input.prepending) {
+    return { follow: false, preserveAnchor: true, showNewMessageAffordance: false, ...(input.previousHeight === undefined ? {} : { previousHeight: input.previousHeight }) };
+  }
+  const nearBottom = distance <= threshold;
+  return { follow: nearBottom, preserveAnchor: !nearBottom, showNewMessageAffordance: !nearBottom };
+}
+
+export function reconcilePending(items: readonly TimelineItem[], durableIds: ReadonlySet<string>): TimelineItem[] {
+  return items.filter((item) => !(item.kind === "text" && item.pending && durableIds.has(item.id.replace(/^pending:/u, ""))));
+}

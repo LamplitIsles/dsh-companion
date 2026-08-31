@@ -1,0 +1,36 @@
+# Dependencies and package build output
+node_modules/
+dist/
+*.tgz
+*.tar.gz
+
+# Project-local planning/report scratch is not publishable package content.
+.scratch/
+
+# Test, coverage, and browser artifacts
+coverage/
+test-results/
+playwright-report/
+blob-report/
+.vite/
+*.log
+*.tsbuildinfo
+pnpm-debug.log*
+npm-debug.log*
+bun-debug.log*
+
+# Local environment and editor state
+.env
+.env.*
+!.env.example
+.DS_Store
+.idea/
+.vscode/
+
+# Generated fixture captures stay out of commits; reference screenshots remain tracked.
+fixture/.cache/
+fixture/screenshots/generated/
+
+# OS/editor noise
+*.swp
+*.swo
