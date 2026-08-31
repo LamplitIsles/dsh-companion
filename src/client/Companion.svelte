@@ -9,6 +9,7 @@
   import Square from "lucide-svelte/icons/square";
   import type { CompanionProjection, TimelineImage, TimelineVoice } from "../projection.js";
   import { createComposerState, reduceComposer, shouldSubmitEnter } from "./composer.js";
+  import { INTENSITY_LABELS } from "./relationship.js";
   import Markdown from "./Markdown.svelte";
   import relationshipBackground from "./assets/relationship-night-voyage.webp";
 
@@ -95,7 +96,6 @@
   let waitingCycle = "";
   let waitingDelayTimer: ReturnType<typeof setTimeout> | undefined;
   let waitingRotationTimer: ReturnType<typeof setInterval> | undefined;
-  const intensityLabels: Record<number, string> = { 1: "轻微", 2: "明显", 3: "强烈" };
 
   $: statusText = projection.status === "working" ? "正在陪你想" : projection.status === "reconnecting" ? "正在重新连接" : "已准备好";
   $: imageGenerationRunning = projection.items.some((item) => item.kind === "image" && (item.state === "running" || item.state === "loading"));
@@ -503,7 +503,7 @@
                   <button class="cmp-btn cmp-btn-ghost cmp-btn-circle cmp-btn-sm companion-detail-close" aria-label="关闭关系资料" on:click={() => closeDetail()}>×</button>
                 </div>
                 <p class="companion-signature">{identity.signature || "还没有签名"}</p>
-                <dl class="companion-relationship-list"><dt>此刻心情</dt><dd>{identity.moodLabel} · {intensityLabels[identity.intensity]}</dd>{#if identity.moodNote}<dt>心情短句</dt><dd>{identity.moodNote}</dd>{/if}<dt>亲近度</dt><dd>{identity.affinity === undefined ? "加载中…" : `${identity.affinity} · ${identity.affinityStage}`}</dd></dl>
+                <dl class="companion-relationship-list"><dt>此刻心情</dt><dd>{identity.moodLabel} · {INTENSITY_LABELS[identity.intensity]}</dd>{#if identity.moodNote}<dt>心情短句</dt><dd>{identity.moodNote}</dd>{/if}<dt>亲近度</dt><dd>{identity.affinity === undefined ? "加载中…" : `${identity.affinity} · ${identity.affinityStage}`}</dd></dl>
               </div>
             </div>
           {/if}
