@@ -20,6 +20,8 @@ export function relationshipControlsWritable(readOnly: boolean, saving: boolean)
 }
 
 const MEDIA_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
+const MAX_AVATAR_DATA_URL_CHARACTERS = Math.ceil(MAX_AVATAR_BYTES / 3) * 4 + 32;
 
 export function decodeClientSettings(value: unknown): ClientSettings | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
@@ -45,12 +47,12 @@ function decodeAvatar(value: unknown): ClientAvatar | undefined {
   if (typeof record.data !== "string" || typeof record.mediaType !== "string" || !MEDIA_TYPES.has(record.mediaType)) return undefined;
   if (!record.data.startsWith(`data:${record.mediaType};base64,`)) return undefined;
   if (typeof record.width !== "number" || typeof record.height !== "number" || !Number.isInteger(record.width) || !Number.isInteger(record.height) || record.width < 1 || record.height < 1 || record.width > 4096 || record.height > 4096) return undefined;
-  if (record.data.length > 1_400_000) return undefined;
+  if (record.data.length > MAX_AVATAR_DATA_URL_CHARACTERS) return undefined;
   return { data: record.data, mediaType: record.mediaType as ClientAvatar["mediaType"], width: record.width, height: record.height };
 }
 
 export async function readAvatar(file: File): Promise<ClientAvatar> {
-  if (!MEDIA_TYPES.has(file.type) || file.size > 1024 * 1024) throw new Error("头像必须是 1 MB 以内的 PNG、JPEG、WebP 或 GIF。");
+  if (!MEDIA_TYPES.has(file.type) || file.size > MAX_AVATAR_BYTES) throw new Error("头像必须是 5 MB 以内的 PNG、JPEG、WebP 或 GIF。");
   const data = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));

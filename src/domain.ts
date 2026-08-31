@@ -11,7 +11,7 @@ export const COMPANION_PATH = "/companion/" as const;
 export const STATE_DIRECTORY = ".dsh/dsh-companion" as const;
 export const STATE_FILE = `${STATE_DIRECTORY}/state.json` as const;
 export const MAX_STATE_BYTES = 64 * 1024;
-export const MAX_AVATAR_BYTES = 1024 * 1024;
+export const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 export const MAX_NOTE_CODE_POINTS = 40;
 export const MAX_SIGNATURE_CODE_POINTS = 80;
 
@@ -203,7 +203,7 @@ export function validateAvatar(value: unknown): AvatarInput {
   }
   const bytes = Math.floor(encoded.replace(/=+$/u, "").length * 3 / 4);
   if (bytes <= 0 || bytes > MAX_AVATAR_BYTES) {
-    throw new CompanionValidationError("头像不能超过 1 MB。");
+    throw new CompanionValidationError("头像不能超过 5 MB。");
   }
   if (
     typeof record.width !== "number" || !Number.isInteger(record.width) || record.width < 1 || record.width > 4096 ||

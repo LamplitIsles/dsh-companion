@@ -86,6 +86,20 @@ test("shows an incoming typing indicator only while the companion is running", a
   await expect(indicator).toHaveCount(0);
 });
 
+test("uses the composer action to stop a running reply without hiding queued messages", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByText("还有一件小事想告诉你")).toBeVisible();
+  const stop = page.getByRole("button", { name: "停止当前回复" });
+  await expect(stop).toBeVisible();
+  await stop.click();
+  await expect.poll(() => page.evaluate(() => window.__companionFixture?.stopCalls() ?? 0)).toBe(1);
+
+  const textarea = page.getByRole("textbox", { name: "写消息" });
+  await textarea.fill("再补一句");
+  await expect(page.getByRole("button", { name: "发送消息" })).toBeVisible();
+  await expect(stop).toHaveCount(0);
+});
+
 test("Svelte 5 bridge applies live identity and theme changes without remounting", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("companion-root")).toHaveAttribute("data-theme", "sticker-messenger");

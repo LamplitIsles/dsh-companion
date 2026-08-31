@@ -3,8 +3,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  CompanionStateStore, CompanionValidationError, affinityStage, canonicalizeMood, canonicalizeSignature,
-  decodeCompanionState, formatCompanionPrompt, selectCompanionSession,
+  CompanionStateStore, CompanionValidationError, MAX_AVATAR_BYTES, affinityStage, canonicalizeMood, canonicalizeSignature,
+  decodeCompanionState, formatCompanionPrompt, selectCompanionSession, validateAvatar,
 } from "../src/domain.js";
 
 const temporary: string[] = [];
@@ -56,4 +56,15 @@ describe("relationship domain", () => {
   });
 
   it("rejects unknown persisted state fields", () => { expect(() => decodeCompanionState({ mood: "neutral", intensity: 1, affinity: 50, signature: "", extra: true })).toThrow("未知字段"); });
+
+  it("accepts avatars through 5 MB and rejects larger uploads", () => {
+    const avatar = (bytes: number) => ({
+      data: `data:image/png;base64,${Buffer.alloc(bytes).toString("base64")}`,
+      mediaType: "image/png",
+      width: 1,
+      height: 1,
+    });
+    expect(validateAvatar(avatar(MAX_AVATAR_BYTES))).toMatchObject({ mediaType: "image/png", width: 1, height: 1 });
+    expect(() => validateAvatar(avatar(MAX_AVATAR_BYTES + 1))).toThrow("头像不能超过 5 MB");
+  });
 });

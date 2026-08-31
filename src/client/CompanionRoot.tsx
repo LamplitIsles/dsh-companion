@@ -176,6 +176,11 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
         if (!session) throw new Error("session-unavailable");
         await submitCompanionInput(session, text);
       },
+      async stop(): Promise<void> {
+        if (!session) throw new Error("session-unavailable");
+        const result = await session.cancel();
+        if (!result.ok) throw new Error(result.error?.message ?? "cancel-rejected");
+      },
       async selectSession(sessionId: string): Promise<void> {
         if (!workspace || !workspace.sessionIds.includes(sessionId)) throw new Error("session-not-in-companion-workspace");
         setSelected({ workspaceId: workspace.id, sessionId });

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, tick } from "svelte";
   import PanelsTopLeft from "lucide-svelte/icons/panels-top-left";
+  import Square from "lucide-svelte/icons/square";
   import type { CompanionProjection, TimelineImage, TimelineVoice } from "../projection.js";
   import { createComposerState, reduceComposer, shouldSubmitEnter } from "./composer.js";
   import Markdown from "./Markdown.svelte";
@@ -22,6 +23,7 @@
   }
   export interface CompanionActions {
     send: (text: string) => Promise<void>;
+    stop?: () => Promise<void>;
     selectSession?: (sessionId: string) => Promise<void>;
     loadOlder?: () => Promise<void>;
     attachmentUrl?: (attachment: unknown) => Promise<string>;
@@ -45,6 +47,7 @@
 
   const dispatch = createEventDispatcher<{ advanced: void; recovery: void }>();
   let composer = createComposerState();
+  let stopping = false;
   let timeline: HTMLDivElement;
   let timelineReady = false;
   let timelineRevealFrame = 0;
@@ -217,6 +220,14 @@
       composer = { ...composer, draft: text };
       liveAnnouncement = "消息发送失败，内容已保留，可以重试。";
     });
+  }
+
+  async function stop(): Promise<void> {
+    if (!actions.stop || stopping) return;
+    stopping = true;
+    try { await actions.stop(); }
+    catch { liveAnnouncement = "暂时无法停止当前回复，请重试。"; }
+    finally { stopping = false; }
   }
 
   function onKeydown(event: KeyboardEvent): void {
@@ -458,7 +469,11 @@
         <div class="companion-composer">
           <div class="companion-compose-row">
             <textarea class="cmp-textarea companion-textarea" aria-label="写消息" placeholder={"写给 " + identity.companionName + "…"} rows="1" value={composer.draft} on:input={onInput} on:compositionstart={onCompositionStart} on:compositionend={onCompositionEnd} on:keydown={onKeydown}></textarea>
-            <button class="cmp-btn cmp-btn-primary cmp-btn-circle companion-send" aria-label="发送消息" on:click={submit} disabled={!composer.draft.trim()}><span aria-hidden="true">↑</span></button>
+            {#if projection.running && !composer.draft.trim()}
+              <button class="cmp-btn cmp-btn-primary cmp-btn-circle companion-send" aria-label="停止当前回复" on:click={() => void stop()} disabled={!actions.stop || stopping}><Square size={15} fill="currentColor" aria-hidden="true" /></button>
+            {:else}
+              <button class="cmp-btn cmp-btn-primary cmp-btn-circle companion-send" aria-label="发送消息" on:click={submit} disabled={!composer.draft.trim()}><span aria-hidden="true">↑</span></button>
+            {/if}
           </div>
           <div class="companion-compose-hint">Enter 发送 · Shift+Enter 换行{projection.pendingCount ? ` · ${projection.pendingCount} 条消息排队中` : ""}</div>
         </div>

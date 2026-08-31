@@ -30,6 +30,8 @@ The package is pinned to the deployed DSH `0.1.1-rc.2` contract family (Cordis `
 
 Typing `/compact` as the complete Companion input invokes DSH's Session command channel and keeps the continuity checkpoint invisible; other slash-prefixed text remains an ordinary message.
 
+Messages sent during a reply use DSH's durable FIFO queue and remain separate turns. With an empty draft, the composer action stops the current reply without clearing queued messages; DSH resumes those messages in order after cancellation settles.
+
 The Companion deliberately does not include a Workspace picker, session list/new-chat flow, model or preset controls, permissions/approvals, reasoning, Trajectory, generic Tool cards, prompt-injection inspection, file upload, voice input, notifications, or multi-contact UI.
 
 ## Configuration and recovery
@@ -38,7 +40,7 @@ Open the native DSH plugin settings page on `/` and configure:
 
 - one stable Workspace id;
 - Companion and user display names;
-- an optional bounded local avatar for each identity (PNG/JPEG/WebP/GIF, at most 1 MB, decoded dimensions at most 4096 px);
+- an optional bounded local avatar for each identity (PNG/JPEG/WebP/GIF, at most 5 MB, decoded dimensions at most 4096 px);
 - the user's preferred form of address; and
 - the default affinity for a new or explicitly reset relationship (integer 0–100).
 

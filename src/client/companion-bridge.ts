@@ -16,6 +16,7 @@ export interface CompanionIdentityView {
 }
 export interface CompanionActions {
   send: (text: string) => Promise<void>;
+  stop?: () => Promise<void>;
   selectSession?: (sessionId: string) => Promise<void>;
   loadOlder?: () => Promise<void>;
   attachmentUrl?: (attachment: unknown) => Promise<string>;

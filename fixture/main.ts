@@ -39,6 +39,7 @@ const projection: CompanionProjection = {
 
 const root = document.getElementById("fixture")!;
 let revokedImageUrls = 0;
+let stopCalls = 0;
 const revokeObjectUrl = URL.revokeObjectURL.bind(URL);
 URL.revokeObjectURL = (url: string) => { revokedImageUrls += 1; revokeObjectUrl(url); };
 const fixtureProps: CompanionBridgeProps = {
@@ -50,7 +51,7 @@ const fixtureProps: CompanionBridgeProps = {
     { id: "first-hello", title: "第一次说晚安", updatedAt: now - 172_800_000, running: false, selected: false },
   ],
   identity: { companionName: "小灯", companionAvatar: svg, userName: "小岛", userAvatar: svg, preferredAddress: "小岛", signature: query.get("signature") === "empty" ? "" : "把平凡日子折成星星，等风来时再写一行很长很长的晚安", ...mood, affinity: 67, affinityStage: "亲近" },
-  actions: { send: async () => undefined, selectSession: async () => undefined, loadOlder: async () => undefined, attachmentUrl: async () => URL.createObjectURL(new Blob([svgDocument], { type: "image/svg+xml" })), prepareVoice: async (text: string) => { if (text.includes("失败")) throw new Error("fixture voice failure"); return "/kepos-tts/audio/fixture.mp3"; } },
+  actions: { send: async () => undefined, stop: async () => { stopCalls += 1; }, selectSession: async () => undefined, loadOlder: async () => undefined, attachmentUrl: async () => URL.createObjectURL(new Blob([svgDocument], { type: "image/svg+xml" })), prepareVoice: async (text: string) => { if (text.includes("失败")) throw new Error("fixture voice failure"); return "/kepos-tts/audio/fixture.mp3"; } },
   workspaceReady: true,
   sessionReady: true,
 };
@@ -66,6 +67,7 @@ declare global {
       setTheme(theme: "light" | "dark"): void;
       setStatus(status: CompanionProjection["status"]): void;
       setRunning(running: boolean): void;
+      stopCalls(): number;
       setIdentity(patch: Partial<CompanionBridgeProps["identity"]>): void;
       revoked(): number;
       rootIsStable(): boolean;
@@ -86,6 +88,7 @@ window.__companionFixture = {
   setTheme(theme) { propsStore.update((current) => ({ ...current, scheme: theme })); },
   setStatus(status) { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, status } })); },
   setRunning(running) { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, running } })); },
+  stopCalls: () => stopCalls,
   setIdentity(patch) { propsStore.update((current) => ({ ...current, identity: { ...current.identity!, ...patch } })); },
   revoked: () => revokedImageUrls,
   rootIsStable: () => document.getElementById("dsh-companion") === mountedCompanionRoot,
