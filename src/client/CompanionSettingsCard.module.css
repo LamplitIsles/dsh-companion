@@ -17,6 +17,7 @@
 .full { grid-column: auto; }
 .label { font-size: 13px; font-weight: 500; line-height: 1.5; }
 .hint { margin: 0; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 1.5; }
+.warning { margin: 0; color: var(--dsw-alias-label-error); font-size: 12px; line-height: 1.5; }
 .input { box-sizing: border-box; width: 100%; height: 34px; padding: 0 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-3); font: inherit; font-size: 13px; line-height: 1.5; }
 .input:focus-visible { border-color: var(--dsw-alias-brand-primary); outline: none; }
 .input:disabled { color: var(--dsw-alias-label-tertiary); cursor: default; }

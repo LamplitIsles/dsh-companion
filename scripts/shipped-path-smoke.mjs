@@ -155,6 +155,19 @@ try {
   if (await page.locator("#dsh-companion").count() !== 0) throw new Error("stock DSH root unexpectedly mounted Companion");
   const settingsStyle = page.locator('style[data-plugin-css="dsh-companion-settings"]');
   if (await settingsStyle.count() !== 1 || !(await settingsStyle.textContent())?.includes("--dsw-alias")) throw new Error("packed stock root did not inject the Companion settings CSS Module");
+  const welcomeContinue = page.getByRole("button", { name: /^(Continue|继续)$/ });
+  await welcomeContinue.waitFor({ state: "visible", timeout: 20_000 });
+  await welcomeContinue.click();
+  const configureLater = page.getByRole("button", { name: /^(Configure later|稍后配置)$/ });
+  await configureLater.waitFor({ state: "visible", timeout: 20_000 });
+  await configureLater.click();
+  await page.getByRole("button", { name: /^(Settings|设置)$/ }).click();
+  await page.getByRole("dialog").getByRole("button", { name: /^(Plugins|插件)$/ }).click();
+  await page.getByRole("button", { name: "展开：Companion 日常聊天" }).click();
+  const workspaceSelect = page.getByLabel("Companion Workspace");
+  await workspaceSelect.waitFor({ state: "visible", timeout: 20_000 });
+  const workspaceOptions = await workspaceSelect.locator("option:not([disabled])").allTextContents();
+  if (workspaceOptions.length !== 1 || !workspaceOptions[0]?.includes(workspacePath)) throw new Error("Companion settings did not offer exactly the registered Workspace");
   // Avoid aborting the stock root's normal boot transport while switching documents.
   await page.waitForTimeout(500);
   await page.goto(`${runtime.baseUrl}/companion/`, { waitUntil: "domcontentloaded" });

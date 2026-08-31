@@ -65,6 +65,7 @@ export function apply(ctx: ClientContext): void {
     key: SETTINGS_NAMESPACE,
     inject: () => ({
       scope: settings,
+      workspaceSource: ctx.workspaces.list,
       currentAffinity: async () => {
         try {
           const affinity = (await relationshipCall("relationship/get") as { state?: { affinity?: unknown } }).state?.affinity;

@@ -1,18 +1,32 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
-import type { SettingsScope, SettingsScopeSnapshot } from "@deepseek-ai/dsh-client-runtime/client";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent } from "react";
+import type { SettingsScope, SettingsScopeSnapshot, WorkspaceListState } from "@deepseek-ai/dsh-client-runtime/client";
 import { changedSettingsPayload, mergeCleanSettingsDraft, readAvatar, relationshipControlsWritable, settingValueAccepted, settingsPayload, type ClientSettings } from "./settings.js";
 import styles from "./CompanionSettingsCard.module.css";
 
 export interface CompanionSettingsCardProps {
   scope: SettingsScope<ClientSettings>;
+  workspaceSource: {
+    getSnapshot(): WorkspaceListState;
+    subscribe(listener: () => void): () => void;
+  };
   currentAffinity?: () => Promise<number | undefined>;
   resetAffinity?: () => Promise<void>;
   setAffinity?: (value: number) => Promise<void>;
   clearSignature?: () => Promise<void>;
 }
 
-export function CompanionSettingsCard({ scope, currentAffinity, resetAffinity, setAffinity, clearSignature }: CompanionSettingsCardProps): JSX.Element | null {
+const EMPTY_WORKSPACES: WorkspaceListState = { items: [], archivedSessionIds: [], state: "loading", phase: "pending", error: null, baselinesReady: false, recentWorkspaceId: undefined };
+
+export function CompanionSettingsCard({ scope, workspaceSource, currentAffinity, resetAffinity, setAffinity, clearSignature }: CompanionSettingsCardProps): JSX.Element | null {
   const [snapshot, setSnapshot] = useState<SettingsScopeSnapshot<ClientSettings>>(() => scope.getSnapshot());
+  const workspaceSubscribe = useMemo(() => workspaceSource.subscribe.bind(workspaceSource), [workspaceSource]);
+  const workspaceGetSnapshot = useMemo(() => workspaceSource.getSnapshot.bind(workspaceSource), [workspaceSource]);
+  const workspaceSnapshot = useSyncExternalStore(workspaceSubscribe, workspaceGetSnapshot, () => EMPTY_WORKSPACES);
+  const workspaceChoices = workspaceSnapshot.items.map((workspace) => ({
+    id: String(workspace.workspaceId),
+    title: workspace.title,
+    path: workspace.path,
+  }));
   const empty: ClientSettings = { workspaceId: "", companionName: "Companion", userName: "你", preferredAddress: "你", defaultAffinity: 50 };
   const initial = snapshot.value ?? empty;
   const baselineRef = useRef(initial);
@@ -38,6 +52,8 @@ export function CompanionSettingsCard({ scope, currentAffinity, resetAffinity, s
   if (snapshot.status === "loading" || snapshot.status === "unavailable") return null;
   const readOnly = !snapshot.writable;
   const controlsWritable = relationshipControlsWritable(readOnly, saving);
+  const selectedWorkspaceExists = workspaceChoices.some((workspace) => workspace.id === draft.workspaceId);
+  const selectedWorkspaceId = selectedWorkspaceExists ? draft.workspaceId : "";
   const set = <K extends keyof ClientSettings>(key: K, value: ClientSettings[K]) => setDraft((current) => ({ ...current, [key]: value }));
   async function save(): Promise<void> {
     if (readOnly || !dirty) return;
@@ -85,7 +101,10 @@ export function CompanionSettingsCard({ scope, currentAffinity, resetAffinity, s
     {open && <div id="dsh-companion-settings-body" className={styles.body}>
       {readOnly && <p className={styles.readOnly} role="status">当前设置为只读，暂时不能保存更改。</p>}
       <div className={styles.grid}>
-        <label className={`${styles.field} ${styles.full}`}><span className={styles.label}>Companion Workspace ID</span><input aria-describedby="workspace-hint" className={styles.input} value={draft.workspaceId} onChange={(event) => set("workspaceId", event.currentTarget.value)} disabled={readOnly || saving} placeholder="从 Workspace 列表复制 ID" /><span id="workspace-hint" className={styles.hint}>只使用这个 Workspace；找不到时会显示恢复提示。</span></label>
+        <label className={`${styles.field} ${styles.full}`}><span className={styles.label}>Companion Workspace</span><select aria-describedby="workspace-hint" className={`select select-sm ${styles.input}`} value={selectedWorkspaceId} onChange={(event) => set("workspaceId", event.currentTarget.value)} disabled={readOnly || saving || workspaceSnapshot.state === "loading" || workspaceChoices.length === 0}>
+          <option value="" disabled>{workspaceSnapshot.state === "loading" ? "正在加载 Workspace…" : workspaceChoices.length === 0 ? "还没有可用的 Workspace" : "请选择 Workspace"}</option>
+          {workspaceChoices.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.title} — {workspace.path}</option>)}
+        </select><span id="workspace-hint" className={draft.workspaceId && !selectedWorkspaceExists ? styles.warning : styles.hint}>{draft.workspaceId && !selectedWorkspaceExists ? "之前选择的 Workspace 已不存在，请重新选择。" : "Companion 只会使用这里选择的 Workspace。"}</span></label>
         <label className={styles.field}><span className={styles.label}>Companion 名称</span><input aria-describedby="identity-hint" className={styles.input} value={draft.companionName} onChange={(event) => set("companionName", event.currentTarget.value)} disabled={readOnly || saving} /></label>
         <label className={styles.field}><span className={styles.label}>你的显示名称</span><input aria-describedby="identity-hint" className={styles.input} value={draft.userName} onChange={(event) => set("userName", event.currentTarget.value)} disabled={readOnly || saving} /></label>
         <label className={styles.field}><span className={styles.label}>偏好的称呼</span><input aria-describedby="identity-hint" className={styles.input} value={draft.preferredAddress} onChange={(event) => set("preferredAddress", event.currentTarget.value)} disabled={readOnly || saving} /></label>
