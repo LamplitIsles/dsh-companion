@@ -11,7 +11,32 @@ export interface TtsPassage {
 
 const OPEN_TAG = "[[tts:text]]";
 const CLOSE_TAG = "[[/tts:text]]";
-const FENCE_PATTERN = /```[\s\S]*?```|~~~[\s\S]*?~~~/gu;
+
+function fencedRanges(input: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  const marker = /^[ \t]{0,3}(`{3,}|~{3,})([^\r\n]*)\r?$/gm;
+  let open: { character: string; length: number; start: number } | undefined;
+  let match: RegExpExecArray | null;
+  while ((match = marker.exec(input))) {
+    const token = match[1];
+    if (!token) continue;
+    const suffix = match[2] ?? "";
+    if (!open) {
+      open = { character: token[0]!, length: token.length, start: match.index };
+      continue;
+    }
+    if (open.character === token[0] && token.length >= open.length && /^[ \t]*$/.test(suffix)) {
+      ranges.push([open.start, marker.lastIndex]);
+      open = undefined;
+    }
+  }
+  if (open) ranges.push([open.start, input.length]);
+  return ranges;
+}
+
+function overlapsFence(start: number, end: number, ranges: Array<[number, number]>): boolean {
+  return ranges.some(([from, to]) => start < to && end > from);
+}
 
 /** Normalize the installed Kepos grammar's text payload without mutating chat text. */
 export function normalizeTtsText(value: string): string {
@@ -35,22 +60,23 @@ export function digestText(value: string): string {
  */
 export function parseTtsPassage(value: unknown, finalized: boolean): TtsPassage | undefined {
   if (!finalized || typeof value !== "string" || value.length === 0) return undefined;
-  const masked = value.replace(FENCE_PATTERN, (match) => " ".repeat(match.length));
-  const opens = [...masked.matchAll(/\[\[tts:text\]\]/gu)];
-  const closes = [...masked.matchAll(/\[\[\/tts:text\]\]/gu)];
-  if (opens.length !== 1 || closes.length !== 1) return undefined;
-  const start = opens[0]!.index!;
-  const closeStart = closes[0]!.index!;
-  if (closeStart <= start + OPEN_TAG.length) return undefined;
-  if (value.slice(start, closeStart).includes("```") || value.slice(start, closeStart).includes("~~~")) return undefined;
-  const raw = value.slice(start + OPEN_TAG.length, closeStart);
-  const text = normalizeTtsText(raw);
-  if (!text || Array.from(text).length > 240) return undefined;
-  // Any other tag-like marker in the payload would be surprising to the TTS
-  // backend and is treated as malformed rather than synthesized.
-  if (/\[\[\/?tts(?::[^\]]*)?\]\]/iu.test(text)) return undefined;
-  const end = closeStart + CLOSE_TAG.length;
-  return { text, start, end, digest: digestText(text) };
+  const fences = fencedRanges(value);
+  let cursor = 0;
+  while (cursor < value.length) {
+    const start = value.indexOf(OPEN_TAG, cursor);
+    if (start < 0) break;
+    const closeStart = value.indexOf(CLOSE_TAG, start + OPEN_TAG.length);
+    if (closeStart < 0) break;
+    const end = closeStart + CLOSE_TAG.length;
+    const raw = value.slice(start + OPEN_TAG.length, closeStart);
+    const text = normalizeTtsText(raw);
+    const valid = text && !raw.includes("[[") && !raw.includes("]]") && Array.from(text).length <= 240;
+    if (!overlapsFence(start, end, fences) && valid) {
+      return { text, start, end, digest: digestText(text) };
+    }
+    cursor = end;
+  }
+  return undefined;
 }
 
 export interface ImageRefLike {

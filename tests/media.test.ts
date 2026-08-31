@@ -3,11 +3,14 @@ import { imageGenProjectionId, parseTtsPassage, recognizeImageGenResult, ttsProj
 import { TtsPreparationCache, validateTtsPayload } from "../src/client/voice-cache.js";
 
 describe("companion media", () => {
-  it("parses one finalized bounded passage and ignores fenced code", () => {
+  it("matches the installed Kepos tag grammar for finalized passages", () => {
     const parsed = parseTtsPassage("正文 [[tts:text]] 你好，世界  [[/tts:text]]", true)!;
     expect(parsed.text).toBe("你好，世界");
     expect(parseTtsPassage("```[[tts:text]]假的[[/tts:text]]```", true)).toBeUndefined();
-    expect(parseTtsPassage("[[tts:text]]a[[/tts:text]] [[tts:text]]b[[/tts:text]]", true)).toBeUndefined();
+    expect(parseTtsPassage("[[tts:text]]a[[/tts:text]] [[tts:text]]b[[/tts:text]]", true)?.text).toBe("a");
+    expect(parseTtsPassage("[[tts:text]][[错误]][[/tts:text]] [[tts:text]]b[[/tts:text]]", true)?.text).toBe("b");
+    expect(parseTtsPassage("````md\n[[tts:text]]假的[[/tts:text]]\n```", true)).toBeUndefined();
+    expect(parseTtsPassage("[[tts:text]][[tts:text]]嵌套[[/tts:text]][[/tts:text]]", true)).toBeUndefined();
     expect(parseTtsPassage("[[tts:text]]未完成", true)).toBeUndefined();
     expect(parseTtsPassage("[[tts:text]]a[[/tts:text]]", false)).toBeUndefined();
   });
@@ -39,6 +42,22 @@ describe("Kepos TTS browser contract", () => {
     expect(() => validateTtsPayload({ mediaType: "audio/mpeg", url: "https://elsewhere.invalid/audio", bytes: 1 }, "http://localhost")).toThrow("audio-invalid");
     expect(() => validateTtsPayload({ mediaType: "audio/ogg", url: "/kepos-tts/audio/a", bytes: 1 })).toThrow("audio-invalid");
     expect(() => validateTtsPayload({ mediaType: "audio/mpeg", url: "/kepos-tts/audio/a", bytes: 0 })).toThrow("audio-invalid");
+  });
+
+  it("evicts a rejected preparation so a voice retry calls Kepos again", async () => {
+    const payload = { mediaType: "audio/mpeg", url: "/kepos-tts/audio/retry", bytes: 2401 };
+    let calls = 0;
+    const cache = new TtsPreparationCache();
+    const rpc = {
+      synthesize: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("temporary failure");
+        return payload;
+      },
+    };
+    await expect(cache.prepare("s1", "请再试一次", rpc)).rejects.toThrow("temporary failure");
+    await expect(cache.prepare("s1", "请再试一次", rpc)).resolves.toMatchObject({ url: payload.url });
+    expect(calls).toBe(2);
   });
 
 });

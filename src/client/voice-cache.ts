@@ -7,7 +7,6 @@ export interface TtsRpc {
 export interface PreparedAudio {
   key: string;
   url: string;
-  duration?: number;
 }
 
 export interface TtsPayload {
@@ -42,7 +41,6 @@ export function validateTtsPayload(raw: unknown, origin?: string): { url: string
 interface Entry {
   promise: Promise<PreparedAudio>;
   value?: PreparedAudio;
-  settled: boolean;
 }
 
 /** Page-local preparation cache. Disposal intentionally does not cancel host synthesis. */
@@ -54,16 +52,15 @@ export class TtsPreparationCache {
     const key = `${sessionId}:${digestText(normalized)}`;
     const existing = this.entries.get(key);
     if (existing) return existing.promise;
-    const entry: Entry = { settled: false, promise: Promise.resolve(undefined as never) };
+    const entry: Entry = { promise: Promise.resolve(undefined as never) };
     entry.promise = rpc.synthesize(normalized, sessionId, signal).then((raw) => {
       const payload = validateTtsPayload(raw);
       const url = payload.url;
       const value = { key, url };
       entry.value = value;
-      entry.settled = true;
       return value;
     }).catch((error) => {
-      entry.settled = true;
+      if (this.entries.get(key) === entry) this.entries.delete(key);
       throw error;
     });
     this.entries.set(key, entry);

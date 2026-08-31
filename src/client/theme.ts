@@ -43,25 +43,27 @@ export const companionStyles = `
 #dsh-companion .companion-full-dsh:hover{opacity:1}
 #dsh-companion .companion-timeline{min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:28px clamp(16px,4vw,48px) 16px}
 #dsh-companion .companion-timeline:not(.timeline-ready){visibility:hidden}
-#dsh-companion .companion-row{display:grid;grid-template-columns:34px minmax(0,auto);align-items:end;justify-content:start;gap:9px;width:100%;margin:9px 0}
+#dsh-companion .companion-row{display:grid;grid-template-columns:34px minmax(0,auto);align-items:start;justify-content:start;gap:9px;width:100%;margin:9px 0}
 #dsh-companion .companion-row.outgoing{grid-template-columns:minmax(0,auto) 34px;justify-content:end}
 #dsh-companion .companion-row.outgoing .message-avatar{grid-column:2}
 #dsh-companion .companion-row.outgoing .companion-message-stack{grid-column:1;grid-row:1}
-#dsh-companion .message-avatar{width:34px;height:34px;font-size:.72rem}
+#dsh-companion .message-avatar{align-self:start;width:34px;height:34px;font-size:.72rem}
 #dsh-companion .companion-avatar-crop{display:grid;width:100%;height:100%;place-items:center;overflow:hidden}
 #dsh-companion .companion-avatar-crop img{display:block;width:100%;height:100%;object-fit:cover}
 #dsh-companion .companion-message-stack{max-width:min(76vw,680px)}
-#dsh-companion .companion-bubble{max-width:min(76vw,680px);padding:11px 15px;border-radius:23px 23px 23px 8px;background:var(--color-base-200);box-shadow:0 5px 18px color-mix(in srgb,var(--color-base-content) 7%,transparent);line-height:1.55;overflow-wrap:anywhere}
-#dsh-companion .outgoing .companion-bubble{border-radius:23px 23px 8px 23px;background:color-mix(in srgb,var(--color-primary) 22%,var(--color-base-100))}
+#dsh-companion .companion-bubble{max-width:min(76vw,680px);padding:11px 15px;border-radius:0 23px 23px 23px;background:var(--color-base-200);box-shadow:0 5px 18px color-mix(in srgb,var(--color-base-content) 7%,transparent);line-height:1.55;overflow-wrap:anywhere}
+#dsh-companion .outgoing .companion-bubble{border-radius:23px 0 23px 23px;background:color-mix(in srgb,var(--color-primary) 22%,var(--color-base-100))}
+#dsh-companion .incoming .companion-bubble::before{top:0;bottom:auto;transform:scaleY(-1)}
+#dsh-companion .outgoing .companion-bubble::before{top:0;bottom:auto;transform:rotateY(180deg) scaleY(-1)}
 #dsh-companion .companion-meta{margin-top:4px;opacity:.55;font-size:.68rem}
 #dsh-companion .companion-typing-bubble{display:flex;align-items:center;gap:9px;max-width:min(76vw,340px)}
 #dsh-companion .companion-waiting-copy{color:color-mix(in srgb,var(--color-base-content) 68%,transparent);font-size:.76rem;line-height:1.4;animation:companion-waiting-in .24s ease-out}
 #dsh-companion .companion-media{width:min(70vw,480px);overflow:hidden;border-radius:24px;background:var(--color-base-200);box-shadow:0 8px 24px color-mix(in srgb,var(--color-base-content) 10%,transparent)}
 #dsh-companion .companion-media-button{display:block;width:100%;padding:0;border:0;background:transparent;cursor:zoom-in}
 #dsh-companion .companion-media img{display:block;width:100%;max-height:520px;object-fit:cover}
-#dsh-companion .companion-voice{display:grid;grid-template-columns:40px minmax(0,1fr);align-items:center;gap:6px 10px;min-width:min(300px,70vw)}
+#dsh-companion .companion-voice{display:grid;grid-template-columns:44px minmax(0,1fr);align-items:center;gap:6px 10px;min-width:min(300px,70vw)}
 #dsh-companion .companion-audio{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
-#dsh-companion .companion-voice-control{width:40px;height:40px;min-width:40px;min-height:40px;color:var(--color-primary)}
+#dsh-companion .companion-voice-control{width:44px;height:44px;min-width:44px;min-height:44px;color:var(--color-primary)}
 #dsh-companion .companion-voice-player{min-width:0}
 #dsh-companion .companion-voice-waveform{position:relative;display:flex;height:32px;align-items:center;gap:2px;min-width:150px;cursor:pointer}
 #dsh-companion .companion-voice-waveform>span{width:3px;height:var(--voice-bar);flex:1;border-radius:999px;background:color-mix(in srgb,var(--color-base-content) 20%,transparent);transition:background-color .12s ease}
