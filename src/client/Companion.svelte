@@ -2,6 +2,8 @@
   import { createEventDispatcher, onDestroy, tick } from "svelte";
   import type { CompanionProjection, TimelineImage, TimelineVoice } from "../projection.js";
   import { createComposerState, reduceComposer, shouldSubmitEnter } from "./composer.js";
+  import Markdown from "./Markdown.svelte";
+  import relationshipBackground from "./assets/relationship-night-voyage.webp";
 
   export interface CompanionIdentityView {
     companionName: string;
@@ -19,21 +21,31 @@
   }
   export interface CompanionActions {
     send: (text: string) => Promise<void>;
+    selectSession?: (sessionId: string) => Promise<void>;
     loadOlder?: () => Promise<void>;
     attachmentUrl?: (attachment: unknown) => Promise<string>;
     prepareVoice?: (text: string) => Promise<string>;
+  }
+  export interface CompanionSessionView {
+    id: string;
+    title: string;
+    updatedAt: number;
+    running: boolean;
+    selected: boolean;
   }
 
   export let projection: CompanionProjection = { items: [], pendingCount: 0, running: false, status: "ready", openState: "open", hasMore: false, loadingOlder: false };
   export let identity: CompanionIdentityView = { companionName: "Companion", userName: "你", preferredAddress: "你", signature: "", moodLabel: "如常", mood: "neutral", intensity: 1, affinity: 50, affinityStage: "熟悉" };
   export let scheme: "light" | "dark" = "light";
   export let actions: CompanionActions = { send: async () => undefined };
+  export let sessions: CompanionSessionView[] = [];
   export let workspaceReady = true;
   export let sessionReady = true;
 
   const dispatch = createEventDispatcher<{ advanced: void; recovery: void }>();
   let composer = createComposerState();
   let timeline: HTMLDivElement;
+  let sidebarOpen = typeof window !== "undefined" && window.matchMedia("(min-width: 821px)").matches;
   let detailOpen = false;
   let lightbox: TimelineImage | undefined;
   let lightboxUrl = "";
@@ -190,6 +202,18 @@
   function onInput(event: Event): void { setDraft((event.currentTarget as HTMLTextAreaElement).value); }
   function onCompositionEnd(event: CompositionEvent): void { composer = reduceComposer(composer, { type: "compositionend", value: (event.currentTarget as HTMLTextAreaElement).value }); }
   function onCompositionStart(): void { composer = reduceComposer(composer, { type: "compositionstart" }); }
+  function formatSessionDate(value: number): string {
+    if (!Number.isFinite(value)) return "";
+    const date = new Date(value);
+    const today = new Date();
+    if (date.toDateString() === today.toDateString()) return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+    return date.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
+  }
+  async function selectSession(sessionId: string): Promise<void> {
+    if (!actions.selectSession) return;
+    await actions.selectSession(sessionId);
+    if (window.matchMedia("(max-width: 820px)").matches) sidebarOpen = false;
+  }
   function focusFirst(dialog: () => HTMLElement | undefined): void {
     void tick().then(() => {
       const target = dialog();
@@ -234,12 +258,30 @@
 <svelte:window on:keydown={onWindowKeydown} on:popstate={onPopState} />
 
 <div id="dsh-companion" class="companion-shell" data-theme={scheme === "dark" ? "night-voyage" : "sticker-messenger"} data-testid="companion-root">
-  <div class="companion-app">
+  <div class="cmp-drawer companion-app" class:cmp-drawer-open={sidebarOpen} class:sidebar-open={sidebarOpen}>
+    <input id="companion-session-drawer" class="cmp-drawer-toggle" type="checkbox" bind:checked={sidebarOpen} aria-label="显示对话列表" />
+    <div class="cmp-drawer-content companion-content">
     <main class="companion-main" aria-label="Companion 私聊">
       <header class="companion-header">
-        <button class="cmp-avatar cmp-avatar-placeholder" aria-label="查看 Companion 关系资料" on:click={showDetail} style="width:48px;height:48px">
-          {#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}
-        </button>
+        <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-session-toggle" aria-label={sidebarOpen ? "收起对话列表" : "展开对话列表"} aria-controls="companion-session-list" aria-expanded={sidebarOpen} on:click={() => sidebarOpen = !sidebarOpen}><span aria-hidden="true">☰</span></button>
+        <div class="companion-avatar-anchor">
+          <button class="cmp-avatar cmp-avatar-placeholder companion-avatar" aria-label="查看 Companion 关系资料" aria-expanded={detailOpen} on:click={showDetail}>
+            {#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}
+          </button>
+          {#if detailOpen}
+            <button class="companion-detail-dismiss" aria-label="点击空白处关闭关系资料" tabindex="-1" on:click={() => closeDetail()}></button>
+            <dialog bind:this={detailDialog} open class="companion-detail-card cmp-modal-box" aria-label={`${identity.companionName}的关系资料`} style={`--relationship-art: url("${relationshipBackground}")`}>
+              <div class="companion-detail-art" aria-hidden="true"></div>
+              <div class="companion-detail-head">
+                <div class="cmp-avatar cmp-avatar-placeholder companion-detail-avatar">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt={identity.companionName} />{:else}<span aria-hidden="true">✦</span>{/if}</div>
+                <div><h2>{identity.companionName}</h2><span class="companion-mood-chip">{identity.moodLabel}</span></div>
+                <button class="cmp-btn cmp-btn-ghost cmp-btn-circle cmp-btn-sm companion-detail-close" aria-label="关闭关系资料" on:click={() => closeDetail()}>×</button>
+              </div>
+              <p class="companion-signature">{identity.signature || "还没有签名"}</p>
+              <dl class="companion-relationship-list"><dt>此刻心情</dt><dd>{identity.moodLabel} · {intensityLabels[identity.intensity]}</dd>{#if identity.moodNote}<dt>心情短句</dt><dd>{identity.moodNote}</dd>{/if}<dt>亲近度</dt><dd>{identity.affinity === undefined ? "加载中…" : `${identity.affinity} · ${identity.affinityStage}`}</dd></dl>
+            </dialog>
+          {/if}
+        </div>
         <div class="companion-header-copy">
           <div class="companion-name">{identity.companionName}</div>
           <div class="companion-presence" aria-live="polite"><span class="cmp-status {projection.status === 'working' ? 'cmp-status-warning' : projection.status === 'reconnecting' ? 'cmp-status-error' : 'cmp-status-success'}"></span>{statusText} · {identity.moodLabel}</div>
@@ -271,19 +313,19 @@
           {/if}
           {#each projection.items as item (item.projectionKey ?? item.id)}
             {#if item.kind === "text"}
-              <article class="companion-row {item.side === 'outgoing' ? 'outgoing' : 'incoming'}" data-testid={`message-${item.id}`}>
-                <div class="cmp-avatar cmp-avatar-placeholder" style="width:32px;height:32px">
+              <article class="cmp-chat companion-row" class:cmp-chat-start={item.side === "incoming"} class:cmp-chat-end={item.side === "outgoing"} class:outgoing={item.side === "outgoing"} class:incoming={item.side === "incoming"} data-testid={`message-${item.id}`}>
+                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder message-avatar">
                   {#if item.side === "incoming" && identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else if item.side === "outgoing" && identity.userAvatar}<img src={identity.userAvatar} alt="" />{:else}<span aria-hidden="true">{item.side === "incoming" ? "✦" : "你"}</span>{/if}
                 </div>
-                <div>
-                  <div class="companion-bubble" class:cmp-skeleton={item.pending && !item.text}>{item.text}</div>
+                <div class="companion-message-stack">
+                  <div class="cmp-chat-bubble companion-bubble" class:cmp-skeleton={item.pending && !item.text}><Markdown text={item.text} /></div>
                   {#if item.pending}<div class="companion-meta">排队中 · 会在当前回复后发送</div>{/if}
                 </div>
               </article>
             {:else if item.kind === "image"}
-              <article class="companion-row incoming" data-testid={`image-${item.id}`}>
-                <div class="cmp-avatar cmp-avatar-placeholder" style="width:32px;height:32px">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div>
-                <div class="companion-media">
+              <article class="cmp-chat cmp-chat-start companion-row incoming" data-testid={`image-${item.id}`}>
+                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder message-avatar">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div>
+                <div class="cmp-chat-bubble companion-media">
                   {#if item.state === "running" || item.state === "loading"}<div class="cmp-skeleton" style="height:260px"></div><div style="padding:12px">正在画一张图…</div>
                   {:else if imageUrls[item.id]}<button class="companion-media-button" aria-label={"查看大图：" + item.alt} on:click={() => showLightbox(item)}><img src={imageUrls[item.id]} alt={item.alt} /></button>
                   {:else if imageErrors[item.id] || item.state === "failed"}<div role="alert" style="padding:22px">{item.error || imageErrors[item.id] || "图片暂时无法显示。"}</div>
@@ -291,9 +333,9 @@
                 </div>
               </article>
             {:else if item.kind === "voice"}
-              <article class="companion-row incoming" data-testid={`voice-${item.id}`}>
-                <div class="cmp-avatar cmp-avatar-placeholder" style="width:32px;height:32px">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div>
-                <div class="companion-bubble companion-voice" class:is-playing={voiceState(item.id).playing}>
+              <article class="cmp-chat cmp-chat-start companion-row incoming" data-testid={`voice-${item.id}`}>
+                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder message-avatar">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div>
+                <div class="cmp-chat-bubble companion-bubble companion-voice" class:is-playing={voiceState(item.id).playing}>
                   {#if voiceUrls[item.id]}
                     <audio class="companion-audio" preload="none" src={voiceUrls[item.id]} aria-hidden="true" tabindex="-1" on:loadedmetadata={(event) => onVoiceLoaded(item.id, event)} on:timeupdate={(event) => onVoiceTime(item.id, event)} on:play={() => onVoicePlay(item.id)} on:pause={() => onVoicePause(item.id)} on:ended={() => onVoiceEnded(item.id)} on:error={() => voiceErrors = { ...voiceErrors, [item.id]: "语音暂时无法播放，文字稿仍可查看。" }}></audio>
                     <button class="cmp-btn cmp-btn-primary cmp-btn-sm companion-voice-control" aria-label={voiceState(item.id).playing ? "暂停语音" : "播放语音"} on:click={(event) => void toggleVoice(item, event.currentTarget)}>{voiceState(item.id).playing ? "暂停" : "播放"}</button>
@@ -314,44 +356,46 @@
         </div>
         <div class="companion-composer">
           <div class="companion-compose-row">
-            <textarea class="cmp-textarea cmp-textarea-bordered" aria-label="写消息" placeholder={"写给 " + identity.preferredAddress + "…"} rows="1" value={composer.draft} on:input={onInput} on:compositionstart={onCompositionStart} on:compositionend={onCompositionEnd} on:keydown={onKeydown}></textarea>
-            <button class="cmp-btn cmp-btn-primary" aria-label="发送消息" on:click={submit} disabled={!composer.draft.trim()}>发送</button>
+            <textarea class="cmp-textarea companion-textarea" aria-label="写消息" placeholder={"写给 " + identity.companionName + "…"} rows="1" value={composer.draft} on:input={onInput} on:compositionstart={onCompositionStart} on:compositionend={onCompositionEnd} on:keydown={onKeydown}></textarea>
+            <button class="cmp-btn cmp-btn-primary cmp-btn-circle companion-send" aria-label="发送消息" on:click={submit} disabled={!composer.draft.trim()}><span aria-hidden="true">↑</span></button>
           </div>
-          <div style="max-width:820px;margin:5px auto 0;font-size:.7rem;opacity:.55">Enter 发送 · Shift+Enter 换行 · {projection.pendingCount ? `${projection.pendingCount} 条消息排队中` : ""}</div>
+          <div class="companion-compose-hint">Enter 发送 · Shift+Enter 换行{projection.pendingCount ? ` · ${projection.pendingCount} 条消息排队中` : ""}</div>
         </div>
       {/if}
     </main>
+    </div>
+    <div class="cmp-drawer-side companion-sidebar-layer">
+      <label for="companion-session-drawer" class="cmp-drawer-overlay companion-sidebar-overlay" aria-label="关闭对话列表"></label>
+      <aside id="companion-session-list" class="companion-sidebar" aria-label="对话列表">
+        <div class="companion-sidebar-head"><div><span class="companion-sidebar-eyebrow">{identity.companionName}</span><h2>我们的对话</h2></div><button class="cmp-btn cmp-btn-ghost cmp-btn-circle cmp-btn-sm" aria-label="关闭侧栏" on:click={() => sidebarOpen = false}>‹</button></div>
+        <nav class="companion-session-list">
+          {#each sessions as session (session.id)}
+            <button class="companion-session-item" class:selected={session.selected} aria-label={`切换到对话：${session.title}`} aria-current={session.selected ? "true" : undefined} on:click={() => void selectSession(session.id)}>
+              <span class="companion-session-copy"><strong>{session.title}</strong><small>{formatSessionDate(session.updatedAt)}</small></span>
+              {#if session.running}<span class="companion-session-running" aria-label="正在回复"></span>{/if}
+            </button>
+          {/each}
+          {#if sessions.length === 0}<p class="companion-session-empty">还没有可以继续的对话</p>{/if}
+        </nav>
+        <a class="companion-sidebar-advanced" href="/" on:click={() => dispatch("advanced")}>打开高级 DSH</a>
+      </aside>
+    </div>
   </div>
+  {#if lightbox}
+    <div class="companion-lightbox" role="presentation" on:click={(event) => event.currentTarget === event.target && closeLightbox()}>
+      <dialog bind:this={lightboxDialog} open class="companion-lightbox-dialog cmp-modal-box" aria-labelledby="lightbox-title">
+        <h2 id="lightbox-title" class="sr-only">图片预览：{lightbox.alt}</h2>
+        <button class="cmp-btn cmp-btn-neutral companion-lightbox-close" aria-label="关闭大图" on:click={() => closeLightbox()}>×</button>
+        {#if lightboxUrl}<img src={lightboxUrl} alt={lightbox.alt} />{:else}<div class="cmp-loading cmp-loading-spinner"></div>{/if}
+      </dialog>
+    </div>
+  {/if}
 </div>
-
-{#if detailOpen}
-  <div class="companion-detail" role="presentation" on:click={(event) => event.currentTarget === event.target && closeDetail()}>
-    <dialog bind:this={detailDialog} open class="companion-detail-card cmp-modal-box" aria-labelledby="relationship-title">
-      <button class="cmp-btn cmp-btn-ghost cmp-btn-sm" style="float:right" aria-label="关闭关系资料" on:click={closeDetail}>×</button>
-      <div class="cmp-avatar cmp-avatar-placeholder" style="width:78px;height:78px;margin:4px auto 16px">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt={identity.companionName} />{:else}<span aria-hidden="true">✦</span>{/if}</div>
-      <h2 id="relationship-title" style="text-align:center;margin:0">{identity.companionName}</h2>
-      <p style="text-align:center;opacity:.7;overflow-wrap:anywhere">{identity.signature || "还没有签名"}</p>
-      <dl style="display:grid;grid-template-columns:1fr auto;gap:10px;margin-top:22px"><dt>心情</dt><dd>{identity.moodLabel} · {intensityLabels[identity.intensity]}</dd>{#if identity.moodNote}<dt>心情短句</dt><dd style="max-width:220px;text-align:right;overflow-wrap:anywhere">{identity.moodNote}</dd>{/if}<dt>亲近度</dt><dd>{identity.affinity === undefined ? "加载中…" : `${identity.affinity} · ${identity.affinityStage}`}</dd></dl>
-      <button class="cmp-btn cmp-btn-primary" style="width:100%;margin-top:22px" on:click={closeDetail}>知道了</button>
-    </dialog>
-  </div>
-{/if}
-{#if lightbox}
-  <div class="companion-lightbox" role="presentation" on:click={(event) => event.currentTarget === event.target && closeLightbox()}>
-    <dialog bind:this={lightboxDialog} open class="companion-lightbox-dialog cmp-modal-box" aria-labelledby="lightbox-title">
-      <h2 id="lightbox-title" class="sr-only">图片预览：{lightbox.alt}</h2>
-      <button class="cmp-btn cmp-btn-neutral" style="position:fixed;top:18px;right:18px" aria-label="关闭大图" on:click={closeLightbox}>×</button>
-      {#if lightboxUrl}<img src={lightboxUrl} alt={lightbox.alt} />{:else}<div class="cmp-loading cmp-loading-spinner"></div>{/if}
-    </dialog>
-  </div>
-{/if}
 <div class="sr-only" aria-live="assertive">{liveAnnouncement}</div>
 
 <style>
   .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
   .cmp-avatar-placeholder { display:grid; place-items:center; overflow:hidden; border-radius:50%; background:color-mix(in srgb, var(--color-primary) 20%, var(--color-base-200)); color:var(--color-primary); font-weight:700; }
   .cmp-avatar-placeholder img { width:100%; height:100%; object-fit:cover; }
-  .companion-detail dd { margin:0; text-align:right; }
-  .companion-media-button { display:block; width:100%; padding:0; border:0; background:transparent; cursor:zoom-in; }
   @media (max-width: 520px) { .companion-timeline { padding-bottom:8px; } .companion-composer { padding-inline:9px; } .companion-voice { min-width:0; flex-wrap:wrap; } .companion-voice audio { max-width:180px; } }
 </style>

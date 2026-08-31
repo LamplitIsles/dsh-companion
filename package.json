@@ -116,5 +116,9 @@
     "test:compaction-loader": "bun run build && node scripts/compaction-loader-smoke.mjs",
     "test:shipped-path": "bun run build && node scripts/shipped-path-smoke.mjs",
     "fixture": "vite --config fixture/vite.config.ts"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.14",
+    "marked": "^18.0.11"
   }
 }

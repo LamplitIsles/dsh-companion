@@ -7,11 +7,41 @@ export function affinityStage(value: number): "疏离" | "生疏" | "熟悉" | "
 
 export interface CompanionSessionCandidate {
   id: string;
+  displayTitle?: string;
   updatedAt?: number;
+  running?: boolean;
   archived?: boolean;
   origin?: string;
   parentId?: string;
   blank?: boolean;
+}
+
+export interface CompanionSessionListItem {
+  id: string;
+  title: string;
+  updatedAt: number;
+  running: boolean;
+  selected: boolean;
+}
+
+/** Project only root sessions owned by the configured Workspace into sidebar rows. */
+export function companionSessionList(
+  sessions: readonly CompanionSessionCandidate[],
+  selectedId: string | undefined,
+  ownership: { sessionIds: readonly string[]; archivedSessionIds: readonly string[] },
+): CompanionSessionListItem[] {
+  const memberIds = new Set(ownership.sessionIds);
+  const archivedIds = new Set(ownership.archivedSessionIds);
+  return sessions
+    .filter((session) => memberIds.has(session.id) && !archivedIds.has(session.id) && !session.archived && !session.parentId && session.origin !== "subagent")
+    .sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0) || left.id.localeCompare(right.id))
+    .map((session) => ({
+      id: session.id,
+      title: session.displayTitle?.trim() || (session.blank ? "新对话" : "未命名对话"),
+      updatedAt: session.updatedAt ?? 0,
+      running: Boolean(session.running),
+      selected: session.id === selectedId,
+    }));
 }
 
 /** Workspace.sessionIds is authoritative; list.current and cwd never decide Companion ownership. */

@@ -32,6 +32,14 @@ export async function* apply(ctx) {
   const workspace = await ctx.workspaceRegistry.create(workspacePath, "Companion assembled smoke");
   await configureCompanion(ctx.settings, workspace.id);
 
+  const earlierSession = ctx.sessions.create("companion-assembled-browser-earlier", { meta: { cwd: workspace.path } });
+  earlierSession.append("user/message", createUserMessage({
+    content: [{ type: "text", text: "Earlier packed conversation" }],
+    source: { kind: "user" },
+  }), { surfaceOp: "append" });
+  await ctx.sessions.flush(earlierSession);
+  await workspace.attachSession(earlierSession.id);
+
   const session = ctx.sessions.create("companion-assembled-browser-smoke", { meta: { cwd: workspace.path } });
   session.append("user/message", createUserMessage({
     content: [{ type: "text", text: "Packed runtime outgoing message" }],
@@ -41,7 +49,7 @@ export async function* apply(ctx) {
     turn: 1,
     step: 1,
     message: createAssistantMessage({
-      content: [{ type: "text", text: "Packed runtime incoming message. [[tts:text]]Packed runtime voice message.[[/tts:text]]" }],
+      content: [{ type: "text", text: "Packed runtime **incoming** message.\n\n- Markdown item\n\n[[tts:text]]Packed runtime voice message.[[/tts:text]]" }],
       source: { provider: "assembled-smoke", model: "assembled-smoke" },
     }),
   }, { surfaceOp: "append" });

@@ -11,9 +11,9 @@ test("fixture has complete media states, accessible overlays, and no duplicate i
   await avatar.focus();
   await avatar.click();
   await expect(page.getByRole("dialog")).toContainText("把平凡日子折成星星");
-  await expect(page.getByRole("button", { name: "关闭关系资料" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "关闭关系资料", exact: true })).toBeFocused();
   await page.keyboard.press("Shift+Tab");
-  await expect(page.getByRole("button", { name: "知道了" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "关闭关系资料", exact: true })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(avatar).toBeFocused();
   await page.getByRole("button", { name: /查看大图/ }).click();
@@ -39,7 +39,7 @@ test("Pixel 7a geometry keeps composer and relationship overlay usable", async (
   await page.keyboard.type("第二行");
   await expect(textarea).toHaveValue("中文输入测试\n第二行");
   await page.getByRole("button", { name: "查看 Companion 关系资料" }).click();
-  await expect(page.getByRole("button", { name: "关闭关系资料" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "关闭关系资料", exact: true })).toBeFocused();
   await page.goBack();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
@@ -57,6 +57,59 @@ test("draft edits stay local to the composer", async ({ page }) => {
     return performance.now() - start;
   });
   expect(timing).toBeLessThan(50);
+});
+
+test("chat shell has rendered Markdown, viewport scrolling, sessions, rounded focus, and an anchored relationship card", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "desktop geometry is the tight structural baseline");
+  await page.goto("/?theme=dark");
+  await page.evaluate(() => document.fonts.ready);
+
+  const markdown = page.getByTestId("message-history-1");
+  await expect(markdown.locator("strong")).toHaveText("窗外的风");
+  await expect(markdown.locator("li")).toHaveCount(2);
+
+  await expect(page.getByRole("button", { name: "收起对话列表" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "切换到对话：今晚的小星光" })).toHaveAttribute("aria-current", "true");
+  await expect(page.getByRole("button", { name: "切换到对话：周末想去哪里" })).toBeVisible();
+
+  const geometry = await page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>("#dsh-companion")!;
+    const timeline = document.querySelector<HTMLElement>(".companion-timeline")!;
+    return {
+      rootHeight: root.getBoundingClientRect().height,
+      viewportHeight: window.innerHeight,
+      documentHeight: document.documentElement.scrollHeight,
+      timelineClient: timeline.clientHeight,
+      timelineScroll: timeline.scrollHeight,
+      overflowY: getComputedStyle(timeline).overflowY,
+    };
+  });
+  expect(Math.abs(geometry.rootHeight - geometry.viewportHeight)).toBeLessThanOrEqual(1);
+  expect(geometry.documentHeight).toBeLessThanOrEqual(geometry.viewportHeight + 1);
+  expect(geometry.overflowY).toBe("auto");
+  expect(geometry.timelineScroll).toBeGreaterThan(geometry.timelineClient);
+  await page.locator(".companion-timeline").evaluate((node) => { node.scrollTop = 120; });
+  await expect.poll(() => page.locator(".companion-timeline").evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+
+  const textarea = page.getByRole("textbox", { name: "写消息" });
+  await textarea.focus();
+  const focusStyle = await textarea.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { outlineColor: style.outlineColor, radius: Number.parseFloat(style.borderRadius) };
+  });
+  expect(focusStyle.outlineColor).not.toBe("rgb(255, 255, 255)");
+  expect(focusStyle.radius).toBeGreaterThanOrEqual(20);
+
+  const avatar = page.getByRole("button", { name: "查看 Companion 关系资料" });
+  const avatarBox = await avatar.boundingBox();
+  await avatar.click();
+  const detail = page.getByRole("dialog", { name: "小灯的关系资料" });
+  await expect(detail).toBeVisible();
+  const detailBox = await detail.boundingBox();
+  expect(avatarBox).not.toBeNull();
+  expect(detailBox).not.toBeNull();
+  expect(detailBox!.y).toBeLessThan(avatarBox!.y + 180);
+  expect(detailBox!.x).toBeLessThan(avatarBox!.x + 120);
 });
 
 test("captures readable Sticker Messenger and Night Voyage references", async ({ page }, testInfo) => {

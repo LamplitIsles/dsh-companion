@@ -17,7 +17,7 @@ const mood = moodViews[query.get("mood") as keyof typeof moodViews] ?? moodViews
 const projection: CompanionProjection = {
   items: [
     { id: "date:yesterday", kind: "notice", side: "incoming", tone: "info", text: "昨天 · 8月30日", time: now - 26 * 60 * 60 * 1000 },
-    { id: "history-1", kind: "text", side: "incoming", text: "今天也见到你真好。窗外的风有一点点甜。", time: now - 25 * 60 * 60 * 1000 },
+    { id: "history-1", kind: "text", side: "incoming", text: "今天也见到你真好。**窗外的风**有一点点甜。\n\n- 收好今天的小星光\n- 慢慢讲给你听", time: now - 25 * 60 * 60 * 1000 },
     { id: "history-2", kind: "text", side: "outgoing", text: "我刚刚忙完，想听你说说今天。", time: now - 24 * 60 * 60 * 1000 },
     { id: "history-3", kind: "text", side: "incoming", text: "那我把今天收集到的小小星光，慢慢讲给你听。", streaming: false, time: now - 23 * 60 * 60 * 1000 },
     { id: "date:today", kind: "notice", side: "incoming", tone: "info", text: "今天 · 8月31日", time: now - 180000 },
@@ -39,8 +39,13 @@ URL.revokeObjectURL = (url: string) => { revokedImageUrls += 1; revokeObjectUrl(
 const component = new Companion({ target: root, props: {
   projection,
   scheme: query.get("theme") === "dark" ? "dark" : "light",
+  sessions: [
+    { id: "quiet-evening", title: "今晚的小星光", updatedAt: now, running: true, selected: true },
+    { id: "weekend-plan", title: "周末想去哪里", updatedAt: now - 86_400_000, running: false, selected: false },
+    { id: "first-hello", title: "第一次说晚安", updatedAt: now - 172_800_000, running: false, selected: false },
+  ],
   identity: { companionName: "小灯", companionAvatar: svg, userName: "小岛", userAvatar: svg, preferredAddress: "小岛", signature: query.get("signature") === "empty" ? "" : "把平凡日子折成星星，等风来时再写一行很长很长的晚安", ...mood, affinity: 67, affinityStage: "亲近" },
-  actions: { send: async () => undefined, loadOlder: async () => undefined, attachmentUrl: async () => URL.createObjectURL(new Blob([svgDocument], { type: "image/svg+xml" })), prepareVoice: async (text: string) => { if (text.includes("失败")) throw new Error("fixture voice failure"); return "/kepos-tts/audio/fixture.mp3"; } },
+  actions: { send: async () => undefined, selectSession: async () => undefined, loadOlder: async () => undefined, attachmentUrl: async () => URL.createObjectURL(new Blob([svgDocument], { type: "image/svg+xml" })), prepareVoice: async (text: string) => { if (text.includes("失败")) throw new Error("fixture voice failure"); return "/kepos-tts/audio/fixture.mp3"; } },
 }});
 
 declare global { interface Window { __companionFixture?: { replaceImage(): void; removeImage(): void; revoked(): number }; } }

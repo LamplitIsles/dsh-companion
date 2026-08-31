@@ -144,7 +144,7 @@ try {
   const clientCode = await (await fetch(new URL(clientEntry.url, runtime.baseUrl))).text();
   let loaded;
   vm.runInNewContext(clientCode, { window: { __ModuleLoader__: { load(spec) { loaded = spec; } } } });
-  if (loaded?.id !== manifest.name || typeof loaded.factory !== "function" || !clientCode.includes("@scope (#dsh-companion)") || !clientCode.includes(".cmp-btn") || clientCode.includes("@import") || clientCode.includes("theme-controller") || /(^|[,{])\s*(html|:root)\b/u.test(clientCode)) {
+  if (loaded?.id !== manifest.name || typeof loaded.factory !== "function" || !clientCode.includes("@scope (#dsh-companion)") || !clientCode.includes(".cmp-btn") || clientCode.includes("@import") || clientCode.includes("theme-controller") || /(^|[},])\s*(html|:root)\s*\{/u.test(clientCode)) {
     throw new Error("packed client lacks a scoped, generated daisyUI bundle");
   }
 
@@ -175,7 +175,9 @@ try {
   await companion.waitFor({ state: "attached", timeout: 20_000 });
   if (await companion.count() !== 1) throw new Error("Companion alias did not mount exactly one root");
   await page.getByText("Packed runtime outgoing message", { exact: true }).waitFor({ state: "visible", timeout: 20_000 });
-  await page.getByText("Packed runtime incoming message.", { exact: true }).waitFor({ state: "visible", timeout: 20_000 });
+  await page.getByText("incoming", { exact: true }).waitFor({ state: "visible", timeout: 20_000 });
+  if (await page.locator(".companion-session-item").count() !== 2) throw new Error("Companion did not project both Workspace sessions into its sidebar");
+  if (await page.locator(".companion-bubble strong").textContent() !== "incoming" || await page.locator(".companion-bubble li").textContent() !== "Markdown item") throw new Error("packed Companion did not render Markdown");
   const voice = page.locator('[data-testid^="voice-"]');
   await voice.locator("audio").waitFor({ state: "attached", timeout: 20_000 });
   const audio = voice.locator("audio");
@@ -183,6 +185,8 @@ try {
   const audioResponse = page.waitForResponse((response) => response.url().endsWith("/companion-assembled-smoke/voice.mp3") && response.ok());
   await voice.locator(".companion-voice-control").click();
   await audioResponse;
+  await page.locator(".companion-session-item").last().click();
+  await page.locator(".companion-bubble").getByText("Earlier packed conversation", { exact: true }).waitFor({ state: "visible", timeout: 20_000 });
   if (browserFailures.length) throw new Error(`assembled browser failures:\n${browserFailures.join("\n")}`);
   await page.close();
   console.log(`shipped-path: packed profile, composed config, Loader, alias, assembled transcript, relationship RPC, TTS RPC, and browser verified on ${runtime.baseUrl}`);

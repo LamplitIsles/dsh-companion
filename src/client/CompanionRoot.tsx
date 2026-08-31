@@ -3,7 +3,7 @@ import type { ClientContext, ISession, ConversationSnapshot, SessionListState, W
 import type { SettingsScope } from "@deepseek-ai/dsh-client-runtime/client";
 import type { ClientConnectionRpc, ConnectionHandle } from "@deepseek-ai/dsh-client-connection/client";
 import Companion from "./Companion.svelte";
-import { affinityStage, MOOD_LABELS, selectCompanionSession } from "./relationship.js";
+import { affinityStage, companionSessionList, MOOD_LABELS, selectCompanionSession } from "./relationship.js";
 import { projectConversation } from "../projection.js";
 import { TtsPreparationCache } from "./voice-cache.js";
 import { submitCompanionInput } from "./admission.js";
@@ -79,11 +79,24 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
   const configured = settingsSnapshot.value;
   const workspace = workspaceFor(configured, workspaceList);
   const remembered = workspace ? mostRecentSession(list, workspace, workspaceList.archivedSessionIds) : undefined;
+  const workspaceRows = useMemo(() => {
+    if (!workspace) return [];
+    const rows = list.byId as Record<string, (typeof list.byId)[keyof typeof list.byId] | undefined>;
+    return workspace.sessionIds.map((id) => rows[id]).filter((row): row is NonNullable<typeof row> => Boolean(row));
+  }, [list.byId, workspace]);
+  const availableSessions = useMemo(() => workspace ? companionSessionList(workspaceRows, undefined, {
+    sessionIds: workspace.sessionIds,
+    archivedSessionIds: workspaceList.archivedSessionIds,
+  }) : [], [workspace, workspaceList.archivedSessionIds, workspaceRows]);
+  const [selected, setSelected] = useState<{ workspaceId: string; sessionId: string }>();
+  const selectedSessionId = workspace && selected?.workspaceId === workspace.id && availableSessions.some((item) => item.id === selected.sessionId)
+    ? selected.sessionId
+    : remembered;
   const [relationship, setRelationship] = useState<RelationshipView>({ workspacePresent: false, revision: 0 });
   const themeRuntime = (ctx as unknown as { theme?: { getTheme?: () => { active?: { colorScheme?: string } } } }).theme;
   const [scheme, setScheme] = useState<"light" | "dark">(() => themeRuntime?.getTheme?.().active?.colorScheme === "dark" ? "dark" : "light");
   const [recoveryKey, setRecoveryKey] = useState(0);
-  const session = remembered ? ctx.sessions.binding(remembered as never)?.session : undefined;
+  const session = selectedSessionId ? ctx.sessions.binding(selectedSessionId as never)?.session : undefined;
   const sessionSnapshot = useSnapshot<ConversationSnapshot>(session, session ? session.getSnapshot() : ({ sessionId: "", chat: { order: [], nodes: {}, locations: {}, timeline: {}, legacy: { nodes: [] } }, nodes: [], turnTimings: new Map(), turnEnds: new Map(), partial: null, runningCalls: [], pending: [], queue: [], running: false, subagent: null, composerPhase: "ready", removed: false, openState: "cold", openError: null, hasMore: false, loadingOlder: false, promptError: null, blank: true, lastAgentError: null } as unknown as ConversationSnapshot));
   const ttsCache = useRef<TtsPreparationCache>();
   if (!ttsCache.current) ttsCache.current = new TtsPreparationCache();
@@ -116,12 +129,12 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
   }, [ctx]);
 
   useEffect(() => {
-    if (!workspace || !remembered || typeof window === "undefined") return;
-    try { window.localStorage.setItem(sessionStorageKey(workspace.id), remembered); } catch { /* storage may be unavailable in private browsing */ }
-  }, [workspace?.id, remembered]);
+    if (!workspace || !selectedSessionId || typeof window === "undefined") return;
+    try { window.localStorage.setItem(sessionStorageKey(workspace.id), selectedSessionId); } catch { /* storage may be unavailable in private browsing */ }
+  }, [workspace?.id, selectedSessionId]);
 
   useEffect(() => {
-    const plan = companionSessionOpenPlan(workspaceList.baselinesReady, workspace?.id, remembered);
+    const plan = companionSessionOpenPlan(workspaceList.baselinesReady, workspace?.id, selectedSessionId);
     if (!plan) return;
     if (plan.kind === "open") {
       ctx.sessions.open(plan.sessionId as never);
@@ -130,7 +143,7 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
     let disposed = false;
     void ctx.workspaces.connectWorkspace(plan.workspaceId as never).then((id) => { if (!disposed) ctx.sessions.open(id); }).catch(() => undefined);
     return () => { disposed = true; };
-  }, [ctx, workspace?.id, workspaceList.baselinesReady, remembered]);
+  }, [ctx, workspace?.id, workspaceList.baselinesReady, selectedSessionId]);
 
   useEffect(() => () => { ttsCache.current?.dispose(); }, []);
 
@@ -160,6 +173,13 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
         if (!session) throw new Error("session-unavailable");
         await submitCompanionInput(session, text);
       },
+      async selectSession(sessionId: string): Promise<void> {
+        if (!workspace || !workspace.sessionIds.includes(sessionId)) throw new Error("session-not-in-companion-workspace");
+        setSelected({ workspaceId: workspace.id, sessionId });
+        if (typeof window !== "undefined") {
+          try { window.localStorage.setItem(sessionStorageKey(workspace.id), sessionId); } catch { /* storage may be unavailable */ }
+        }
+      },
       async loadOlder(): Promise<void> { await session?.loadOlder(); },
       async attachmentUrl(attachment: unknown): Promise<string> { if (!session) throw new Error("session-unavailable"); return imageUrl(session, attachment); },
       async prepareVoice(text: string): Promise<string> {
@@ -172,13 +192,18 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
         return prepared.url;
       },
     };
-  }, [connection.rpc, session]);
+  }, [connection.rpc, session, workspace]);
+
+  const sessions = useMemo(() => {
+    return availableSessions.map((item) => ({ ...item, selected: item.id === selectedSessionId }));
+  }, [availableSessions, selectedSessionId]);
 
   const svelteProps = {
     projection,
     identity,
     scheme,
     actions,
+    sessions,
     workspaceReady: Boolean(workspace && relationship.workspacePresent),
     sessionReady: Boolean(session),
     "on:advanced": () => { window.location.assign("/"); },
