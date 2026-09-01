@@ -368,15 +368,6 @@ export function defaultCompanionState(defaultAffinity = 50): CompanionState {
   return { ...DEFAULT_MOOD, affinity: clampAffinity(defaultAffinity), signature: "" };
 }
 
-export function encodeCompanionState(state: CompanionState): string {
-  const normalized = decodeCompanionState(state, state.affinity);
-  const encoded = JSON.stringify(normalized);
-  if (new TextEncoder().encode(encoded).byteLength > MAX_STATE_RECORD_BYTES) {
-    throw new CompanionValidationError("Companion 状态过大。");
-  }
-  return encoded;
-}
-
 export function decodeCompanionStateRecord(value: unknown, defaultAffinity = 50): CompanionStateRecord {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new CompanionValidationError("状态记录不是对象。");
   const record = value as Record<string, unknown>;

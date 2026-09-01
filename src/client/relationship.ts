@@ -44,7 +44,6 @@ export function companionSessionList(
 
 /** Workspace.sessionIds is authoritative; list.current and cwd never decide Companion ownership. */
 export function selectCompanionSession(
-  _workspaceId: string,
   sessions: readonly CompanionSessionCandidate[],
   rememberedId: string | undefined,
   ownership: { sessionIds: readonly string[]; archivedSessionIds: readonly string[] },

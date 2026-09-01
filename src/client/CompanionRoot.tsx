@@ -62,7 +62,7 @@ function mostRecentSession(list: SessionListState, workspace: { id: string; sess
   const rows = list.byId as Record<string, (typeof list.byId)[keyof typeof list.byId] | undefined>;
   const candidates = workspace.sessionIds.map((id) => rows[id]).filter((summary): summary is NonNullable<typeof summary> => Boolean(summary));
   const remembered = readRememberedSession(workspace.id, candidates);
-  return selectCompanionSession(workspace.id, candidates, remembered, {
+  return selectCompanionSession(candidates, remembered, {
     sessionIds: workspace.sessionIds,
     archivedSessionIds,
   });

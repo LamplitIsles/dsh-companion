@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CompanionStateStore, CompanionValidationError, MAX_AVATAR_BYTES, affinityStage, canonicalizeMood, canonicalizeSignature,
-  canonicalizeHistoryLimit, canonicalizeHistoryRead, canonicalizeRelationshipUpdate, decodeCompanionState, decodeCompanionStateHistory, decodeLatestCompanionStateRecord, encodeCompanionState, encodeCompanionStateRecord, formatCompanionPrompt, MOOD_LABELS, selectCompanionSession, validateAvatar,
+  canonicalizeHistoryLimit, canonicalizeHistoryRead, canonicalizeRelationshipUpdate, decodeCompanionState, decodeCompanionStateHistory, decodeLatestCompanionStateRecord, encodeCompanionStateRecord, formatCompanionPrompt, MOOD_LABELS, selectCompanionSession, validateAvatar,
 } from "../src/domain.js";
 
 const temporary: string[] = [];
@@ -71,7 +71,6 @@ describe("relationship domain", () => {
     const second = new CompanionStateStore({ workspacePath: dir, defaultAffinity: 55, filePath: file });
     await second.load();
     expect(second.getSnapshot()).toMatchObject({ affinity: 65, signature: "把平凡日子折成星星" });
-    expect(JSON.parse(encodeCompanionState(second.getSnapshot()))).toEqual({ mood: "neutral", affinity: 65, signature: "把平凡日子折成星星" });
     const history = decodeCompanionStateHistory(await readFile(file, "utf8"), 55);
     expect(history).toHaveLength(4);
     expect(history.map((entry) => entry.changes)).toEqual([
