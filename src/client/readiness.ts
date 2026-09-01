@@ -13,12 +13,6 @@ export function resolveWorkspaceReadiness(
   if (snapshot.phase !== "ready" || snapshot.state === "loading") return "loading";
   return snapshot.items.some((item) => item.workspaceId === workspaceId) ? "ready" : "missing";
 }
-export function resolveRelationshipReadiness(
-  state: "loading" | "ready" | "missing" | "error",
-): CompanionReadiness {
-  return state;
-}
-
 export function resolveSessionReadiness(input: {
   workspace: CompanionReadiness;
   listPhase: "pending" | "ready";

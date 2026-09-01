@@ -15,7 +15,7 @@ export interface TimelineText {
   id: string;
   projectionKey?: string;
   /** Stable source contribution key used to form one 消息单元. */
-  messageKey?: string;
+  messageKey: string;
   kind: "text";
   side: MessageSide;
   /** Durable source kind used by the Chat target. */
@@ -31,7 +31,7 @@ export interface TimelineImage {
   /** Stable source key used when a durable ImageGen call settles into its attachment. */
   projectionKey?: string;
   /** Stable source contribution key used to form one 消息单元. */
-  messageKey?: string;
+  messageKey: string;
   kind: "image";
   side: MessageSide;
   /** Durable source kind used by the Chat target. */
@@ -49,7 +49,7 @@ export interface TimelineVoice {
   id: string;
   projectionKey?: string;
   /** Stable source contribution key used to form one 消息单元. */
-  messageKey?: string;
+  messageKey: string;
   kind: "voice";
   side: "incoming";
   text: string;
@@ -61,7 +61,7 @@ export interface TimelineNotice {
   id: string;
   projectionKey?: string;
   /** Stable source contribution key; notices normally remain standalone. */
-  messageKey?: string;
+  messageKey: string;
   kind: "notice";
   side: "incoming";
   tone: "info" | "error";
@@ -90,8 +90,8 @@ export interface TimelineMessageUnit {
 
 export interface CompanionProjection {
   items: readonly TimelineItem[];
-  /** Grouped presentation projection; callers may derive it for hand-built fixtures. */
-  messageUnits?: readonly TimelineMessageUnit[];
+  /** Canonical grouped presentation projection for the Companion transcript. */
+  messageUnits: readonly TimelineMessageUnit[];
   pendingCount: number;
   running: boolean;
   status: "ready" | "working" | "reconnecting";
@@ -457,10 +457,10 @@ export function projectConversation(snapshot: unknown, connected = true, continu
     ? "暂时停不下来，请再试一次。"
     : promptError ? "这条消息没发出去，可以再试一次。" : undefined;
   if (promptError) {
-    items.push({ id: "prompt-error", kind: "notice", side: "incoming", tone: "error", text: promptErrorNotice });
+    items.push({ id: "prompt-error", messageKey: "prompt-error", kind: "notice", side: "incoming", tone: "error", text: promptErrorNotice });
   }
   const lastError = typeof root.lastAgentError === "string" ? root.lastAgentError : undefined;
-  if (lastError) items.push({ id: "agent-error", kind: "notice", side: "incoming", tone: "error", text: lastError });
+  if (lastError) items.push({ id: "agent-error", messageKey: "agent-error", kind: "notice", side: "incoming", tone: "error", text: lastError });
   const openState = root.openState === "error" ? "error" : root.openState === "loading" ? "loading" : root.openState === "cold" ? "cold" : "open";
   const running = root.running === true;
   const timeline = dedupeTimeline(items);
@@ -481,33 +481,12 @@ export function projectConversation(snapshot: unknown, connected = true, continu
   };
 }
 
-function inferredMessageKey(item: TimelineItem): string {
-  if ("messageKey" in item && item.messageKey) return item.messageKey;
-  const projectionKey = "projectionKey" in item ? item.projectionKey : undefined;
-  if (projectionKey && projectionKey.startsWith("imagegen:")) return projectionKey;
-  if (item.kind === "image") {
-    const submissionId = item.id.match(/^(submission:[^:]+):image:\d+$/u)?.[1];
-    if (submissionId) return submissionId;
-    const imageId = item.id.match(/^image:(.+):\d+$/u)?.[1];
-    if (imageId) return imageId.startsWith("submission:") ? imageId.slice(0, imageId.lastIndexOf(":")) : imageId;
-  }
-  if (item.kind === "text") {
-    const submissionId = item.id.match(/^(submission:[^:]+):text$/u)?.[1];
-    if (submissionId) return submissionId;
-  }
-  return projectionKey ?? item.id;
-}
-
-/**
- * Group a flat projection into stable speaker contributions. The helper also
- * accepts hand-built fixture items that predate `messageKey`, using their
- * deterministic id shape only as a local presentation fallback.
- */
+/** Group a canonical flat projection into stable speaker contributions. */
 export function groupTimelineItems(items: readonly TimelineItem[]): TimelineMessageUnit[] {
   const groups: TimelineMessageUnit[] = [];
   const positions = new Map<string, number>();
   for (const item of items) {
-    const key = inferredMessageKey(item);
+    const key = item.messageKey;
     const position = positions.get(key);
     if (position === undefined) {
       const unit: TimelineMessageUnit = {
@@ -535,9 +514,6 @@ export function groupTimelineItems(items: readonly TimelineItem[]): TimelineMess
   }
   return groups;
 }
-
-/** Alias named after the presentation concept used by the Svelte surface. */
-export const projectMessageUnits = groupTimelineItems;
 
 function stableValueKey(value: unknown): string {
   try {

@@ -1,4 +1,5 @@
 import { defineConfig, type Plugin } from "vite";
+import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { svelte, vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 
@@ -17,4 +18,4 @@ const fixtureAudioPlugin: Plugin = {
   },
 };
 
-export default defineConfig({ root: "fixture", plugins: [fixtureAudioPlugin, tailwindcss(), svelte({ preprocess: vitePreprocess() })], server: { port: 4178, strictPort: true } });
+export default defineConfig({ root: "fixture", plugins: [fixtureAudioPlugin, tailwindcss(), react(), svelte({ preprocess: vitePreprocess() })], server: { port: 4178, strictPort: true } });

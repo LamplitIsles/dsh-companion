@@ -59,6 +59,33 @@ test("fixture has complete media states, accessible overlays, and no duplicate i
   await expect.poll(() => page.evaluate(() => window.__companionFixture?.revoked() ?? 0)).toBeGreaterThan(1);
 });
 
+test("assembled image preview dismisses from its backdrop and returns focus to the opener", async ({ page }) => {
+  await page.goto("/");
+  const opener = page.getByRole("button", { name: "查看大图：今晚的海" });
+  await opener.focus();
+  await opener.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(page.getByRole("button", { name: "关闭大图" })).toBeFocused();
+
+  await page.locator(".companion-lightbox-backdrop").click({ position: { x: 6, y: 6 } });
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
+
+test("Pixel 7a browser Back dismisses the assembled image preview and returns focus", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "pixel-7a", "browser Back preview coverage runs on the mobile project");
+  await page.goto("/");
+  const opener = page.getByRole("button", { name: "查看大图：今晚的海" });
+  await opener.focus();
+  await opener.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await page.goBack();
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
+
 test("relationship card uses the semantic base surface in both themes", async ({ page }) => {
   await page.goto("/");
   const root = page.getByTestId("companion-root");
@@ -95,6 +122,14 @@ test("unread-message action resolves the light primary semantic contrast", async
 test("composer grows, caps, and shrinks without document overflow", async ({ page }) => {
   await page.goto("/");
   const textarea = page.getByRole("textbox", { name: "写消息" });
+  const composeRow = page.locator(".companion-compose-row");
+  const outerMetrics = await composeRow.evaluate((node) => {
+    const style = getComputedStyle(node);
+    const box = node.getBoundingClientRect();
+    return { height: box.height, borderRadius: Number.parseFloat(style.borderTopLeftRadius) };
+  });
+  expect(outerMetrics.borderRadius).toBe(22);
+  expect(outerMetrics.borderRadius * 2).toBeLessThan(outerMetrics.height);
   const metrics = () => textarea.evaluate((node) => ({
     height: node.getBoundingClientRect().height,
     overflowY: getComputedStyle(node).overflowY,
@@ -140,6 +175,41 @@ test("keeps startup neutral until each readiness authority settles", async ({ pa
   await page.evaluate(() => window.__companionFixture?.setReadiness({ relationship: "ready", session: "error" }));
   await expect(page.getByRole("heading", { name: "这段对话暂时打不开" })).toBeVisible();
   await expect(page.getByRole("button", { name: "重新连接" })).toBeVisible();
+});
+
+test("CompanionRoot bridge keeps delayed authorities neutral and exposes only settled outcomes", async ({ page }) => {
+  await page.goto("/?bridge=1");
+  const loading = page.getByRole("status", { name: "正在加载" });
+  await expect(loading).toBeVisible();
+  await expect(page.getByText("还没有设置聊天空间", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("关系资料暂时打不开", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("这段对话暂时打不开", { exact: true })).toHaveCount(0);
+
+  await page.evaluate(() => window.__companionBridgeFixture?.setWorkspace("ready"));
+  await expect(loading).toBeVisible();
+  await page.evaluate(() => window.__companionBridgeFixture?.setRelationship("ready"));
+  await expect(loading).toBeVisible();
+  await page.evaluate(() => window.__companionBridgeFixture?.setSession("ready"));
+  await expect(page.getByRole("textbox", { name: "写消息" })).toBeVisible();
+
+  await page.goto("/?bridge=1");
+  await page.evaluate(() => window.__companionBridgeFixture?.setWorkspace("missing"));
+  await expect(page.getByRole("heading", { name: "还没有设置聊天空间" })).toBeVisible();
+  await expect(page.getByText("关系资料暂时打不开", { exact: true })).toHaveCount(0);
+
+  await page.goto("/?bridge=1");
+  await page.evaluate(() => window.__companionBridgeFixture?.setWorkspace("ready"));
+  await page.evaluate(() => window.__companionBridgeFixture?.setRelationship("error"));
+  await expect(page.getByRole("heading", { name: "关系资料暂时打不开" })).toBeVisible();
+  await expect(page.getByText("这段对话暂时打不开", { exact: true })).toHaveCount(0);
+
+  await page.goto("/?bridge=1");
+  await page.evaluate(() => window.__companionBridgeFixture?.setWorkspace("ready"));
+  await page.evaluate(() => window.__companionBridgeFixture?.setRelationship("ready"));
+  await page.evaluate(() => window.__companionBridgeFixture?.setSession("ready"));
+  await expect(page.getByRole("textbox", { name: "写消息" })).toBeVisible();
+  await page.evaluate(() => window.__companionBridgeFixture?.setSession("error"));
+  await expect(page.getByRole("heading", { name: "这段对话暂时打不开" })).toBeVisible();
 });
 
 test("Pixel 7a geometry keeps composer and relationship overlay usable", async ({ page }) => {

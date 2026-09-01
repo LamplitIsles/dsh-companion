@@ -31,11 +31,11 @@ describe("chat projection", () => {
       { type: "image", attachment: second },
     ] }] });
     expect(result.messageUnits).toHaveLength(1);
-    expect(result.messageUnits?.[0]).toMatchObject({ id: "1", side: "outgoing", images: [
+    expect(result.messageUnits[0]).toMatchObject({ id: "1", side: "outgoing", images: [
       expect.objectContaining({ attachment: first }),
       expect.objectContaining({ attachment: second }),
     ] });
-    expect(result.messageUnits?.[0]?.items.map((item) => item.kind)).toEqual(["text", "image", "image"]);
+    expect(result.messageUnits[0]?.items.map((item) => item.kind)).toEqual(["text", "image", "image"]);
   });
 
   it("keeps finalized assistant structured content in source order inside one unit", () => {
@@ -46,15 +46,15 @@ describe("chat projection", () => {
       { kind: "image", attachment: { attachmentId: "b", mediaType: "image/png" } },
     ] }] });
     expect(result.messageUnits).toHaveLength(1);
-    expect(result.messageUnits?.[0]?.items.map((item) => item.kind)).toEqual(["text", "image", "text", "image"]);
+    expect(result.messageUnits[0]?.items.map((item) => item.kind)).toEqual(["text", "image", "text", "image"]);
   });
 
   it("keeps direct assistant text when an image block shares the contribution", () => {
     const result = projectConversation({ nodes: [{ kind: "assistant", seq: 1, text: "先说一句", blocks: [
       { kind: "image", attachment: { attachmentId: "a", mediaType: "image/png" } },
     ] }] });
-    expect(result.messageUnits?.[0]?.items.map((item) => item.kind)).toEqual(["text", "image"]);
-    expect(result.messageUnits?.[0]?.items[0]).toMatchObject({ kind: "text", text: "先说一句" });
+    expect(result.messageUnits[0]?.items.map((item) => item.kind)).toEqual(["text", "image"]);
+    expect(result.messageUnits[0]?.items[0]).toMatchObject({ kind: "text", text: "先说一句" });
   });
 
   it("preserves a reader anchor and offers new-message affordance", () => {

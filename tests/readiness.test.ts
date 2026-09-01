@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WorkspaceSnapshot } from "@deepseek-ai/dsh-api-workspace-controller/client";
-import { resolveRelationshipReadiness, resolveSessionReadiness, resolveWorkspaceReadiness } from "../src/client/readiness.js";
+import { resolveSessionReadiness, resolveWorkspaceReadiness } from "../src/client/readiness.js";
 
 const workspace = (phase: "pending" | "ready", state: "idle" | "loading" | "error", ids: string[] = []) => ({
   phase,
@@ -14,13 +14,6 @@ describe("Companion startup readiness", () => {
     expect(resolveWorkspaceReadiness("workspace-a", workspace("ready", "idle", ["workspace-a"]))).toBe("ready");
     expect(resolveWorkspaceReadiness("workspace-a", workspace("ready", "idle", ["workspace-b"]))).toBe("missing");
     expect(resolveWorkspaceReadiness("workspace-a", workspace("ready", "error"))).toBe("error");
-  });
-
-  it("keeps relationship RPC outcomes separate from confirmed Workspace absence", () => {
-    expect(resolveRelationshipReadiness("loading")).toBe("loading");
-    expect(resolveRelationshipReadiness("ready")).toBe("ready");
-    expect(resolveRelationshipReadiness("missing")).toBe("missing");
-    expect(resolveRelationshipReadiness("error")).toBe("error");
   });
 
   it("does not expose a conversation failure before list and binding readiness", () => {

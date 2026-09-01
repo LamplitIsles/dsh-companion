@@ -11,7 +11,7 @@
   import Square from "lucide-svelte/icons/square";
   import X from "lucide-svelte/icons/x";
   import { COMPACTION_STATUS_DURATION_MS, formatTokenCount, resolveContextCapacity, type CompactionLifecycleState } from "../continuity.js";
-  import { groupTimelineItems, type CompanionProjection, type TimelineImage, type TimelineItem, type TimelineMessageUnit, type TimelineNotice, type TimelineText, type TimelineVoice } from "../projection.js";
+  import type { CompanionProjection, TimelineImage, TimelineItem, TimelineMessageUnit, TimelineNotice, TimelineText, TimelineVoice } from "../projection.js";
   import type { CompanionContinuityView } from "./companion-bridge.js";
   import type { PendingSubmissionRetirement } from "@deepseek-ai/dsh-api-session-controller/client";
   import { CompanionPreControllerError } from "./admission.js";
@@ -51,7 +51,7 @@
     selected: boolean;
   }
 
-  export let projection: CompanionProjection = { items: [], pendingCount: 0, running: false, status: "ready", openState: "open", hasMore: false, loadingOlder: false };
+  export let projection: CompanionProjection = { items: [], messageUnits: [], pendingCount: 0, running: false, status: "ready", openState: "open", hasMore: false, loadingOlder: false };
   export let identity: CompanionIdentityView = { companionName: "Companion", userName: "你", preferredAddress: "你", signature: "", moodLabel: "如常", mood: "neutral", affinity: 50, affinityStage: "熟悉" };
   export let scheme: "light" | "dark" = "light";
   export let actions: CompanionActions = { send: async () => undefined };
@@ -178,7 +178,7 @@
   }
 
   function messageUnits(value: CompanionProjection): TimelineMessageUnit[] {
-    return value.messageUnits ? [...value.messageUnits] : groupTimelineItems(value.items);
+    return [...value.messageUnits];
   }
 
   function messageContentParts(unit: TimelineMessageUnit): MessageContentPart[] {
