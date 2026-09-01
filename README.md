@@ -32,6 +32,8 @@ Typing `/compact` as the complete Companion input invokes DSH's Session command 
 
 Messages sent during a reply use DSH's durable FIFO queue and remain separate turns. With an empty draft, the composer action stops the current reply without clearing queued messages; DSH resumes those messages in order after cancellation settles.
 
+The ordinary-send optimistic echo, request/RPC identity model, Session-to-Chat handoff, failure restoration, image ownership, and regression strategy are documented in [Optimistic message sending and visual continuity](docs/optimistic-message-sending.md).
+
 DSH continues to stream and persist model output internally, while Companion shows assistant text only after its message is finalized. The typing bubble gains a slowly rotating, non-repeating companion note after a 12-second wait; stopping or completing the reply clears that transient timer state.
 
 While ImageGen is running, its image skeleton and “正在画一张图…” status replace the generic typing bubble. If the agent resumes text generation after the image settles, the typing indicator returns with a fresh long-wait timer.
@@ -80,4 +82,4 @@ bun run pack:check
 DSH_CLI=/absolute/path/to/dsh bun run test:dsh-link
 ```
 
-`pack:check` builds and inspects the publishable tarball. `test:dsh-link` uses the explicitly supplied alpha.3 CLI to add this source tree through `file:` in a test-owned `DSH_HOME`, then verifies the composed bundle and client registration. It does not start DSH Web, a browser, or touch a live profile. Deployment, Kosmos installation, production cutover, and code review are outside this repository change.
+`pack:check` builds and inspects the publishable tarball. `test:dsh-link` uses the explicitly supplied alpha.3 CLI to add this source tree through `file:` in a test-owned `DSH_HOME`, then verifies the composed bundle and client registration. It does not start DSH Web, a browser, or touch a live profile. Update the host-local linked web profile with `just deploy-local`; packaged or Kosmos deployment and production cutover remain outside local acceptance.

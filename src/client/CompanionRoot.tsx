@@ -20,6 +20,7 @@ import type { ImageAttachmentLimits } from "@deepseek-ai/dsh-attachment";
 import type { CompanionImageDraft } from "./image-drafts.js";
 import { resolveSessionReadiness, resolveWorkspaceReadiness, type CompanionReadiness } from "./readiness.js";
 import { MOOD_LABELS } from "../domain.js";
+import { SubmissionHandoff } from "./submission-handoff.js";
 
 export interface CompanionRootInjected {
   ctx: ClientContext;
@@ -123,6 +124,8 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
   const imageLimitsSource = session?.projections?.faceOf("imageLimits") as { getSnapshot(): ImageAttachmentLimits | undefined; subscribe(listener: () => void): () => void } | undefined;
   const imageLimits = useSnapshot<ImageAttachmentLimits | undefined>(imageLimitsSource, undefined);
   const continuityLifecycle = useSnapshot<CompanionContinuitySnapshot | undefined>(conversationBinding?.target(CONTINUITY_VIEW_TARGET), undefined);
+  const submissionHandoff = useRef<SubmissionHandoff>();
+  if (!submissionHandoff.current) submissionHandoff.current = new SubmissionHandoff();
   const ttsCache = useRef<TtsPreparationCache>();
   if (!ttsCache.current) ttsCache.current = new TtsPreparationCache();
 
@@ -191,7 +194,7 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
   useEffect(() => () => { ttsCache.current?.dispose(); }, []);
 
   const continuity = useMemo(() => ({ contextPressure, lifecycle: continuityLifecycle }), [contextPressure, continuityLifecycle]);
-  const projection = useMemo(() => projectConversation({ ...sessionSnapshot, chat: chatSnapshot }, connectionState === "connected", continuity.lifecycle), [sessionSnapshot, chatSnapshot, connectionState, continuity.lifecycle]);
+  const projection = useMemo(() => projectConversation(submissionHandoff.current!.merge(sessionSnapshot, chatSnapshot), connectionState === "connected", continuity.lifecycle), [sessionSnapshot, chatSnapshot, connectionState, continuity.lifecycle]);
   const resolvedSessionReadiness = resolveSessionReadiness({
     workspace: workspaceReadiness,
     listPhase: list.phase,
@@ -222,7 +225,7 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
     return {
       async send(text: string, images: readonly CompanionImageDraft[], onRetire?: (retirement: PendingSubmissionRetirement) => void): Promise<void> {
         if (!session) throw new CompanionPreControllerError("session-unavailable");
-        await submitCompanionInput(session, text, images, onRetire);
+        await submitCompanionInput(session, text, images, onRetire, (requestId, retirement) => submissionHandoff.current!.retire(requestId, retirement.reason));
       },
       async stop(): Promise<void> {
         if (!session) throw new Error("session-unavailable");

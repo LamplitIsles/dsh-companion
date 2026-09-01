@@ -72,6 +72,22 @@ describe("Companion alpha Session admission", () => {
     expect(error).toBeInstanceOf(CompanionAdmissionError);
   });
 
+  it("reports the correlated request id when the Session retires an echo", async () => {
+    let retirement: ((value: { reason: "observed"; attachments: [] }) => void) | undefined;
+    const observed: unknown[] = [];
+    await submitCompanionInput({
+      beginSubmission: (input) => {
+        retirement = input.onRetire as typeof retirement;
+        return { requestId: "request-retired" as never, abandon: () => undefined };
+      },
+      prompt: async () => ({ ok: true, value: { accepted: true } }),
+      command: async () => ({ ok: true, value: { matched: true } }),
+    }, "保持连续", [], undefined, (requestId, value) => observed.push([requestId, value.reason]));
+
+    retirement?.({ reason: "observed", attachments: [] });
+    expect(observed).toEqual([["request-retired", "observed"]]);
+  });
+
   it("keeps a runtime-shaped internal result's public code", async () => {
     const error = await submitCompanionInput({
       beginSubmission: () => ({ requestId: "request-3" as never, abandon: () => undefined }),

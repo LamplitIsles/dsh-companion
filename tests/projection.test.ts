@@ -76,6 +76,8 @@ describe("chat projection", () => {
       pendingSubmissions: [{ requestId: "req-1", placement: "transcript", time: 10, text: "立即显示", images: [] }],
     });
     expect(durable.items.filter((item) => item.kind === "text" && item.side === "outgoing")).toHaveLength(1);
+    expect(durable.messageUnits).toContainEqual(expect.objectContaining({ id: "submission:req-1", side: "outgoing" }));
+    expect(durable.items).toContainEqual(expect.objectContaining({ id: "durable", messageKey: "submission:req-1" }));
     expect(durable.items.some((item) => item.id.startsWith("submission:req-1"))).toBe(false);
   });
 
@@ -87,11 +89,35 @@ describe("chat projection", () => {
     });
 
     expect(result.items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "pending:queue-1", kind: "text", side: "outgoing", text: "稍后发送", pending: true }),
-      expect.objectContaining({ id: "image:queue-1:0", kind: "image", side: "outgoing", attachment: image }),
+      expect.objectContaining({ id: "pending:queue-1", messageKey: "submission:req-queued", kind: "text", side: "outgoing", text: "稍后发送", pending: true }),
+      expect.objectContaining({ id: "image:queue-1:0", messageKey: "submission:req-queued", kind: "image", side: "outgoing", attachment: image }),
     ]));
+    expect(result.messageUnits).toContainEqual(expect.objectContaining({ id: "submission:req-queued", pending: true }));
     expect(result.items.some((item) => item.id.startsWith("submission:req-queued"))).toBe(false);
     expect(result.items.filter((item) => item.kind === "image" && item.side === "outgoing")).toHaveLength(1);
+  });
+
+  it("keeps one correlated unit across steering admission and ignores a stale queue duplicate", () => {
+    const image = { attachmentId: "durable-image", mediaType: "image/png", name: "durable.png" };
+    const steering = projectConversation({
+      chat: { order: ["steering-key"], nodes: new Map([["steering-key", { key: "steering-key", kind: "steering", visibility: "visible", data: { seq: 1, messageId: "message-1", source: { kind: "user", rpcId: "req-steering" }, content: [{ type: "text", text: "正在回复时发送" }] } }]]) },
+      queue: [{ id: "queue-1", messageId: "message-1", placement: "steering", rpcId: "req-steering", content: [{ type: "text", text: "正在回复时发送" }] }],
+      pendingSubmissions: [{ requestId: "req-steering", placement: "steering", time: 1, text: "正在回复时发送", images: [] }],
+    });
+    expect(steering.messageUnits).toHaveLength(1);
+    expect(steering.messageUnits[0]).toMatchObject({ id: "submission:req-steering", side: "outgoing" });
+    expect(steering.items.filter((item) => item.kind === "text" && item.side === "outgoing")).toHaveLength(1);
+    expect(steering.items[0]).toMatchObject({ id: "steering-key", projectionKey: "steering-key", messageKey: "submission:req-steering" });
+
+    const durable = projectConversation({
+      chat: { order: ["durable-key"], nodes: new Map([["durable-key", { key: "durable-key", kind: "user", visibility: "visible", data: { seq: 2, source: { kind: "user", rpcId: "req-steering" }, content: [{ type: "text", text: "正在回复时发送" }, { type: "image", attachment: image }] } }]]) },
+      queue: [{ id: "queue-1", messageId: "message-1", placement: "queued", rpcId: "req-steering", content: [{ type: "text", text: "正在回复时发送" }] }],
+    });
+    expect(durable.messageUnits).toHaveLength(1);
+    expect(durable.messageUnits[0]).toMatchObject({ id: "submission:req-steering", side: "outgoing" });
+    expect(durable.items.filter((item) => item.kind === "text" && item.side === "outgoing")).toHaveLength(1);
+    expect(durable.items).toContainEqual(expect.objectContaining({ id: "durable-key", messageKey: "submission:req-steering" }));
+    expect(durable.items).toContainEqual(expect.objectContaining({ id: "image:durable-key:0", messageKey: "submission:req-steering", attachment: image }));
   });
 
   it("keeps one keyed ImageGen row while a call settles", () => {

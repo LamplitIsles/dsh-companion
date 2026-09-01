@@ -402,6 +402,29 @@ test("retries one durable image in place after a transient load failure", async 
   await expect(image.getByRole("alert")).toHaveCount(0);
 });
 
+test("keeps a pure-text send row and bubble connected across durable confirmation", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => window.__companionFixture?.deferSend());
+  const text = "保持这一行连续";
+  const textarea = page.getByRole("textbox", { name: "写消息" });
+  await textarea.fill(text);
+  await page.getByRole("button", { name: "发送消息" }).click();
+
+  const row = page.locator('[data-testid^="message-submission:"]').first();
+  const bubble = row.locator(".companion-bubble").first();
+  const rowHandle = await row.elementHandle();
+  const bubbleHandle = await bubble.elementHandle();
+  expect(rowHandle).not.toBeNull();
+  expect(bubbleHandle).not.toBeNull();
+  await expect(bubble).toHaveText(text);
+
+  await page.evaluate(() => window.__companionFixture?.confirmSend());
+  await expect.poll(() => rowHandle!.evaluate((node) => node.isConnected)).toBe(true);
+  await expect.poll(() => bubbleHandle!.evaluate((node) => node.isConnected)).toBe(true);
+  await expect.poll(() => bubbleHandle!.evaluate((node) => node.textContent?.trim() ?? "")).toBe(text);
+  await expect(page.getByText(text, { exact: true })).toHaveCount(1);
+});
+
 test("renders a deferred text-and-two-image send immediately and replaces it atomically", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => window.__companionFixture?.deferSend());
@@ -417,7 +440,9 @@ test("renders a deferred text-and-two-image send immediately and replaces it ato
   await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(1);
   await expect(page.locator('[data-testid^="image-submission:"]')).toHaveCount(2);
   await expect(page.locator('[data-testid^="image-submission:"] .companion-media img')).toHaveCount(2);
-  const submission = page.locator('[data-testid^="message-submission:"]').first();
+  const submission = page.locator('[data-testid^="message-submission:"]').filter({ hasText: "两张照片" });
+  const submissionHandle = await submission.elementHandle();
+  expect(submissionHandle).not.toBeNull();
   await expect(submission.locator(".message-avatar")).toHaveCount(1);
   await expect(submission.locator(".companion-image-entry")).toHaveCount(2);
   await expect.poll(() => submission.locator(".companion-image-entry").first().evaluate((node) => {
@@ -433,10 +458,14 @@ test("renders a deferred text-and-two-image send immediately and replaces it ato
   await expect.poll(() => page.evaluate(() => window.__companionFixture?.sendCalls() ?? 0)).toBe(2);
 
   await page.evaluate(() => window.__companionFixture?.confirmSend());
-  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(1);
+  await expect(page.locator('[data-testid^="message-"]').filter({ hasText: "两张照片" })).toHaveCount(1);
+  await expect.poll(() => submissionHandle!.evaluate((node) => node.isConnected)).toBe(true);
+  await expect(submission.locator(".companion-image-entry")).toHaveCount(2);
   await expect(page.getByText("两张照片", { exact: true })).toHaveCount(1);
   await page.evaluate(() => window.__companionFixture?.confirmSend());
-  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid^="message-"]').filter({ hasText: "两张照片" })).toHaveCount(1);
+  await expect.poll(() => submissionHandle!.evaluate((node) => node.isConnected)).toBe(true);
+  await expect(submission.locator(".companion-image-entry")).toHaveCount(2);
   await expect(page.locator('[data-testid^="image-submission:"]')).toHaveCount(0);
   await expect(page.getByText("两张照片", { exact: true })).toHaveCount(1);
   await expect(page.getByText("连续发送", { exact: true })).toHaveCount(1);
@@ -493,7 +522,7 @@ test("keeps an existing internal send error visible when a submission begins", a
   await expect(page.locator(".companion-timeline .companion-recovery").filter({ hasText: "这条消息没发出去，可以再试一次。" })).toHaveCount(1);
 
   await page.evaluate(() => window.__companionFixture?.confirmSend());
-  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
+  await expect(page.getByText("新消息", { exact: true })).toHaveCount(1);
   await expect(page.locator(".companion-timeline .companion-recovery").filter({ hasText: "这条消息没发出去，可以再试一次。" })).toHaveCount(1);
 });
 

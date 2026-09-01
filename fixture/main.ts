@@ -73,7 +73,7 @@ let pendingSends: Array<{
   resolve: () => void;
   reject: (error: unknown) => void;
 }> = [];
-let lastSend: { text: string; images: readonly CompanionImageDraft[] } | undefined;
+let lastSend: { text: string; images: readonly CompanionImageDraft[]; echoId: string } | undefined;
 const revokeObjectUrl = URL.revokeObjectURL.bind(URL);
 URL.revokeObjectURL = (url: string) => { revokedImageUrls += 1; revokeObjectUrl(url); };
 const fixtureProps: CompanionBridgeProps = {
@@ -87,11 +87,10 @@ const fixtureProps: CompanionBridgeProps = {
   identity: { companionName: "小灯", companionAvatar: svg, userName: "小岛", userAvatar: svg, preferredAddress: "小岛", signature: query.get("signature") === "empty" ? "" : "把平凡日子折成星星，等风来时再写一行很长很长的晚安", ...mood, affinity: 67, affinityStage: "亲近" },
   actions: { send: async (text: string, images: readonly CompanionImageDraft[], onRetire?: (retirement: PendingSubmissionRetirement) => void) => {
     sendCalls += 1;
-    lastSend = { text, images };
     const echoId = appendSubmissionEcho(text, images);
+    lastSend = { text, images, echoId };
     if (!deferredSends) {
-      appendDurableSend(text, images);
-      removeSubmissionEcho(echoId);
+      appendDurableSend(text, images, echoId);
       onRetire?.({ reason: "observed", attachments: [] });
       return;
     }
@@ -112,14 +111,14 @@ const fixtureProps: CompanionBridgeProps = {
 };
 const propsStore = writable(fixtureProps);
 
-function appendDurableSend(text: string, images: readonly CompanionImageDraft[]): void {
+function appendDurableSend(text: string, images: readonly CompanionImageDraft[], echoId: string): void {
   const sendId = `fixture-user-${++sendSequence}`;
   const additions: TimelineItem[] = [];
-  if (text) additions.push({ id: sendId, messageKey: sendId, kind: "text", side: "outgoing", origin: "user", text, time: Date.now() });
+  if (text) additions.push({ id: sendId, messageKey: echoId, kind: "text", side: "outgoing", origin: "user", text, time: Date.now() });
   images.forEach((draft, index) => {
     additions.push({
       id: `image:${sendId}:${index}`,
-      messageKey: sendId,
+      messageKey: echoId,
       kind: "image",
       side: "outgoing",
       origin: "user",
@@ -129,7 +128,10 @@ function appendDurableSend(text: string, images: readonly CompanionImageDraft[])
       time: Date.now(),
     });
   });
-  propsStore.update((current) => replaceProjectionItems(current, [...current.projection!.items, ...additions]));
+  propsStore.update((current) => replaceProjectionItems(current, [
+    ...current.projection!.items.filter((item) => !item.id.startsWith(`${echoId}:`)),
+    ...additions,
+  ]));
 }
 
 function appendSubmissionEcho(text: string, images: readonly CompanionImageDraft[]): string {
@@ -186,10 +188,9 @@ function confirmLastSend(): void {
   const pending = pendingSends[0];
   const send = pending ?? lastSend;
   if (!send) return;
-  appendDurableSend(send.text, send.images);
+  appendDurableSend(send.text, send.images, send.echoId);
   if (pending) {
     const settled = pendingSends.shift()!;
-    removeSubmissionEcho(settled.echoId);
     settled.onRetire?.({ reason: "observed", attachments: [] });
     settled.resolve();
   }
