@@ -28,23 +28,17 @@ export const MOODS = [
 export type Mood = (typeof MOODS)[number];
 export const MOOD_LABELS: Readonly<Record<Mood, string>> = Object.freeze({
   neutral: "如常",
-  serene: "安宁",
-  bright: "明朗",
-  playful: "顽皮",
-  tender: "温柔",
-  pensive: "沉思",
-  tired: "疲倦",
+  serene: "平静",
+  bright: "愉快",
+  playful: "俏皮",
+  tender: "柔和",
+  pensive: "若有所思",
+  tired: "疲惫",
   low: "低落",
 });
 
-export const INTENSITIES = [1, 2, 3] as const;
-export type MoodIntensity = (typeof INTENSITIES)[number];
-export const INTENSITY_LABELS: Readonly<Record<MoodIntensity, string>> =
-  Object.freeze({ 1: "轻微", 2: "明显", 3: "强烈" });
-
 export interface MoodRecord {
   mood: Mood;
-  intensity: MoodIntensity;
   note?: string;
 }
 
@@ -73,7 +67,6 @@ export interface CompanionIdentitySettings {
 
 export const DEFAULT_MOOD: MoodRecord = Object.freeze({
   mood: "neutral",
-  intensity: 1,
 });
 
 export class CompanionValidationError extends TypeError {
@@ -91,40 +84,33 @@ export function isMood(value: unknown): value is Mood {
   return typeof value === "string" && (MOODS as readonly string[]).includes(value);
 }
 
-export function isMoodIntensity(value: unknown): value is MoodIntensity {
-  return value === 1 || value === 2 || value === 3;
-}
-
 /** Trim a note without changing its meaning; notes are descriptive data. */
 export function canonicalizeMoodNote(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "string") {
-    throw new CompanionValidationError("心情短句必须是文字。");
+    throw new CompanionValidationError("状态短句必须是文字。");
   }
   const normalized = value.trim().replace(CONTROL_CHARACTERS, "");
   if (Array.from(normalized).length > MAX_NOTE_CODE_POINTS) {
-    throw new CompanionValidationError("心情短句不能超过 40 个字符。");
+    throw new CompanionValidationError("状态短句不能超过 40 个字符。");
   }
   return normalized || undefined;
 }
 
 export function canonicalizeMood(value: unknown): MoodRecord {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new CompanionValidationError("心情格式无效。");
+    throw new CompanionValidationError("状态格式无效。");
   }
   const record = value as Record<string, unknown>;
-  if (!isMood(record.mood)) throw new CompanionValidationError("心情类型无效。");
-  if (!isMoodIntensity(record.intensity)) {
-    throw new CompanionValidationError("心情强度必须是 1、2 或 3。");
-  }
-  const allowed = new Set(["mood", "intensity", "note"]);
+  if (!isMood(record.mood)) throw new CompanionValidationError("状态类型无效。");
+  const allowed = new Set(["mood", "note"]);
   if (Object.keys(record).some((key) => !allowed.has(key))) {
-    throw new CompanionValidationError("心情包含未知字段。");
+    throw new CompanionValidationError("状态包含未知字段。");
   }
   const note = canonicalizeMoodNote(record.note);
   return note === undefined
-    ? { mood: record.mood, intensity: record.intensity }
-    : { mood: record.mood, intensity: record.intensity, note };
+    ? { mood: record.mood }
+    : { mood: record.mood, note };
 }
 
 /**
@@ -255,11 +241,11 @@ export function decodeCompanionState(value: unknown, defaultAffinity = 50): Comp
     throw new CompanionValidationError("Companion 状态不是对象。");
   }
   const record = value as Record<string, unknown>;
-  const allowed = new Set(["mood", "intensity", "note", "affinity", "signature"]);
+  const allowed = new Set(["mood", "note", "affinity", "signature"]);
   if (Object.keys(record).some((key) => !allowed.has(key))) {
     throw new CompanionValidationError("Companion 状态包含未知字段。");
   }
-  const mood = canonicalizeMood({ mood: record.mood, intensity: record.intensity, ...(record.note === undefined ? {} : { note: record.note }) });
+  const mood = canonicalizeMood({ mood: record.mood, ...(record.note === undefined ? {} : { note: record.note }) });
   const affinity = record.affinity === undefined ? clampAffinity(defaultAffinity) : record.affinity;
   if (typeof affinity !== "number" || !Number.isSafeInteger(affinity) || affinity < 0 || affinity > 100) {
     throw new CompanionValidationError("亲近度必须是 0 到 100 的整数。");
@@ -537,7 +523,6 @@ export function formatCompanionPrompt(state: CompanionState, identity: PromptIde
     `user_name=${quote(identity.userName)}`,
     `preferred_address=${quote(identity.preferredAddress)}`,
     `mood=${state.mood}`,
-    `mood_intensity=${state.intensity}`,
     `mood_label=${quote(MOOD_LABELS[state.mood])}`,
     ...(note === undefined ? [] : [`mood_note=${note}`]),
     `affinity=${state.affinity}`,
@@ -597,7 +582,7 @@ export function derivePresenceStatus(input: {
 }
 
 export const PRESENCE_LABELS: Readonly<Record<PresenceStatus, string>> = Object.freeze({
-  ready: "已准备好",
-  working: "正在陪你想",
-  reconnecting: "正在重新连接",
+  ready: "在线",
+  working: "正在输入…",
+  reconnecting: "连接中…",
 });

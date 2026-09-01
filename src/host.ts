@@ -17,6 +17,7 @@ import {
   clampAffinity,
   defaultCompanionState,
   formatCompanionPrompt,
+  MOOD_LABELS,
   validateIdentitySettings,
 } from "./domain.js";
 import { rewriteCompanionCompactionRequest } from "./compaction.js";
@@ -491,16 +492,15 @@ export function companionAliasHandler(webServer: WebServerLike, req: IncomingMes
 
 const moodTool = (owner: CompanionHostController): ToolDefinition => defineTool({
   name: "companion_set_mood",
-  description: "Set the Companion's current bounded mood for this Workspace. Use the fixed mood key, intensity 1-3, and an optional short note.",
+  description: "Set the Companion's current bounded state for this Workspace. Use one fixed state key and an optional short note.",
   parameters: {
     mood: { type: "string", required: true, description: "neutral, serene, bright, playful, tender, pensive, tired, or low" },
-    intensity: { type: "integer", required: true, description: "1 (轻微), 2 (明显), or 3 (强烈)" },
-    note: { type: "string", description: "Optional 心情短句, at most 40 Unicode code points" },
+    note: { type: "string", description: "Optional 状态短句, at most 40 Unicode code points" },
   },
   output: {
     schema: {
       type: "object",
-      properties: { mood: { type: "string", required: true }, intensity: { type: "integer", required: true }, note: { type: "string" }, message: { type: "string", required: true } },
+      properties: { mood: { type: "string", required: true }, note: { type: "string" }, message: { type: "string", required: true } },
       additionalProperties: false,
     },
     render: (_args, value) => [{ type: "text", text: String(value.message) }],
@@ -510,7 +510,7 @@ const moodTool = (owner: CompanionHostController): ToolDefinition => defineTool(
     if (!workspace) throw new CompanionValidationError("Companion 只能在已配置的 Workspace 中更新。");
     const mood = canonicalizeMood(args);
     const state = await owner.storeFor(workspace).setMood(mood, exec.signal);
-    return { mood: state.mood, intensity: state.intensity, ...(state.note === undefined ? {} : { note: state.note }), message: `Companion 心情已更新为 ${state.mood} · ${state.intensity}。` };
+    return { mood: state.mood, ...(state.note === undefined ? {} : { note: state.note }), message: `Companion 此刻状态已更新为 ${MOOD_LABELS[state.mood]}。` };
   },
 });
 

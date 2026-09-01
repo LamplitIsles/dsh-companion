@@ -18,6 +18,7 @@ import { RPC_CHANNEL as TTS_CHANNEL, RPC_ENDPOINT as TTS_ENDPOINT } from "./tts-
 import { CONTINUITY_VIEW_TARGET, type CompanionContinuitySnapshot, type ContextPressureProjection } from "../continuity.js";
 import type { ImageAttachmentLimits } from "@deepseek-ai/dsh-attachment";
 import type { CompanionImageDraft } from "./image-drafts.js";
+import { resolveSessionReadiness, resolveWorkspaceReadiness, type CompanionReadiness } from "./readiness.js";
 
 export interface CompanionRootInjected {
   ctx: ClientContext;
@@ -26,7 +27,7 @@ export interface CompanionRootInjected {
 
 interface RelationshipView {
   identity?: ClientSettings;
-  state?: { mood: string; intensity: number; note?: string; affinity: number; signature: string };
+  state?: { mood: string; note?: string; affinity: number; signature: string };
   workspacePresent: boolean;
   revision: number;
 }
@@ -86,6 +87,9 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
   const settingsSnapshot = useSyncExternalStore(settingsSubscribe, settingsGetSnapshot, settingsGetSnapshot);
   const configured = settingsSnapshot.value;
   const workspace = workspaceFor(configured, workspaceList);
+  const workspaceReadiness: CompanionReadiness = settingsSnapshot.status === "loading"
+    ? "loading"
+    : resolveWorkspaceReadiness(configured?.workspaceId, workspaceList);
   const remembered = workspace ? mostRecentSession(list, workspace, workspaceList.archivedSessionIds) : undefined;
   const workspaceRows = useMemo(() => {
     if (!workspace) return [];
@@ -101,6 +105,8 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
     ? selected.sessionId
     : remembered;
   const [relationship, setRelationship] = useState<RelationshipView>({ workspacePresent: false, revision: 0 });
+  const [relationshipReadiness, setRelationshipReadiness] = useState<CompanionReadiness>("loading");
+  const [sessionCreateError, setSessionCreateError] = useState(false);
   const themeRuntime = (ctx as unknown as { theme?: { getTheme?: () => { active?: { colorScheme?: string } } } }).theme;
   const [scheme, setScheme] = useState<"light" | "dark">(() => themeRuntime?.getTheme?.().active?.colorScheme === "dark" ? "dark" : "light");
   const [recoveryKey, setRecoveryKey] = useState(0);
@@ -120,7 +126,16 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
   useEffect(() => {
     const controller = new AbortController();
     const workspaceId = configured?.workspaceId;
-    if (!workspaceId) { setRelationship({ workspacePresent: false, revision: 0 }); return () => controller.abort(); }
+    if (settingsSnapshot.status === "loading") {
+      setRelationshipReadiness("loading");
+      return () => controller.abort();
+    }
+    if (!workspaceId) {
+      setRelationship({ workspacePresent: false, revision: 0 });
+      setRelationshipReadiness("missing");
+      return () => controller.abort();
+    }
+    setRelationshipReadiness("loading");
     const run = async (): Promise<void> => {
       try {
         let result = await connection.rpc.call("/dsh-companion", "relationship/get", { workspaceId }, controller.signal);
@@ -128,15 +143,19 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
           if (!result.ok) throw new Error(result.error?.message ?? "relationship-unavailable");
           const next = result.value as RelationshipView;
           setRelationship(next);
+          setRelationshipReadiness(next.workspacePresent ? "ready" : "missing");
           result = await connection.rpc.call("/dsh-companion", "relationship/watch", { workspaceId, revision: next.revision }, controller.signal);
         }
       } catch {
-        if (!controller.signal.aborted) setRelationship({ workspacePresent: false, revision: 0 });
+        // A carrier/RPC failure is not evidence that the configured Workspace
+        // disappeared. Keep the last identity and expose a neutral loading
+        // surface until the next connection generation settles.
+        if (!controller.signal.aborted) setRelationshipReadiness("error");
       }
     };
     void run();
     return () => controller.abort();
-  }, [connection, configured?.workspaceId, connectionState, recoveryKey]);
+  }, [connection, configured?.workspaceId, connectionState, recoveryKey, settingsSnapshot.status]);
 
   useEffect(() => {
     const listener = (snapshot: { active?: { colorScheme?: string } }) => setScheme(snapshot.active?.colorScheme === "dark" ? "dark" : "light");
@@ -150,6 +169,7 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
   }, [workspace?.id, selectedSessionId]);
 
   useEffect(() => {
+    setSessionCreateError(false);
     const plan = companionSessionOpenPlan(workspaceList.phase === "ready" && list.phase === "ready", workspace?.id, selectedSessionId);
     if (!plan) return;
     if (plan.kind === "open") {
@@ -159,16 +179,24 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
     if (creatingWorkspace.current === plan.workspaceId) return;
     creatingWorkspace.current = plan.workspaceId;
     let disposed = false;
-    void ctx.sessions.create({ workspaceId: plan.workspaceId as never }).then((id) => { if (!disposed) ctx.sessions.open(id); }).catch(() => undefined).finally(() => {
+    void ctx.sessions.create({ workspaceId: plan.workspaceId as never }).then((id) => { if (!disposed) ctx.sessions.open(id); }).catch(() => { if (!disposed) setSessionCreateError(true); }).finally(() => {
       if (creatingWorkspace.current === plan.workspaceId) creatingWorkspace.current = undefined;
     });
     return () => { disposed = true; };
-  }, [ctx, workspace?.id, workspaceList.phase, list.phase, selectedSessionId]);
+  }, [ctx, workspace?.id, workspaceList.phase, list.phase, selectedSessionId, recoveryKey]);
 
   useEffect(() => () => { ttsCache.current?.dispose(); }, []);
 
   const continuity = useMemo(() => ({ contextPressure, lifecycle: continuityLifecycle }), [contextPressure, continuityLifecycle]);
   const projection = useMemo(() => projectConversation({ ...sessionSnapshot, chat: chatSnapshot }, connectionState === "connected", continuity.lifecycle), [sessionSnapshot, chatSnapshot, connectionState, continuity.lifecycle]);
+  const resolvedSessionReadiness = resolveSessionReadiness({
+    workspace: workspaceReadiness,
+    listPhase: list.phase,
+    selectedSessionId,
+    session,
+    snapshot: sessionSnapshot,
+  });
+  const sessionReadiness: CompanionReadiness = sessionCreateError ? "error" : resolvedSessionReadiness;
   const identity = useMemo(() => {
     const state = relationship.state;
     const source = relationship.identity ?? configured;
@@ -181,7 +209,6 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
       signature: state?.signature ?? "",
       mood: state?.mood ?? "neutral",
       moodLabel: state ? (MOOD_LABELS as Record<string, string>)[state.mood] ?? state.mood : "如常",
-      intensity: state?.intensity ?? 1,
       moodNote: state?.note,
       affinity: state?.affinity,
       affinityStage: state ? affinityStage(state.affinity) : undefined,
@@ -231,8 +258,9 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
     continuity,
     actions,
     sessions,
-    workspaceReady: Boolean(workspace && relationship.workspacePresent),
-    sessionReady: Boolean(session),
+    workspaceReadiness,
+    relationshipReadiness,
+    sessionReadiness,
     sessionId: selectedSessionId,
     imageLimits,
     onAdvanced: () => { window.location.assign("/"); },

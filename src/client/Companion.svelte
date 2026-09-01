@@ -11,15 +11,16 @@
   import Square from "lucide-svelte/icons/square";
   import X from "lucide-svelte/icons/x";
   import { COMPACTION_STATUS_DURATION_MS, formatTokenCount, resolveContextCapacity, type CompactionLifecycleState } from "../continuity.js";
-  import type { CompanionProjection, TimelineImage, TimelineVoice } from "../projection.js";
+  import { groupTimelineItems, type CompanionProjection, type TimelineImage, type TimelineItem, type TimelineMessageUnit, type TimelineNotice, type TimelineText, type TimelineVoice } from "../projection.js";
   import type { CompanionContinuityView } from "./companion-bridge.js";
   import type { PendingSubmissionRetirement } from "@deepseek-ai/dsh-api-session-controller/client";
   import { CompanionPreControllerError } from "./admission.js";
-  import { createComposerState, findComposerCommand, reduceComposer, shouldSubmitEnter, type ComposerCommand } from "./composer.js";
+  import { COMPOSER_MAX_HEIGHT, COMPOSER_MIN_HEIGHT, createComposerState, findComposerCommand, reduceComposer, resolveComposerHeight, shouldSubmitEnter, type ComposerCommand } from "./composer.js";
   import { createImageDrafts, imageFileFromCapturedMedia, imageFilesFromClipboard, imageIntakeError, IMAGE_ACCEPT, releaseImageDrafts, type CompanionImageDraft } from "./image-drafts.js";
-  import { INTENSITY_LABELS } from "./relationship.js";
+  import type { CompanionReadiness } from "./readiness.js";
   import Markdown from "./Markdown.svelte";
   import relationshipBackground from "./assets/relationship-night-voyage.webp";
+  import { resolveImageDisplaySize } from "../media.js";
 
   export interface CompanionIdentityView {
     companionName: string;
@@ -30,7 +31,6 @@
     signature: string;
     moodLabel: string;
     mood: string;
-    intensity: number;
     moodNote?: string;
     affinity?: number;
     affinityStage?: string;
@@ -52,12 +52,13 @@
   }
 
   export let projection: CompanionProjection = { items: [], pendingCount: 0, running: false, status: "ready", openState: "open", hasMore: false, loadingOlder: false };
-  export let identity: CompanionIdentityView = { companionName: "Companion", userName: "你", preferredAddress: "你", signature: "", moodLabel: "如常", mood: "neutral", intensity: 1, affinity: 50, affinityStage: "熟悉" };
+  export let identity: CompanionIdentityView = { companionName: "Companion", userName: "你", preferredAddress: "你", signature: "", moodLabel: "如常", mood: "neutral", affinity: 50, affinityStage: "熟悉" };
   export let scheme: "light" | "dark" = "light";
   export let actions: CompanionActions = { send: async () => undefined };
   export let sessions: CompanionSessionView[] = [];
-  export let workspaceReady = true;
-  export let sessionReady = true;
+  export let workspaceReadiness: CompanionReadiness = "loading";
+  export let sessionReadiness: CompanionReadiness = "loading";
+  export let relationshipReadiness: CompanionReadiness = "loading";
   export let sessionId: string | undefined;
   export let imageLimits: import("@deepseek-ai/dsh-attachment").ImageAttachmentLimits | undefined;
   export let continuity: CompanionContinuityView = {};
@@ -70,6 +71,8 @@
   const DESKTOP_SIDEBAR_QUERY = "(min-width: 821px)";
   const DESKTOP_SIDEBAR_STORAGE_KEY = "dsh-companion:desktop-sidebar-open";
   const EMPTY_VOICE_PLAYBACK = { current: 0, duration: 0, playing: false };
+  const IMAGE_TILE_SIZE = 64;
+  const IMAGE_MAX_LONG_EDGE = 240;
   const LONG_WAIT_MESSAGES = [
     "我还在认真想，陪我再等一小会儿呀",
     "正在把想说的话轻轻理好……",
@@ -88,7 +91,15 @@
   let detailAnchor: HTMLDivElement;
   let sidebarOpen = readDesktopSidebarPreference();
   let detailOpen = false;
-  let lightbox: TimelineImage | undefined;
+  interface ImagePreviewTarget {
+    id: string;
+    alt: string;
+    previewUrl?: string;
+  }
+  interface ImagePart { kind: "images"; items: TimelineImage[]; }
+  interface ContentPart { kind: "item"; item: TimelineText | TimelineImage | TimelineVoice; }
+  type MessageContentPart = ImagePart | ContentPart;
+  let lightbox: ImagePreviewTarget | undefined;
   let lightboxUrl = "";
   let voiceUrls: Record<string, string> = {};
   let voiceErrors: Record<string, string> = {};
@@ -98,6 +109,7 @@
   let imageErrors: Record<string, string> = {};
   let imageSources: Record<string, string> = {};
   let imageLoads: Record<string, string> = {};
+  let imageDimensions: Record<string, { width: number; height: number }> = {};
   let wasNearBottom = true;
   let liveAnnouncement = "";
   let detailReturnFocus: HTMLElement | undefined;
@@ -123,12 +135,17 @@
   let imageDrafts: CompanionImageDraft[] = [];
   let imageDraftSessionId: string | undefined;
   let deferredPreviewReleases: CompanionImageDraft[] = [];
+  let deferredImageUrls = new Set<string>();
   let displayedProjection: CompanionProjection = projection;
   let submissionToken = 0;
   let imagePickerPointer: { id: number; startedAt: number } | undefined;
   let suppressImagePickerClick = false;
+  let composerResizeToken = 0;
 
-  $: statusText = projection.status === "working" ? "正在陪你想" : projection.status === "reconnecting" ? "正在重新连接" : "已准备好";
+  $: effectiveWorkspaceReadiness = workspaceReadiness;
+  $: effectiveSessionReadiness = sessionReadiness;
+  $: effectiveRelationshipReadiness = relationshipReadiness;
+  $: statusText = projection.status === "working" ? "正在输入…" : projection.status === "reconnecting" ? "连接中…" : "在线";
   $: imageGenerationRunning = projection.items.some((item) => item.kind === "image" && (item.state === "running" || item.state === "loading"));
   $: typingVisible = projection.running && !imageGenerationRunning;
   $: commandSuggestion = imageDrafts.length ? undefined : findComposerCommand(composer.draft);
@@ -140,25 +157,109 @@
   $: displayedProjection = projection;
   $: if (displayedProjection) void reconcileProjection(displayedProjection);
   $: if (sessionId !== imageDraftSessionId) {
-    releaseImageDrafts(imageDrafts);
+    releaseSubmissionImages(imageDrafts);
     imageDrafts = [];
     imageDraftSessionId = sessionId;
     composer = createComposerState();
     submissionToken += 1;
+    void scheduleComposerResize();
+  }
+
+  async function scheduleComposerResize(): Promise<void> {
+    const token = ++composerResizeToken;
+    await tick();
+    if (token !== composerResizeToken || !composerInput) return;
+    // Reset before measuring so deletion and rejected-send restoration shrink
+    // just as reliably as typing grows the draft.
+    composerInput.style.height = "auto";
+    const resolved = resolveComposerHeight(composerInput.scrollHeight, COMPOSER_MIN_HEIGHT, COMPOSER_MAX_HEIGHT);
+    composerInput.style.height = `${resolved.height}px`;
+    composerInput.style.overflowY = resolved.scrollable ? "auto" : "hidden";
+  }
+
+  function messageUnits(value: CompanionProjection): TimelineMessageUnit[] {
+    return value.messageUnits ? [...value.messageUnits] : groupTimelineItems(value.items);
+  }
+
+  function messageContentParts(unit: TimelineMessageUnit): MessageContentPart[] {
+    const content = unit.items.filter((item): item is TimelineText | TimelineImage | TimelineVoice => item.kind === "text" || item.kind === "image" || item.kind === "voice");
+    if (unit.side === "outgoing") {
+      const images = content.filter((item): item is TimelineImage => item.kind === "image");
+      const rest = content.filter((item) => item.kind !== "image");
+      return [
+        ...(images.length ? [{ kind: "images" as const, items: images }] : []),
+        ...rest.map((item) => ({ kind: "item" as const, item })),
+      ];
+    }
+    const parts: MessageContentPart[] = [];
+    for (const item of content) {
+      if (item.kind === "image") {
+        const previous = parts.at(-1);
+        if (previous?.kind === "images") previous.items.push(item);
+        else parts.push({ kind: "images", items: [item] });
+      } else parts.push({ kind: "item", item });
+    }
+    return parts;
+  }
+
+  function imageHasKnownDimensions(item: TimelineImage): boolean {
+    const width = item.attachment?.width;
+    const height = item.attachment?.height;
+    return typeof width === "number" && width > 0 && typeof height === "number" && height > 0;
+  }
+
+  function imageStyle(item: TimelineImage, tiled: boolean): string {
+    if (tiled) return `width:${IMAGE_TILE_SIZE}px;height:${IMAGE_TILE_SIZE}px`;
+    const dimensions = imageDimensions[item.id];
+    const width = dimensions?.width ?? item.attachment?.width;
+    const height = dimensions?.height ?? item.attachment?.height;
+    if (!imageHasKnownDimensions(item) && !dimensions) return "max-width:100%;max-height:240px;width:auto;height:auto";
+    const size = resolveImageDisplaySize(width, height, IMAGE_MAX_LONG_EDGE);
+    return `width:${size.width}px;height:${size.height}px;object-fit:${size.cropped ? "cover" : "contain"}`;
+  }
+
+  function onImageLoaded(item: TimelineImage, event: Event): void {
+    if (imageHasKnownDimensions(item)) return;
+    const image = event.currentTarget as HTMLImageElement;
+    if (image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
+    const current = imageDimensions[item.id];
+    if (current?.width === image.naturalWidth && current.height === image.naturalHeight) return;
+    imageDimensions = { ...imageDimensions, [item.id]: { width: image.naturalWidth, height: image.naturalHeight } };
+  }
+
+  function unitTestId(unit: TimelineMessageUnit): string {
+    const voice = unit.items.find((item): item is TimelineVoice => item.kind === "voice");
+    return voice ? `voice-${voice.id}` : `message-${unit.id}`;
+  }
+
+  function messengerRecoveryText(value: string, operation?: string): string {
+    if (operation === "stop") return "暂时停不下来，请再试一次。";
+    if (operation === "send") return "这条消息没发出去，可以再试一次。";
+    return value;
+  }
+
+  function noticeText(item: TimelineNotice): string {
+    return messengerRecoveryText(item.text, item.id === "prompt-error" ? projection.promptErrorOp : undefined);
   }
 
   function releaseDeferredPreviewReleases(): void {
-    if (deferredPreviewReleases.length === 0) return;
     const drafts = deferredPreviewReleases;
     deferredPreviewReleases = [];
-    releaseImageDrafts(drafts);
+    if (drafts.length) releaseImageDrafts(drafts);
+    if (deferredImageUrls.size) {
+      for (const url of deferredImageUrls) if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+      deferredImageUrls.clear();
+    }
   }
 
   function releaseSubmissionImages(images: readonly CompanionImageDraft[]): void {
     const protectedPreview = lightboxUrl && lightbox?.previewUrl === lightboxUrl ? lightboxUrl : undefined;
     const deferred = protectedPreview ? images.filter((draft) => draft.previewUrl === protectedPreview) : [];
     const releasable = deferred.length ? images.filter((draft) => draft.previewUrl !== protectedPreview) : images;
-    if (deferred.length) deferredPreviewReleases = [...deferredPreviewReleases, ...deferred];
+    if (deferred.length) {
+      const known = new Set(deferredPreviewReleases.map((draft) => draft.previewUrl));
+      deferredPreviewReleases = [...deferredPreviewReleases, ...deferred.filter((draft) => !known.has(draft.previewUrl))];
+    }
     if (releasable.length) void tick().then(() => releaseImageDrafts(releasable));
   }
 
@@ -178,7 +279,8 @@
     if (sessionId === originSessionId && sessionId === imageDraftSessionId) {
       composer = { ...composer, draft: composer.draft ? `${restoreText}\n${composer.draft}` : restoreText, composing: false };
       imageDrafts = [...imageDrafts, ...images];
-      liveAnnouncement = "消息没有发送成功，内容已恢复。";
+      void scheduleComposerResize();
+      liveAnnouncement = "没有发出去，内容已放回输入框。";
       return;
     }
     // A rejection from a Session that is no longer selected cannot be
@@ -306,7 +408,7 @@
       });
     }
     wasNearBottom = nearBottom;
-    liveAnnouncement = value.promptError ?? value.lastAgentError ?? "";
+    liveAnnouncement = value.promptError ? messengerRecoveryText(value.promptError, value.promptErrorOp) : value.lastAgentError ?? "";
     const wantedImages = new Map<string, TimelineImage>();
     for (const item of value.items) if (item.kind === "image" && item.state === "ready" && item.attachment) wantedImages.set(item.id, item);
     for (const [id, url] of Object.entries(imageUrls)) {
@@ -323,11 +425,20 @@
   }
 
   function imageSource(item: TimelineImage): string { return `${item.attachment?.attachmentId ?? ""}:${item.attachment?.mediaType ?? ""}`; }
+  function releaseImageUrl(url: string | undefined): void {
+    if (!url?.startsWith("blob:")) return;
+    if (url === lightboxUrl) {
+      deferredImageUrls.add(url);
+      return;
+    }
+    URL.revokeObjectURL(url);
+  }
   function revokeImage(id: string, url = imageUrls[id]): void {
-    if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
+    releaseImageUrl(url);
     const urls = { ...imageUrls }; const sources = { ...imageSources }; const errors = { ...imageErrors };
     delete urls[id]; delete sources[id]; delete errors[id];
     imageUrls = urls; imageSources = sources; imageErrors = errors;
+    const dimensions = { ...imageDimensions }; delete dimensions[id]; imageDimensions = dimensions;
   }
   async function loadImage(item: TimelineImage, source: string): Promise<void> {
     if (!actions.attachmentUrl || imageLoads[item.id] === source) return;
@@ -338,9 +449,27 @@
       if (live && imageSource(live) === source) {
         if (imageUrls[item.id] && imageUrls[item.id] !== url) revokeImage(item.id);
         imageUrls = { ...imageUrls, [item.id]: url }; imageSources = { ...imageSources, [item.id]: source };
+        if (lightbox?.id === item.id) {
+          const previous = lightboxUrl;
+          lightboxUrl = url;
+          if (previous && previous !== url) {
+            deferredImageUrls.delete(previous);
+            releaseImageUrl(previous);
+          }
+        }
       } else if (url.startsWith("blob:")) URL.revokeObjectURL(url);
-    } catch { imageErrors = { ...imageErrors, [item.id]: "图片暂时无法显示。" }; }
+    } catch {
+      const live = displayedProjection.items.find((candidate) => candidate.kind === "image" && candidate.id === item.id) as TimelineImage | undefined;
+      if (live && imageSource(live) === source) imageErrors = { ...imageErrors, [item.id]: "图片暂时无法显示。" };
+    }
     finally { const loads = { ...imageLoads }; delete loads[item.id]; imageLoads = loads; }
+  }
+
+  function retryImage(item: TimelineImage): void {
+    if (!actions.attachmentUrl || !item.attachment) return;
+    const errors = { ...imageErrors }; delete errors[item.id]; imageErrors = errors;
+    const loads = { ...imageLoads }; delete loads[item.id]; imageLoads = loads;
+    void loadImage(item, imageSource(item));
   }
 
   async function prepareVoice(item: TimelineVoice): Promise<void> {
@@ -491,6 +620,7 @@
     const originSessionId = sessionId;
     composer = { ...reduceComposer(composer, { type: "submit" }), draft: "", composing: false };
     imageDrafts = [];
+    void scheduleComposerResize();
     const token = ++submissionToken;
     const onRetire = (retirement: PendingSubmissionRetirement): void => {
       retireSubmission(submittedDrafts, retirement, restoreText, originSessionId);
@@ -503,10 +633,11 @@
       if (error instanceof CompanionPreControllerError && token === submissionToken && sessionId === originSessionId) {
         composer = { ...composer, draft: composer.draft ? `${restoreText}\n${composer.draft}` : restoreText, composing: false };
         imageDrafts = [...imageDrafts, ...submittedDrafts];
+        void scheduleComposerResize();
       }
       liveAnnouncement = error instanceof Error && error.message === "compact-with-images"
         ? "整理时请先移除图片。"
-        : "消息没有发送成功，内容已恢复。";
+        : "没有发出去，内容已放回输入框。";
     });
   }
 
@@ -514,7 +645,7 @@
     if (!actions.stop || stopping) return;
     stopping = true;
     try { await actions.stop(); }
-    catch { liveAnnouncement = "暂时无法停止当前回复，请重试。"; }
+    catch { liveAnnouncement = "暂时停不下来，请再试一次。"; }
     finally { stopping = false; }
   }
 
@@ -530,14 +661,14 @@
     }
   }
 
-  function setDraft(value: string): void { composer = reduceComposer(composer, { type: "input", value }); }
+  function setDraft(value: string): void { composer = reduceComposer(composer, { type: "input", value }); void scheduleComposerResize(); }
   function acceptCommandSuggestion(): void {
     if (!commandSuggestion) return;
     setDraft(commandSuggestion.command);
     void tick().then(() => composerInput?.focus());
   }
   function onInput(event: Event): void { setDraft((event.currentTarget as HTMLTextAreaElement).value); }
-  function onCompositionEnd(event: CompositionEvent): void { composer = reduceComposer(composer, { type: "compositionend", value: (event.currentTarget as HTMLTextAreaElement).value }); }
+  function onCompositionEnd(event: CompositionEvent): void { composer = reduceComposer(composer, { type: "compositionend", value: (event.currentTarget as HTMLTextAreaElement).value }); void scheduleComposerResize(); }
   function onCompositionStart(): void { composer = reduceComposer(composer, { type: "compositionstart" }); }
   function addImages(files: readonly File[]): void {
     const error = imageIntakeError(imageDrafts, files, imageLimits);
@@ -574,7 +705,7 @@
   }
 
   function removeImage(draft: CompanionImageDraft): void {
-    releaseImageDrafts([draft]);
+    releaseSubmissionImages([draft]);
     imageDrafts = imageDrafts.filter((candidate) => candidate !== draft);
   }
   function onImagePickerPointerDown(event: PointerEvent): void {
@@ -664,7 +795,7 @@
     }
     finishDetailClose();
   }
-  function openLightbox(item: TimelineImage): void {
+  function openLightbox(item: ImagePreviewTarget): void {
     lightboxReturnFocus = document.activeElement as HTMLElement;
     lightbox = item;
     lightboxUrl = item.previewUrl ?? imageUrls[item.id] ?? "";
@@ -704,10 +835,12 @@
   function onPopState(): void { overlayHistory = false; if (lightbox) closeLightbox(true); }
   function pushOverlayHistory(): void { if (!overlayHistory) { history.pushState({ companionOverlay: true }, ""); overlayHistory = true; } }
   function toggleDetail(): void { if (detailOpen) closeDetail(); else openDetail(); }
-  function showLightbox(item: TimelineImage): void { pushOverlayHistory(); openLightbox(item); }
+  function showLightbox(item: TimelineImage): void { pushOverlayHistory(); openLightbox({ id: item.id, alt: item.alt, previewUrl: item.previewUrl ?? imageUrls[item.id] }); }
+  function showDraftLightbox(draft: CompanionImageDraft): void { pushOverlayHistory(); openLightbox({ id: `draft:${draft.id}`, alt: draft.file.name || "待发送图片", previewUrl: draft.previewUrl }); }
   async function loadOlder(): Promise<void> { if (!actions.loadOlder || projection.loadingOlder) return; const previousHeight = timeline?.scrollHeight ?? 0; await actions.loadOlder(); await tick(); if (timeline) timeline.scrollTop += timeline.scrollHeight - previousHeight; }
 
   onMount(() => {
+    void scheduleComposerResize();
     const desktop = window.matchMedia(DESKTOP_SIDEBAR_QUERY);
     const onDesktopChange = (event: MediaQueryListEvent): void => {
       sidebarOpen = event.matches ? readDesktopSidebarPreference() : false;
@@ -719,11 +852,12 @@
   onDestroy(() => {
     if (timelineRevealFrame) cancelAnimationFrame(timelineRevealFrame);
     releaseDeferredPreviewReleases();
-    releaseImageDrafts(imageDrafts);
+    releaseSubmissionImages(imageDrafts);
     clearWaitingTimers();
     clearContinuityStatusTimer();
     for (const audio of document.querySelectorAll<HTMLAudioElement>("#dsh-companion .companion-voice audio")) audio.pause();
-    for (const url of Object.values(imageUrls)) if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+    for (const url of Object.values(imageUrls)) releaseImageUrl(url);
+    releaseDeferredPreviewReleases();
   });
 </script>
 
@@ -750,7 +884,7 @@
                   <button class="cmp-btn cmp-btn-ghost cmp-btn-circle cmp-btn-sm companion-detail-close" aria-label="关闭关系资料" on:click={() => closeDetail()}>×</button>
                 </div>
                 <p class="companion-signature">{identity.signature || "还没有签名"}</p>
-                <dl class="companion-relationship-list"><dt>此刻心情</dt><dd>{identity.moodLabel} · {INTENSITY_LABELS[identity.intensity]}</dd>{#if identity.moodNote}<dt>心情短句</dt><dd>{identity.moodNote}</dd>{/if}<dt>亲近度</dt><dd>{identity.affinity === undefined ? "加载中…" : `${identity.affinity} · ${identity.affinityStage}`}</dd></dl>
+                <dl class="companion-relationship-list"><dt>此刻状态</dt><dd>{identity.moodLabel}</dd>{#if identity.moodNote}<dt>状态短句</dt><dd>{identity.moodNote}</dd>{/if}<dt>亲近度</dt><dd>{identity.affinity === undefined ? "加载中…" : `${identity.affinity} · ${identity.affinityStage}`}</dd></dl>
               </div>
             </div>
           {/if}
@@ -759,21 +893,54 @@
           <div class="companion-name">{identity.companionName}</div>
           <div class="companion-presence" aria-live="polite"><span class="cmp-status {projection.status === 'working' ? 'cmp-status-warning' : projection.status === 'reconnecting' ? 'cmp-status-error' : 'cmp-status-success'}"></span>{statusText} · {identity.moodLabel}</div>
         </div>
-        <a class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-full-dsh" href="/" aria-label="打开完整 DSH" title="打开完整 DSH" on:click={() => dispatch("advanced")}><PanelsTopLeft size={18} strokeWidth={1.8} aria-hidden="true" /></a>
+        <a class="cmp-btn cmp-btn-ghost companion-full-dsh" href="/" aria-label="打开完整 DSH" title="打开完整 DSH" on:click={() => dispatch("advanced")}><PanelsTopLeft size={18} strokeWidth={1.8} aria-hidden="true" /><span class="companion-full-dsh-label">更多功能</span></a>
       </header>
 
-      {#if !workspaceReady}
+      {#if effectiveWorkspaceReadiness === "loading"}
+        <section class="companion-loading-shell" role="status" aria-label="正在加载">
+          <LoaderCircle class="companion-spin" size={22} aria-hidden="true" /><span>正在加载…</span>
+        </section>
+      {:else if effectiveWorkspaceReadiness === "missing"}
         <section class="companion-recovery" role="alert">
           <div class="companion-mood-orb" aria-hidden="true"></div>
-          <h1>还没有连接 Companion Workspace</h1>
-          <p>请在高级 DSH 的设置中配置一个 Workspace。我们不会替你切换到别处。</p>
-          <a class="cmp-btn cmp-btn-primary" href="/" on:click={() => dispatch("recovery")}>打开高级设置</a>
+          <h1>还没有设置聊天空间</h1>
+          <p>请在 DSH 设置中选择一个 Workspace。我们不会替你自动切换。</p>
+          <a class="cmp-btn cmp-btn-primary" href="/" aria-label="去 DSH 设置选择聊天空间" on:click={() => dispatch("recovery")}>去设置</a>
         </section>
-      {:else if !sessionReady || projection.openState === "error"}
+      {:else if effectiveWorkspaceReadiness === "error"}
+        <section class="companion-recovery" role="alert">
+          <div class="companion-mood-orb" aria-hidden="true"></div>
+          <h1>聊天空间暂时打不开</h1>
+          <p>请回到 DSH 设置检查连接，然后再试一次。</p>
+          <button class="cmp-btn cmp-btn-primary" on:click={() => dispatch("recovery")}>重新连接</button>
+        </section>
+      {:else if effectiveRelationshipReadiness === "loading"}
+        <section class="companion-loading-shell" role="status" aria-label="正在加载">
+          <LoaderCircle class="companion-spin" size={22} aria-hidden="true" /><span>正在加载…</span>
+        </section>
+      {:else if effectiveRelationshipReadiness === "missing"}
+        <section class="companion-recovery" role="alert">
+          <div class="companion-mood-orb" aria-hidden="true"></div>
+          <h1>还没有设置聊天空间</h1>
+          <p>请在 DSH 设置中选择一个 Workspace。我们不会替你自动切换。</p>
+          <a class="cmp-btn cmp-btn-primary" href="/" aria-label="去 DSH 设置选择聊天空间" on:click={() => dispatch("recovery")}>去设置</a>
+        </section>
+      {:else if effectiveRelationshipReadiness === "error"}
+        <section class="companion-recovery" role="alert">
+          <div class="companion-mood-orb" aria-hidden="true"></div>
+          <h1>关系资料暂时打不开</h1>
+          <p>聊天空间还在，连接恢复后可以继续。</p>
+          <button class="cmp-btn cmp-btn-primary" on:click={() => dispatch("recovery")}>重新连接</button>
+        </section>
+      {:else if effectiveSessionReadiness === "loading"}
+        <section class="companion-loading-shell" role="status" aria-label="正在加载">
+          <LoaderCircle class="companion-spin" size={22} aria-hidden="true" /><span>正在加载…</span>
+        </section>
+      {:else if effectiveSessionReadiness === "error" || projection.openState === "error"}
         <section class="companion-recovery" role="alert">
           <div class="companion-mood-orb" aria-hidden="true"></div>
           <h1>这段对话暂时打不开</h1>
-          <p>你的消息不会被悄悄丢掉。连接恢复后可以继续，或回到高级 DSH 检查状态。</p>
+          <p>你的消息不会被悄悄丢掉。连接恢复后可以继续，或回到 DSH 检查状态。</p>
           <button class="cmp-btn cmp-btn-primary" on:click={() => dispatch("recovery")}>重新连接</button>
         </section>
       {:else}
@@ -783,65 +950,79 @@
             <button class="cmp-btn cmp-btn-ghost cmp-btn-sm" style="display:block;margin:0 auto 18px" on:click={loadOlder} disabled={displayedProjection.loadingOlder}>{displayedProjection.loadingOlder ? "正在加载…" : "查看更早的消息"}</button>
           {/if}
           {#if displayedProjection.items.length === 0}
-            <div class="companion-recovery"><div class="companion-mood-orb" aria-hidden="true"></div><h1>嗨，{identity.preferredAddress}</h1><p>从一句今天的心情开始吧。</p></div>
+            <div class="companion-recovery"><div class="companion-mood-orb" aria-hidden="true"></div><h1>嗨，{identity.preferredAddress}</h1><p>今天想聊点什么？</p></div>
           {/if}
-          {#each displayedProjection.items as item (item.projectionKey ?? item.id)}
-            {#if item.kind === "text"}
-              <article class="cmp-chat companion-row" class:cmp-chat-start={item.side === "incoming"} class:cmp-chat-end={item.side === "outgoing"} class:outgoing={item.side === "outgoing"} class:incoming={item.side === "incoming"} data-testid={`message-${item.id}`}>
+          {#each messageUnits(displayedProjection) as unit (unit.id)}
+            {@const first = unit.items[0]}
+            {#if first?.kind === "continuity"}
+              <div class="companion-continuity-record" data-testid={`continuity-record-${first.compactionId}`} aria-live="off">{first.text}</div>
+            {:else if first?.kind === "notice"}
+              <div class="companion-recovery" role={first.tone === "error" ? "alert" : "status"}><p>{noticeText(first)}</p></div>
+            {:else}
+              {@const parts = messageContentParts(unit)}
+              <article class="cmp-chat companion-row" class:cmp-chat-start={unit.side === "incoming"} class:cmp-chat-end={unit.side === "outgoing"} class:outgoing={unit.side === "outgoing"} class:incoming={unit.side === "incoming"} data-testid={unitTestId(unit)}>
                 <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder cmp:rounded-full message-avatar">
-                  <div class="companion-avatar-crop cmp:rounded-full">{#if item.side === "incoming" && identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else if item.side === "outgoing" && identity.userAvatar}<img src={identity.userAvatar} alt="" />{:else}<span aria-hidden="true">{item.side === "incoming" ? "✦" : "你"}</span>{/if}</div>
+                  <div class="companion-avatar-crop cmp:rounded-full">{#if unit.side === "incoming" && identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else if unit.side === "outgoing" && identity.userAvatar}<img src={identity.userAvatar} alt="" />{:else}<span aria-hidden="true">{unit.side === "incoming" ? "✦" : "你"}</span>{/if}</div>
                 </div>
                 <div class="companion-message-stack">
-                  <div class="cmp-chat-bubble companion-bubble" class:cmp-skeleton={item.pending && !item.text}><Markdown text={item.text} /></div>
-                  {#if item.pending}<div class="companion-meta">排队中 · 会在当前回复后发送</div>{/if}
-                </div>
-              </article>
-            {:else if item.kind === "image"}
-              <article class="cmp-chat companion-row" class:cmp-chat-start={item.side === "incoming"} class:cmp-chat-end={item.side === "outgoing"} class:outgoing={item.side === "outgoing"} class:incoming={item.side === "incoming"} data-testid={`image-${item.id}`}>
-                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder cmp:rounded-full message-avatar"><div class="companion-avatar-crop cmp:rounded-full">{#if item.side === "incoming" && identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else if item.side === "outgoing" && identity.userAvatar}<img src={identity.userAvatar} alt="" />{:else}<span aria-hidden="true">{item.side === "incoming" ? "✦" : "你"}</span>{/if}</div></div>
-                <div class="cmp-chat-bubble companion-media">
-                  {#if item.state === "running" || item.state === "loading"}<div class="cmp-skeleton" style="height:260px" aria-hidden="true"></div><div style="padding:12px" role="status">正在画一张图…</div>
-                  {:else if item.previewUrl || imageUrls[item.id]}<button class="companion-media-button" aria-label={"查看大图：" + item.alt} on:click={() => showLightbox(item)}><img src={item.previewUrl ?? imageUrls[item.id]} alt={item.alt} /></button>
-                  {:else if imageErrors[item.id] || item.state === "failed"}<div role="alert" style="padding:22px">{item.error || imageErrors[item.id] || "图片暂时无法显示。"}</div>
-                  {:else}<div class="cmp-loading cmp-loading-spinner" style="margin:32px auto"></div>{/if}
-                </div>
-              </article>
-            {:else if item.kind === "voice"}
-              {@const playback = voicePlayback[item.id] ?? EMPTY_VOICE_PLAYBACK}
-              <article class="cmp-chat cmp-chat-start companion-row incoming" data-testid={`voice-${item.id}`}>
-                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder cmp:rounded-full message-avatar"><div class="companion-avatar-crop cmp:rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div></div>
-                <div class="cmp-chat-bubble companion-bubble companion-voice" role="region" aria-label="语音播放器">
-                  {#if voiceUrls[item.id]}
-                    <audio class="companion-audio" preload="metadata" src={voiceUrls[item.id]} aria-hidden="true" tabindex="-1" use:trackVoiceAudio={item.id}></audio>
-                    <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-voice-control" aria-label={playback.playing ? "暂停语音" : "播放语音"} on:click={(event) => void toggleVoice(item, event.currentTarget)}>
-                      {#if playback.playing}<Pause size={18} fill="currentColor" aria-hidden="true" />{:else}<Play size={18} fill="currentColor" aria-hidden="true" />{/if}
-                    </button>
-                    <div class="companion-voice-player">
-                      <div class="companion-voice-waveform">
-                        {#each voiceWaveform(item.id) as height, index}<span class:played={(index + 1) / VOICE_WAVEFORM_BAR_COUNT <= voiceProgress(playback)} style={`--voice-bar:${height}%`} aria-hidden="true"></span>{/each}
-                        <input class="companion-voice-seek" type="range" min="0" max={playback.duration || 0} step="0.1" value={playback.current} disabled={!hasVoiceDuration(playback)} aria-label="语音进度" aria-valuetext={hasVoiceDuration(playback) ? `${formatVoiceSeconds(playback.current)} / ${formatVoiceSeconds(playback.duration, "ceil")}` : "正在加载语音时长"} on:input={(event) => seekVoice(event, item.id)} />
+                  {#each parts as part}
+                    {#if part.kind === "images"}
+                      <div class="companion-image-group" class:companion-image-group-many={part.items.length > 1} data-testid={`image-group-${unit.id}`}>
+                        {#each part.items as image (image.id)}
+                          <div class="companion-image-entry" class:companion-image-entry-tile={part.items.length > 1} data-testid={`image-${image.id}`}>
+                          <div class="companion-media" class:companion-media-tile={part.items.length > 1} class:companion-media-single={part.items.length === 1}>
+                            {#if image.state === "running" || image.state === "loading"}
+                              <div class="cmp-skeleton companion-media-loading" aria-hidden="true"></div><div class="companion-media-status" role="status">正在画一张图…</div>
+                            {:else if image.previewUrl || imageUrls[image.id]}
+                              <button class="companion-media-button" aria-label={"查看大图：" + image.alt} on:click={() => showLightbox(image)}><img src={image.previewUrl ?? imageUrls[image.id]} alt={image.alt} style={imageStyle(image, part.items.length > 1)} on:load={(event) => onImageLoaded(image, event)} /></button>
+                            {:else if imageErrors[image.id]}
+                              <div class="companion-media-failure" role="alert" style={imageStyle(image, part.items.length > 1)}><span>{imageErrors[image.id]}</span><button class="cmp-btn cmp-btn-ghost cmp-btn-sm" type="button" on:click={() => retryImage(image)}>重试</button></div>
+                            {:else if image.state === "failed"}
+                              <div class="companion-media-failure" role="alert" style={imageStyle(image, part.items.length > 1)}><span>{image.error || "图片生成没有完成。"}</span></div>
+                            {:else}
+                              <div class="cmp-loading cmp-loading-spinner companion-media-spinner" role="status" aria-label="正在加载…"></div>
+                            {/if}
+                          </div>
+                          </div>
+                        {/each}
                       </div>
-                      <div class="companion-voice-meta">{#if voiceTimestamp(playback)}<span role="timer" aria-live="off">{voiceTimestamp(playback)}</span>{:else}<span role="status">加载时长…</span>{/if}{#if voiceErrors[item.id]}<span role="alert">播放失败</span>{/if}</div>
-                    </div>
-                  {:else}
-                    <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-voice-control" aria-label={voicePreparing[item.id] ? "正在准备语音" : voiceErrors[item.id] ? "重试语音" : "播放语音"} on:click={(event) => void toggleVoice(item, event.currentTarget)} disabled={!actions.prepareVoice || voicePreparing[item.id]}>
-                      {#if voicePreparing[item.id]}<LoaderCircle class="companion-spin" size={18} aria-hidden="true" />{:else if voiceErrors[item.id]}<RotateCcw size={18} aria-hidden="true" />{:else}<Play size={18} fill="currentColor" aria-hidden="true" />{/if}
-                    </button>
-                    <div class="companion-voice-player">
-                      <div class="companion-voice-waveform">{#each voiceWaveform(item.id) as height}<span style={`--voice-bar:${height}%`} aria-hidden="true"></span>{/each}</div>
-                      <div class="companion-voice-meta">{#if voicePreparing[item.id]}<span role="status">准备中</span>{:else if voiceErrors[item.id]}<span role="alert">播放失败</span>{:else}<span role="status">准备中</span>{/if}</div>
-                    </div>
-                  {/if}
-                  <details class="companion-transcript" open={Boolean(voiceErrors[item.id])}>
-                    <summary><MessageSquareText size={14} aria-hidden="true" /><span>转文字</span></summary>
-                    <p>{item.text}</p>
-                  </details>
+                    {:else if part.item.kind === "text"}
+                      <div class="cmp-chat-bubble companion-bubble" class:cmp-skeleton={part.item.pending && !part.item.text}><Markdown text={part.item.text} /></div>
+                      {#if part.item.pending}<div class="companion-meta">等当前回复结束后发送</div>{/if}
+                    {:else}
+                      {@const item = part.item}
+                      {@const playback = voicePlayback[item.id] ?? EMPTY_VOICE_PLAYBACK}
+                      <div class="cmp-chat-bubble companion-bubble companion-voice" role="region" aria-label="语音播放器">
+                        {#if voiceUrls[item.id]}
+                          <audio class="companion-audio" preload="metadata" src={voiceUrls[item.id]} aria-hidden="true" tabindex="-1" use:trackVoiceAudio={item.id}></audio>
+                          <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-voice-control" aria-label={playback.playing ? "暂停语音" : "播放语音"} on:click={(event) => void toggleVoice(item, event.currentTarget)}>
+                            {#if playback.playing}<Pause size={18} fill="currentColor" aria-hidden="true" />{:else}<Play size={18} fill="currentColor" aria-hidden="true" />{/if}
+                          </button>
+                          <div class="companion-voice-player">
+                            <div class="companion-voice-waveform">
+                              {#each voiceWaveform(item.id) as height, index}<span class:played={(index + 1) / VOICE_WAVEFORM_BAR_COUNT <= voiceProgress(playback)} style={`--voice-bar:${height}%`} aria-hidden="true"></span>{/each}
+                              <input class="companion-voice-seek" type="range" min="0" max={playback.duration || 0} step="0.1" value={playback.current} disabled={!hasVoiceDuration(playback)} aria-label="语音进度" aria-valuetext={hasVoiceDuration(playback) ? `${formatVoiceSeconds(playback.current)} / ${formatVoiceSeconds(playback.duration, "ceil")}` : "正在加载…"} on:input={(event) => seekVoice(event, item.id)} />
+                            </div>
+                            <div class="companion-voice-meta">{#if voiceTimestamp(playback)}<span role="timer" aria-live="off">{voiceTimestamp(playback)}</span>{:else}<span role="status">正在加载…</span>{/if}{#if voiceErrors[item.id]}<span role="alert">播放失败</span>{/if}</div>
+                          </div>
+                        {:else}
+                          <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-voice-control" aria-label={voicePreparing[item.id] ? "正在准备语音" : voiceErrors[item.id] ? "重试语音" : "播放语音"} on:click={(event) => void toggleVoice(item, event.currentTarget)} disabled={!actions.prepareVoice || voicePreparing[item.id]}>
+                            {#if voicePreparing[item.id]}<LoaderCircle class="companion-spin" size={18} aria-hidden="true" />{:else if voiceErrors[item.id]}<RotateCcw size={18} aria-hidden="true" />{:else}<Play size={18} fill="currentColor" aria-hidden="true" />{/if}
+                          </button>
+                          <div class="companion-voice-player">
+                            <div class="companion-voice-waveform">{#each voiceWaveform(item.id) as height}<span style={`--voice-bar:${height}%`} aria-hidden="true"></span>{/each}</div>
+                            <div class="companion-voice-meta">{#if voicePreparing[item.id]}<span role="status">正在加载…</span>{:else if voiceErrors[item.id]}<span role="alert">播放失败</span>{:else}<span role="status">正在加载…</span>{/if}</div>
+                          </div>
+                        {/if}
+                        <details class="companion-transcript" open={Boolean(voiceErrors[item.id])}>
+                          <summary><MessageSquareText size={14} aria-hidden="true" /><span>转文字</span></summary>
+                          <p>{item.text}</p>
+                        </details>
+                      </div>
+                    {/if}
+                  {/each}
                 </div>
               </article>
-            {:else if item.kind === "continuity"}
-              <div class="companion-continuity-record" data-testid={`continuity-record-${item.compactionId}`} aria-live="off">{item.text}</div>
-            {:else}
-              <div class="companion-recovery" role={item.tone === "error" ? "alert" : "status"}><p>{item.text}</p></div>
             {/if}
           {/each}
           {#if typingVisible}
@@ -852,7 +1033,7 @@
               <div class="cmp-chat-bubble companion-bubble companion-typing-bubble"><span class="cmp-loading cmp-loading-dots cmp-loading-sm" aria-hidden="true"></span>{#if waitingCopy}<span class="companion-waiting-copy">{waitingCopy}</span>{/if}</div>
             </article>
           {/if}
-          {#if !wasNearBottom && displayedProjection.items.length > 0}<button class="cmp-btn cmp-btn-primary cmp-btn-sm" style="position:sticky;bottom:10px;left:50%;transform:translateX(-50%)" on:click={() => timeline.scrollTop = timeline.scrollHeight}>有新消息 ↓</button>{/if}
+          {#if !wasNearBottom && displayedProjection.items.length > 0}<button class="cmp-btn cmp-btn-primary cmp-btn-sm companion-new-message" style="position:sticky;bottom:10px;left:50%;transform:translateX(-50%)" on:click={() => timeline.scrollTop = timeline.scrollHeight}>有新消息 ↓</button>{/if}
           </div>
         </div>
         <div class="companion-composer">
@@ -874,7 +1055,7 @@
             <div class="companion-image-drafts" role="group" aria-label="待发送图片">
               {#each imageDrafts as draft (draft.id)}
                 <div class="companion-image-draft">
-                  <img src={draft.previewUrl} alt={draft.file.name || "待发送图片"} />
+                  <button class="companion-image-draft-preview" type="button" aria-label={"查看大图：" + (draft.file.name || "待发送图片")} on:click={() => showDraftLightbox(draft)}><img src={draft.previewUrl} alt={draft.file.name || "待发送图片"} /></button>
                   <button class="cmp-btn cmp-btn-circle companion-image-draft-remove" type="button" aria-label="移除图片" on:click={() => removeImage(draft)}><X size={13} strokeWidth={2.5} aria-hidden="true" /></button>
                 </div>
               {/each}
@@ -904,7 +1085,7 @@
               <button class="cmp-btn cmp-btn-primary cmp-btn-circle companion-send" aria-label="发送消息" on:click={submit} disabled={!composer.draft.trim() && imageDrafts.length === 0}><span aria-hidden="true">↑</span></button>
             {/if}
           </div>
-          <div class="companion-compose-hint">Enter 发送 · Shift+Enter 换行{displayedProjection.pendingCount ? ` · ${displayedProjection.pendingCount} 条消息排队中` : ""}</div>
+          <div class="companion-compose-hint">Enter 发送 · Shift+Enter 换行{displayedProjection.pendingCount ? ` · ${displayedProjection.pendingCount} 条待发送` : ""}</div>
         </div>
       {/if}
     </main>
@@ -922,7 +1103,7 @@
           {/each}
           {#if sessions.length === 0}<p class="companion-session-empty">还没有可以继续的对话</p>{/if}
         </nav>
-        <a class="companion-sidebar-advanced" href="/" on:click={() => dispatch("advanced")}>打开完整 DSH</a>
+        <a class="companion-sidebar-advanced" href="/" aria-label="打开完整 DSH" on:click={() => dispatch("advanced")}>更多功能</a>
       </aside>
     </div>
   </div>

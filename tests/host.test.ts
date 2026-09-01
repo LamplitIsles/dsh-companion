@@ -237,8 +237,9 @@ describe("Host accepted-turn relationship contract", () => {
     const directory = await mkdtemp("/tmp/dsh-companion-host-"); temporary.push(directory);
     const statePath = join(directory, ".dsh/dsh-companion/state.json");
     await mkdir(join(directory, ".dsh/dsh-companion"), { recursive: true });
-    await writeFile(statePath, JSON.stringify({ mood: "tender", intensity: 2, affinity: 67, signature: "旧签名" }));
+    await writeFile(statePath, JSON.stringify({ mood: "tender", affinity: 67, signature: "旧签名" }));
     let rpcHandler: ((endpoint: string, payload: unknown, signal: AbortSignal) => Promise<unknown>) | undefined;
+    const registeredTools: unknown[] = [];
     const scope = {
       get: () => ({ workspaceId: "workspace-a", companionName: "Companion", userName: "你", preferredAddress: "你", defaultAffinity: 50 }),
       update: async () => undefined,
@@ -254,7 +255,7 @@ describe("Host accepted-turn relationship contract", () => {
       },
       settings: { register: () => scope },
       systemPrompt: { context: () => () => undefined },
-      tools: { register: () => undefined },
+      tools: { register: (tool: unknown) => { registeredTools.push(tool); } },
       connection: { rpc: { handle: (_channel: string, handler: typeof rpcHandler) => { rpcHandler = handler; return () => undefined; } } },
       workspaceRegistry: { get: (id: string) => id === "workspace-a" ? { id, path: directory, sessionIds: [] } : undefined, list: () => [] },
       llm: {},
@@ -263,6 +264,12 @@ describe("Host accepted-turn relationship contract", () => {
     };
     const host = new CompanionHostController(ctx as never, scope);
     host.register();
+    const moodTool = registeredTools.find((tool): tool is { name: string; parameters: Record<string, unknown>; output: { schema: { properties?: Record<string, unknown> } }; execute(args: unknown, exec: ToolRunContext): Promise<Record<string, unknown>> } => typeof tool === "object" && tool !== null && (tool as { name?: unknown }).name === "companion_set_mood");
+    expect(moodTool?.parameters).toMatchObject({ properties: { mood: expect.any(Object), note: expect.any(Object) } });
+    expect(moodTool?.parameters.properties).not.toHaveProperty("intensity");
+    expect(moodTool?.output.schema.properties).not.toHaveProperty("intensity");
+    await expect(moodTool?.execute({ mood: "tender", note: "今天想慢一点" }, execution([]))).resolves.toMatchObject({ mood: "tender", note: "今天想慢一点", message: "Companion 此刻状态已更新为 柔和。" });
+    await expect(moodTool?.execute({ mood: "tender", intensity: 2 }, execution([]))).rejects.toThrow("未知字段");
     const handler = rpcHandler!;
     const initial = await handler("relationship/get", { workspaceId: "workspace-a" }, new AbortController().signal) as { ok: boolean; value: { state: { affinity: number; signature: string }; revision: number } };
     expect(initial.value.state).toMatchObject({ affinity: 67, signature: "旧签名" });
@@ -277,7 +284,7 @@ describe("Host accepted-turn relationship contract", () => {
   it("preloads persisted relationship state before the first prompt callback is registered", async () => {
     const directory = await mkdtemp("/tmp/dsh-companion-host-"); temporary.push(directory);
     await mkdir(join(directory, ".dsh/dsh-companion"), { recursive: true });
-    await writeFile(join(directory, ".dsh/dsh-companion/state.json"), JSON.stringify({ mood: "tender", intensity: 2, affinity: 67, signature: "旧签名" }));
+    await writeFile(join(directory, ".dsh/dsh-companion/state.json"), JSON.stringify({ mood: "tender", affinity: 67, signature: "旧签名" }));
     let prompt: ((context: { agent?: { session?: { header?: { cwd?: string } } } }) => string) | undefined;
     const scope = {
       get: () => ({ workspaceId: "workspace-a", companionName: "Companion", userName: "你", preferredAddress: "你", defaultAffinity: 50 }),

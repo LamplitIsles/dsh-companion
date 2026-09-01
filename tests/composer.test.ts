@@ -1,10 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
-import { createComposerState, findComposerCommand, reduceComposer, shouldSubmitEnter } from "../src/client/composer.js";
+import { COMPOSER_MAX_HEIGHT, COMPOSER_MIN_HEIGHT, createComposerState, findComposerCommand, reduceComposer, resolveComposerHeight, shouldSubmitEnter } from "../src/client/composer.js";
 import { CompanionAdmissionError, CompanionPreControllerError, submitCompanionInput } from "../src/client/admission.js";
 import { changedSettingsPayload, mergeCleanSettingsDraft, relationshipControlsWritable } from "../src/client/settings.js";
 import { companionSessionOpenPlan } from "../src/client/session-opening.js";
 
 describe("IME composer", () => {
+  it("keeps a one-line minimum, caps long drafts, and enables only internal overflow at the cap", () => {
+    expect(resolveComposerHeight(12)).toEqual({ height: COMPOSER_MIN_HEIGHT, scrollable: false });
+    expect(resolveComposerHeight(90)).toEqual({ height: 90, scrollable: false });
+    expect(resolveComposerHeight(COMPOSER_MAX_HEIGHT + 1)).toEqual({ height: COMPOSER_MAX_HEIGHT, scrollable: true });
+    expect(resolveComposerHeight(0, 40, 120)).toEqual({ height: 40, scrollable: false });
+  });
+
   it("does not submit while composing and submits once after composition", () => {
     let state = createComposerState("你好");
     state = reduceComposer(state, { type: "compositionstart" });

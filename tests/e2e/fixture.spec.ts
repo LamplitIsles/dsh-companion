@@ -34,6 +34,9 @@ test("fixture has complete media states, accessible overlays, and no duplicate i
   await avatar.focus();
   await avatar.click();
   await expect(page.getByRole("dialog")).toContainText("把平凡日子折成星星");
+  await expect(page.getByRole("dialog")).toContainText("此刻状态");
+  await expect(page.getByRole("dialog")).toContainText("柔和");
+  await expect(page.getByRole("dialog")).toContainText("状态短句");
   await expect(page.getByRole("button", { name: "关闭关系资料", exact: true })).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await expect(avatar).toBeFocused();
@@ -44,6 +47,12 @@ test("fixture has complete media states, accessible overlays, and no duplicate i
   await expect(page.getByRole("button", { name: "关闭大图" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "关闭大图" })).toHaveCount(0);
+  const singleImage = page.locator('[data-testid="image-imagegen:demo:img"]');
+  await expect(singleImage).toBeVisible();
+  await expect.poll(() => singleImage.locator("img").evaluate((node) => {
+    const box = node.getBoundingClientRect();
+    return { width: box.width, height: box.height };
+  })).toEqual({ width: 240, height: 158 });
   await page.evaluate(() => window.__companionFixture?.replaceImage());
   await expect.poll(() => page.evaluate(() => window.__companionFixture?.revoked() ?? 0)).toBeGreaterThan(0);
   await page.evaluate(() => window.__companionFixture?.removeImage());
@@ -66,6 +75,71 @@ test("relationship card uses the semantic base surface in both themes", async ({
   await avatar.click();
   await expect(card).toBeVisible();
   await expect.poll(() => card.evaluate((node) => getComputedStyle(node).backgroundColor)).toBe("rgb(16, 24, 39)");
+});
+
+test("unread-message action resolves the light primary semantic contrast", async ({ page }) => {
+  await page.goto("/");
+  const timeline = page.locator(".companion-timeline");
+  await timeline.evaluate((node) => {
+    node.scrollTop = 0;
+    node.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  const action = page.getByRole("button", { name: "有新消息 ↓" });
+  await expect(action).toBeVisible();
+  await expect.poll(() => action.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { background: style.backgroundColor, color: style.color };
+  })).toEqual({ background: "rgb(237, 113, 134)", color: "rgb(255, 255, 255)" });
+});
+
+test("composer grows, caps, and shrinks without document overflow", async ({ page }) => {
+  await page.goto("/");
+  const textarea = page.getByRole("textbox", { name: "写消息" });
+  const metrics = () => textarea.evaluate((node) => ({
+    height: node.getBoundingClientRect().height,
+    overflowY: getComputedStyle(node).overflowY,
+    documentHeight: document.documentElement.scrollHeight,
+    viewportHeight: window.innerHeight,
+  }));
+  const initial = await metrics();
+  expect(initial.height).toBeGreaterThanOrEqual(43);
+  await textarea.fill("第一行\n第二行");
+  await expect.poll(metrics).toMatchObject({ overflowY: "hidden" });
+  const multiline = await metrics();
+  expect(multiline.height).toBeGreaterThan(initial.height);
+  await textarea.fill("x".repeat(2_000));
+  await expect.poll(metrics).toMatchObject({ height: 150, overflowY: "auto" });
+  const capped = await metrics();
+  expect(capped.documentHeight).toBeLessThanOrEqual(capped.viewportHeight + 1);
+  await textarea.fill("缩回去");
+  await expect.poll(metrics).toMatchObject({ overflowY: "hidden" });
+  expect((await metrics()).height).toBe(initial.height);
+});
+
+test("keeps startup neutral until each readiness authority settles", async ({ page }) => {
+  await page.goto("/?workspace=loading&relationship=loading&session=loading");
+  await expect(page.getByRole("status", { name: "正在加载" })).toBeVisible();
+  await expect(page.getByText("还没有设置聊天空间", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("这段对话暂时打不开", { exact: true })).toHaveCount(0);
+
+  await page.evaluate(() => window.__companionFixture?.setReadiness({ workspace: "ready" }));
+  await expect(page.getByRole("status", { name: "正在加载" })).toBeVisible();
+  await page.evaluate(() => window.__companionFixture?.setReadiness({ relationship: "ready" }));
+  await expect(page.getByRole("status", { name: "正在加载" })).toBeVisible();
+  await page.evaluate(() => window.__companionFixture?.setReadiness({ session: "ready" }));
+  await expect(page.getByRole("textbox", { name: "写消息" })).toBeVisible();
+
+  await page.evaluate(() => window.__companionFixture?.setReadiness({ workspace: "missing" }));
+  await expect(page.getByRole("heading", { name: "还没有设置聊天空间" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "去 DSH 设置选择聊天空间" })).toBeVisible();
+  await expect(page.locator(".companion-recovery")).toContainText("我们不会替你自动切换。");
+
+  await page.evaluate(() => window.__companionFixture?.setReadiness({ workspace: "ready", relationship: "error", session: "loading" }));
+  await expect(page.getByRole("heading", { name: "关系资料暂时打不开" })).toBeVisible();
+  await expect(page.getByText("还没有设置聊天空间", { exact: true })).toHaveCount(0);
+  await page.evaluate(() => window.__companionFixture?.setReadiness({ relationship: "ready", session: "error" }));
+  await expect(page.getByRole("heading", { name: "这段对话暂时打不开" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "重新连接" })).toBeVisible();
 });
 
 test("Pixel 7a geometry keeps composer and relationship overlay usable", async ({ page }) => {
@@ -127,6 +201,12 @@ test("admits photos from the library or desktop paste and sends them as a draft"
   await expect(drafts).toBeVisible();
   await expect(drafts.getByRole("img", { name: "island.png" })).toBeVisible();
   await expect.poll(() => drafts.locator("img").evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBe(1);
+  const draftPreview = drafts.getByRole("button", { name: "查看大图：island.png" });
+  await draftPreview.click();
+  await expect(page.getByRole("button", { name: "关闭大图" })).toBeFocused();
+  await expect(page.getByRole("dialog").getByRole("img", { name: "island.png" })).toBeVisible();
+  await page.getByRole("button", { name: "关闭大图" }).click();
+  await expect(draftPreview).toBeFocused();
   await expect(send).toBeEnabled();
   await send.click();
   await expect(drafts).toHaveCount(0);
@@ -185,6 +265,20 @@ test("admits photos from the library or desktop paste and sends them as a draft"
   await expect(textarea).toBeEnabled();
 });
 
+test("retries one durable image in place after a transient load failure", async ({ page }) => {
+  await page.goto("/");
+  const image = page.locator('[data-testid="image-imagegen:demo:img"]');
+  await expect(image.locator("img")).toBeVisible();
+  await page.evaluate(() => window.__companionFixture?.failNextImageLoad());
+  await page.evaluate(() => window.__companionFixture?.replaceImage());
+  await expect(image.getByRole("alert")).toContainText("图片暂时无法显示。");
+  const retry = image.getByRole("button", { name: "重试" });
+  await expect(retry).toBeVisible();
+  await retry.click();
+  await expect(image.locator("img")).toBeVisible();
+  await expect(image.getByRole("alert")).toHaveCount(0);
+});
+
 test("renders a deferred text-and-two-image send immediately and replaces it atomically", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => window.__companionFixture?.deferSend());
@@ -200,6 +294,14 @@ test("renders a deferred text-and-two-image send immediately and replaces it ato
   await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(1);
   await expect(page.locator('[data-testid^="image-submission:"]')).toHaveCount(2);
   await expect(page.locator('[data-testid^="image-submission:"] .companion-media img')).toHaveCount(2);
+  const submission = page.locator('[data-testid^="message-submission:"]').first();
+  await expect(submission.locator(".message-avatar")).toHaveCount(1);
+  await expect(submission.locator(".companion-image-entry")).toHaveCount(2);
+  await expect.poll(() => submission.locator(".companion-image-entry").first().evaluate((node) => {
+    const box = node.getBoundingClientRect();
+    return { width: box.width, height: box.height };
+  })).toEqual({ width: 64, height: 64 });
+  await expect.poll(() => submission.locator(".companion-message-stack").evaluate((node) => [...node.children].map((child) => child.matches(".companion-image-group") ? "images" : child.matches(".companion-bubble") ? "text" : "other"))).toEqual(["images", "text"]);
   await expect(textarea).toBeEnabled();
 
   await textarea.fill("连续发送");
@@ -250,26 +352,26 @@ test("restores an identified rejection through the Session retirement callback",
   await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(1);
   await page.evaluate(() => window.__companionFixture?.sendError());
   await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
-  await expect(page.locator(".companion-timeline .companion-recovery").filter({ hasText: "host-send-rejected" })).toHaveCount(1);
-  await expect(page.locator("body")).toContainText("host-send-rejected");
+  await expect(page.locator(".companion-timeline .companion-recovery").filter({ hasText: "这条消息没发出去，可以再试一次。" })).toHaveCount(1);
+  await expect(page.locator("body")).toContainText("这条消息没发出去，可以再试一次。");
   await expect(textarea).toHaveValue("投影失败");
 });
 
 test("keeps an existing internal send error visible when a submission begins", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => window.__companionFixture?.seedInternalPromptError());
-  await expect(page.locator(".companion-timeline .companion-recovery").filter({ hasText: "fixture existing carrier error" })).toHaveCount(1);
+  await expect(page.locator(".companion-timeline .companion-recovery").filter({ hasText: "这条消息没发出去，可以再试一次。" })).toHaveCount(1);
 
   await page.evaluate(() => window.__companionFixture?.deferSend());
   const textarea = page.getByRole("textbox", { name: "写消息" });
   await textarea.fill("新消息");
   await page.getByRole("button", { name: "发送消息" }).click();
   await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(1);
-  await expect(page.locator(".companion-timeline .companion-recovery").filter({ hasText: "fixture existing carrier error" })).toHaveCount(1);
+  await expect(page.locator(".companion-timeline .companion-recovery").filter({ hasText: "这条消息没发出去，可以再试一次。" })).toHaveCount(1);
 
   await page.evaluate(() => window.__companionFixture?.confirmSend());
   await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
-  await expect(page.locator(".companion-timeline .companion-recovery").filter({ hasText: "fixture existing carrier error" })).toHaveCount(1);
+  await expect(page.locator(".companion-timeline .companion-recovery").filter({ hasText: "这条消息没发出去，可以再试一次。" })).toHaveCount(1);
 });
 
 test("restores identified failed submissions and clears old-session sends", async ({ page }) => {
@@ -426,14 +528,15 @@ test("Svelte 5 bridge applies live identity and theme changes without remounting
   await page.goto("/");
   await expect(page.getByTestId("companion-root")).toHaveAttribute("data-theme", "sticker-messenger");
   await expect.poll(() => page.evaluate(() => window.__companionFixture?.rootIsStable() ?? false)).toBe(true);
-  await page.evaluate(() => window.__companionFixture?.setIdentity({ companionName: "新灯", moodLabel: "明朗" }));
+  await page.evaluate(() => window.__companionFixture?.setIdentity({ companionName: "新灯", moodLabel: "愉快" }));
   await expect(page.locator(".companion-name")).toHaveText("新灯");
-  await expect(page.locator(".companion-presence")).toContainText("明朗");
+  await expect(page.locator(".companion-presence")).toContainText("愉快");
   const statusClasses = { ready: "cmp-status-success", working: "cmp-status-warning", reconnecting: "cmp-status-error" } as const;
   for (const [status, className] of Object.entries(statusClasses)) {
     await page.evaluate((next) => window.__companionFixture?.setStatus(next as "ready" | "working" | "reconnecting"), status);
     await expect(page.locator(".cmp-status")).toHaveClass(new RegExp(className));
     await expect.poll(() => page.locator(".cmp-status").evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+    await expect(page.locator(".companion-presence")).toContainText(status === "ready" ? "在线" : status === "working" ? "正在输入…" : "连接中…");
   }
   await page.evaluate(() => window.__companionFixture?.setStatus("working"));
   const lightStatus = await page.locator(".cmp-status").evaluate((node) => getComputedStyle(node).backgroundColor);

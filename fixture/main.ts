@@ -12,6 +12,7 @@ import type { CompanionImageDraft } from "../src/client/image-drafts.js";
 import type { PendingSubmissionRetirement } from "@deepseek-ai/dsh-api-session-controller/client";
 import type { CompactionLifecycleState, ContextPressureProjection } from "../src/continuity.js";
 import type { ImageAttachmentLimits } from "@deepseek-ai/dsh-attachment";
+import type { CompanionReadiness } from "../src/client/readiness.js";
 
 const fixtureDaisyStyles = `${daisyStyles}\n${tailwindStyles}`.replace(/:root:has\(input\.theme-controller\[value=[^)]+\]:checked\),?/gu, "").replace(/:root\b/gu, ":scope").replace(/\[data-theme=["']?(sticker-messenger|night-voyage)["']?\]/gu, ":scope[data-theme=$1]");
 const style = document.createElement("style"); style.textContent = `@font-face{font-family:'Companion Noto Sans SC';src:url('/fonts/NotoSansSC-Companion.woff2') format('woff2');font-weight:100 900;font-display:block}@scope (#dsh-companion){${fixtureDaisyStyles}}${companionStyles.replace('ui-rounded, "SF Pro Rounded", system-ui, sans-serif', '"Companion Noto Sans SC", ui-rounded, "SF Pro Rounded", system-ui, sans-serif')}`; document.head.appendChild(style);
@@ -19,10 +20,14 @@ const svgDocument = "<svg xmlns='http://www.w3.org/2000/svg' width='640' height=
 const svg = `data:image/svg+xml,${encodeURIComponent(svgDocument)}`;
 const query = new URLSearchParams(location.search);
 const now = Date.now();
+const readiness = (key: string): CompanionReadiness => {
+  const value = query.get(key);
+  return value === "loading" || value === "ready" || value === "missing" || value === "error" ? value : "ready";
+};
 const moodViews = {
-  tender: { mood: "tender", moodLabel: "温柔", intensity: 2, moodNote: "今天想慢一点" },
-  bright: { mood: "bright", moodLabel: "明朗", intensity: 2, moodNote: "窗边有一束好光" },
-  serene: { mood: "serene", moodLabel: "安宁", intensity: 1, moodNote: undefined },
+  tender: { mood: "tender", moodLabel: "柔和", moodNote: "今天想慢一点" },
+  bright: { mood: "bright", moodLabel: "愉快", moodNote: "窗边有一束好光" },
+  serene: { mood: "serene", moodLabel: "平静", moodNote: undefined },
 } as const;
 const mood = moodViews[query.get("mood") as keyof typeof moodViews] ?? moodViews.tender;
 const projection: CompanionProjection = {
@@ -50,6 +55,7 @@ let sendCalls = 0;
 let sendSequence = 0;
 let submissionSequence = 0;
 let promptErrorSequence = 0;
+let failedAttachmentLoads = 0;
 let deferredSends = false;
 let pendingSends: Array<{
   text: string;
@@ -82,9 +88,10 @@ const fixtureProps: CompanionBridgeProps = {
       return;
     }
     await new Promise<void>((resolve, reject) => { pendingSends.push({ text, images, echoId, onRetire, resolve, reject }); });
-  }, stop: async () => { stopCalls += 1; }, selectSession: async (sessionId: string) => { switchFixtureSession(sessionId); }, loadOlder: async () => undefined, attachmentUrl: async () => URL.createObjectURL(new Blob([svgDocument], { type: "image/svg+xml" })), prepareVoice: async (text: string) => { if (text.includes("失败")) throw new Error("fixture voice failure"); return "/kepos-tts/audio/fixture.mp3"; } },
-  workspaceReady: true,
-  sessionReady: true,
+  }, stop: async () => { stopCalls += 1; }, selectSession: async (sessionId: string) => { switchFixtureSession(sessionId); }, loadOlder: async () => undefined, attachmentUrl: async () => { if (failedAttachmentLoads > 0) { failedAttachmentLoads -= 1; throw new Error("fixture attachment failure"); } return URL.createObjectURL(new Blob([svgDocument], { type: "image/svg+xml" })); }, prepareVoice: async (text: string) => { if (text.includes("失败")) throw new Error("fixture voice failure"); return "/kepos-tts/audio/fixture.mp3"; } },
+  workspaceReadiness: readiness("workspace"),
+  relationshipReadiness: readiness("relationship"),
+  sessionReadiness: readiness("session"),
   sessionId: "quiet-evening",
   imageLimits: {
     maxImageBytes: 5 * 1024 * 1024,
@@ -215,6 +222,8 @@ declare global {
       rootIsStable(): boolean;
       dispose(): void;
       unmountCalls(): number;
+      setReadiness(next: { workspace?: CompanionReadiness; relationship?: CompanionReadiness; session?: CompanionReadiness }): void;
+      failNextImageLoad(): void;
     };
   }
 }
@@ -235,6 +244,15 @@ window.__companionFixture = {
     propsStore.update((current) => ({ ...current, projection: { ...current.projection!, items: current.projection!.items.filter((item) => item.id !== "imagegen:demo:img") } }));
   },
   setTheme(theme) { propsStore.update((current) => ({ ...current, scheme: theme })); },
+  setReadiness(next) {
+    propsStore.update((current) => ({
+      ...current,
+      workspaceReadiness: next.workspace ?? current.workspaceReadiness,
+      relationshipReadiness: next.relationship ?? current.relationshipReadiness,
+      sessionReadiness: next.session ?? current.sessionReadiness,
+    }));
+  },
+  failNextImageLoad() { failedAttachmentLoads += 1; },
   setStatus(status) { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, status } })); },
   setRunning(running) { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, running } })); },
   finishImageGeneration() { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, items: current.projection!.items.filter((item) => item.id !== "imagegen:demo:loading") } })); },
