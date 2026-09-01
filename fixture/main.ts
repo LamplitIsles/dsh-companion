@@ -90,7 +90,7 @@ const fixtureProps: CompanionBridgeProps = {
     const echoId = appendSubmissionEcho(text, images);
     lastSend = { text, images, echoId };
     if (!deferredSends) {
-      appendDurableSend(text, images, echoId, echoId);
+      appendDurableSend(text, images, echoId);
       onRetire?.({ reason: "observed", attachments: [] });
       return;
     }
@@ -111,15 +111,14 @@ const fixtureProps: CompanionBridgeProps = {
 };
 const propsStore = writable(fixtureProps);
 
-function appendDurableSend(text: string, images: readonly CompanionImageDraft[], messageKey?: string, replaceEchoId?: string): void {
+function appendDurableSend(text: string, images: readonly CompanionImageDraft[], echoId: string): void {
   const sendId = `fixture-user-${++sendSequence}`;
-  const presentationKey = messageKey ?? sendId;
   const additions: TimelineItem[] = [];
-  if (text) additions.push({ id: sendId, messageKey: presentationKey, kind: "text", side: "outgoing", origin: "user", text, time: Date.now() });
+  if (text) additions.push({ id: sendId, messageKey: echoId, kind: "text", side: "outgoing", origin: "user", text, time: Date.now() });
   images.forEach((draft, index) => {
     additions.push({
       id: `image:${sendId}:${index}`,
-      messageKey: presentationKey,
+      messageKey: echoId,
       kind: "image",
       side: "outgoing",
       origin: "user",
@@ -130,7 +129,7 @@ function appendDurableSend(text: string, images: readonly CompanionImageDraft[],
     });
   });
   propsStore.update((current) => replaceProjectionItems(current, [
-    ...current.projection!.items.filter((item) => !replaceEchoId || !item.id.startsWith(`${replaceEchoId}:`)),
+    ...current.projection!.items.filter((item) => !item.id.startsWith(`${echoId}:`)),
     ...additions,
   ]));
 }
@@ -189,7 +188,7 @@ function confirmLastSend(): void {
   const pending = pendingSends[0];
   const send = pending ?? lastSend;
   if (!send) return;
-  appendDurableSend(send.text, send.images, send.echoId, send.echoId);
+  appendDurableSend(send.text, send.images, send.echoId);
   if (pending) {
     const settled = pendingSends.shift()!;
     settled.onRetire?.({ reason: "observed", attachments: [] });
