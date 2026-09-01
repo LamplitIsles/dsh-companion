@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile, mkdir } from "node:fs/promises"
 import { createServer, request as httpRequest, type IncomingHttpHeaders, type Server } from "node:http";
 import { join } from "node:path";
 import { createUserMessage, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
+import type { PromptAssembly } from "@deepseek-ai/dsh-system-prompt";
 import type { ToolRunContext } from "@deepseek-ai/dsh-tools";
 import { CompanionStateStore, encodeCompanionStateRecord } from "../src/domain.js";
 import { BOOTSTRAP_PATH, CompanionHostController, RPC_CHANNEL, acceptedTurnKey, updateRelationshipForAcceptedTurn, apply, companionAliasHandler } from "../src/host.js";
@@ -321,6 +322,53 @@ describe("Host accepted-turn relationship contract", () => {
     await lifecycle.next();
   });
 
+  it("loads a newly selected Workspace before assembling its first Agent context", async () => {
+    const firstDirectory = await mkdtemp("/tmp/dsh-companion-host-"); temporary.push(firstDirectory);
+    const secondDirectory = await mkdtemp("/tmp/dsh-companion-host-"); temporary.push(secondDirectory);
+    for (const directory of [firstDirectory, secondDirectory]) await mkdir(join(directory, ".dsh/dsh-companion"), { recursive: true });
+    await writeFile(join(firstDirectory, ".dsh/dsh-companion/state.jsonl"), encodeCompanionStateRecord({ at: "2026-09-01T00:00:00.000Z", changes: { seed: true }, state: { mood: "tender", affinity: 67, signature: "第一个" } }));
+    await writeFile(join(secondDirectory, ".dsh/dsh-companion/state.jsonl"), encodeCompanionStateRecord({ at: "2026-09-01T00:01:00.000Z", changes: { seed: true }, state: { mood: "bright", affinity: 81, signature: "第二个" } }));
+    let configured = { workspaceId: "workspace-a", companionName: "Companion", userName: "你", preferredAddress: "你", defaultAffinity: 50 };
+    let prompt: ((context: { agent?: { session?: { header?: { cwd?: string } } } }) => string) | undefined;
+    type Assemble = (assembly: PromptAssembly, context: { signal?: AbortSignal; agent?: { session?: { header?: { cwd?: string } } } }, next: () => Promise<PromptAssembly>) => Promise<PromptAssembly>;
+    let assemble: Assemble | undefined;
+    const scope = { get: () => configured, update: async () => undefined, watch: () => () => undefined };
+    const ctx = {
+      fs: {
+        resolve: async (path: string, options?: { cwd?: string }) => join(options?.cwd ?? firstDirectory, path),
+        stat: async (path: string) => { try { const value = await stat(path); return { type: value.isFile() ? "file" : "directory", size: value.size }; } catch { return undefined; } },
+        readText: async (path: string) => readFile(path, "utf8"),
+        writeText: async (path: string, content: string) => { await mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true }); await writeFile(path, content); },
+        mkdir: async (path: string, options?: { cwd?: string }) => { await mkdir(join(options?.cwd ?? firstDirectory, path), { recursive: true }); },
+      },
+      settings: { register: () => scope },
+      systemPrompt: { context: ({ text }: { text: typeof prompt }) => { prompt = text; return () => undefined; } },
+      tools: { register: () => undefined },
+      connection: { rpc: { handle: () => () => undefined } },
+      workspaceRegistry: {
+        get: (id: string) => id === "workspace-a" ? { id, path: firstDirectory, sessionIds: [] } : id === "workspace-b" ? { id, path: secondDirectory, sessionIds: [] } : undefined,
+        list: () => [],
+      },
+      llm: {},
+      on: (name: string, callback: unknown) => {
+        if (name === "system-prompt/assemble") assemble = callback as Assemble;
+        return () => undefined;
+      },
+      webServer: { port: 1, register: () => () => undefined },
+    };
+    const lifecycle = apply(ctx as never);
+    const loaded = await lifecycle.next();
+    configured = { ...configured, workspaceId: "workspace-b" };
+    const context = { signal: new AbortController().signal, agent: { session: { header: { cwd: secondDirectory } } } };
+    const assembly: PromptAssembly = { sections: [], contexts: [{ name: "dsh-companion:relationship", text: prompt?.(context) ?? "" }], tools: [], variables: {} };
+    const result = await assemble!(assembly, context, async () => assembly);
+    expect(result.contexts).toContainEqual(expect.objectContaining({ name: "dsh-companion:relationship", text: expect.stringContaining("affinity=81") }));
+    expect(result.contexts[0]?.text).toContain('signature="第二个"');
+    expect(result.contexts[0]?.text).not.toContain("affinity=67");
+    await loaded.value?.();
+    await lifecycle.next();
+  });
+
   it("registers a global compaction waterfall that reads live scope, delegates once, and disposes", async () => {
     let configured = { workspaceId: "workspace-a", companionName: "Companion", userName: "你", preferredAddress: "你", defaultAffinity: 50 };
     const workspace = { id: "workspace-a", path: "/test-workspace", sessionIds: ["session-a"] as string[] };
@@ -336,7 +384,12 @@ describe("Host accepted-turn relationship contract", () => {
       connection: { rpc: { handle: () => () => undefined } },
       workspaceRegistry: { get: (id: string) => id === workspace.id ? workspace : undefined, list: () => [workspace] },
       llm: {},
-      on: (_name: string, callback: typeof listener, options: unknown) => { listener = callback; listenerOptions = options; return () => { listenerDisposed += 1; }; },
+      on: (name: string, callback: typeof listener, options: unknown) => {
+        if (name !== "llm/stream") return () => undefined;
+        listener = callback;
+        listenerOptions = options;
+        return () => { listenerDisposed += 1; };
+      },
       webServer: { port: 1, register: () => () => undefined },
     };
     const host = new CompanionHostController(ctx as never, scope);

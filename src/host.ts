@@ -5,6 +5,7 @@ import { defineTool, type ToolDefinition, type ToolRunContext } from "@deepseek-
 import type { RpcResult } from "@deepseek-ai/dsh-client-connection/client";
 import type { FsInfo, FsTarget, FsWriteIntent, FsWriteOutcome } from "@deepseek-ai/dsh-fs";
 import type { GenerateOptions, LlmRuntime, StreamChunk } from "@deepseek-ai/dsh-llm";
+import type { AssembleContext, PromptAssembly } from "@deepseek-ai/dsh-system-prompt";
 import {
   CompanionStateStore,
   type CompanionFileSystem,
@@ -28,6 +29,7 @@ export const SETTINGS_NAMESPACE = "dsh-companion" as const;
 export const RPC_CHANNEL = "/dsh-companion" as const;
 export const SANDBOX_POSTURE = "workspace-write" as const;
 export const ESCALATION_ENABLED = false as const;
+const RELATIONSHIP_CONTEXT_NAME = "dsh-companion:relationship";
 
 export interface CompanionSettings extends Omit<CompanionIdentitySettings, "workspaceId"> {
   workspaceId: string;
@@ -88,6 +90,7 @@ interface HostContextLike {
   /** Required by this web plugin solely for the pinned static-server alias. */
   webServer: WebServerLike;
   on(name: "llm/stream", listener: (options: GenerateOptions, next: () => AsyncIterable<StreamChunk>) => AsyncIterable<StreamChunk>, options: { global: true }): () => void;
+  on(name: "system-prompt/assemble", listener: (assembly: PromptAssembly, context: AssembleContext, next: () => Promise<PromptAssembly>) => Promise<PromptAssembly>): () => void;
 }
 
 export interface RelationshipView {
@@ -703,7 +706,7 @@ export class CompanionHostController {
       return fail("未知的 Companion 请求。", "bad-request");
     }));
     this.disposers.push(this.ctx.systemPrompt.context({
-      name: "dsh-companion:relationship",
+      name: RELATIONSHIP_CONTEXT_NAME,
       order: 140,
       text: (context) => {
         const configured = this.configuredWorkspace(undefined, context.agent?.session?.header?.cwd);
@@ -711,6 +714,19 @@ export class CompanionHostController {
         const state = this.storeFor(configured.workspace).getLoadedSnapshot();
         return state ? formatCompanionPrompt(state, checkedSettings(configured.settings)) : "";
       },
+    }));
+    this.disposers.push(this.ctx.on("system-prompt/assemble", async (assembly, context, next) => {
+      const contribution = assembly.contexts.find((entry) => entry.name === RELATIONSHIP_CONTEXT_NAME);
+      if (!contribution) return next();
+      const configured = this.configuredWorkspace(undefined, context.agent?.session?.header?.cwd);
+      if (!configured) {
+        contribution.text = "";
+        return next();
+      }
+      const store = this.storeFor(configured.workspace);
+      const state = store.getLoadedSnapshot() ?? await store.load(context.signal);
+      contribution.text = formatCompanionPrompt(state, checkedSettings(configured.settings));
+      return next();
     }));
     const webServer = this.ctx.webServer;
     this.disposers.push(webServer.register({ kind: "prefix", path: "/companion", handler: (req, res) => companionAliasHandler(webServer, req, res) }));

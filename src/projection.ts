@@ -81,8 +81,6 @@ export interface TimelineMessageUnit {
   side: MessageSide;
   /** Source-order content; consecutive images are collapsed by the view. */
   items: readonly TimelineItem[];
-  /** Convenience projection for image-group presentation. */
-  images: readonly TimelineImage[];
   pending?: boolean;
   origin?: "user" | "steering";
   time?: number;
@@ -493,7 +491,6 @@ export function groupTimelineItems(items: readonly TimelineItem[]): TimelineMess
         id: key,
         side: item.side,
         items: [item],
-        images: item.kind === "image" ? [item] : [],
         ...(item.kind === "text" && item.pending ? { pending: true } : {}),
         ...(item.kind === "text" && item.origin ? { origin: item.origin } : {}),
         ...(item.time === undefined ? {} : { time: item.time }),
@@ -504,11 +501,9 @@ export function groupTimelineItems(items: readonly TimelineItem[]): TimelineMess
     }
     const current = groups[position]!;
     const nextItems = [...current.items, item];
-    const nextImages = item.kind === "image" ? [...current.images, item] : current.images;
     groups[position] = {
       ...current,
       items: nextItems,
-      images: nextImages,
       ...(current.pending || (item.kind === "text" && item.pending) ? { pending: true } : {}),
     };
   }

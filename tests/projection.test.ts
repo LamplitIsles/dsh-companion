@@ -31,11 +31,9 @@ describe("chat projection", () => {
       { type: "image", attachment: second },
     ] }] });
     expect(result.messageUnits).toHaveLength(1);
-    expect(result.messageUnits[0]).toMatchObject({ id: "1", side: "outgoing", images: [
-      expect.objectContaining({ attachment: first }),
-      expect.objectContaining({ attachment: second }),
-    ] });
+    expect(result.messageUnits[0]).toMatchObject({ id: "1", side: "outgoing" });
     expect(result.messageUnits[0]?.items.map((item) => item.kind)).toEqual(["text", "image", "image"]);
+    expect(result.messageUnits[0]?.items.filter((item) => item.kind === "image").map((item) => item.attachment)).toEqual([first, second]);
   });
 
   it("keeps finalized assistant structured content in source order inside one unit", () => {
