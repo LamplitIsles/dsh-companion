@@ -559,8 +559,14 @@ export class CompanionStateStore {
   }
 
   async load(signal?: AbortSignal): Promise<CompanionState> {
-    if (!this.loadPromise) this.loadPromise = this.loadFromDisk(signal);
-    await this.loadPromise;
+    const attempt = this.loadPromise ?? this.loadFromDisk(signal);
+    this.loadPromise = attempt;
+    try {
+      await attempt;
+    } catch (error) {
+      if (this.loadPromise === attempt) this.loadPromise = undefined;
+      throw error;
+    }
     return this.getSnapshot();
   }
 

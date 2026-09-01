@@ -329,6 +329,7 @@ describe("Host accepted-turn relationship contract", () => {
     await writeFile(join(firstDirectory, ".dsh/dsh-companion/state.jsonl"), encodeCompanionStateRecord({ at: "2026-09-01T00:00:00.000Z", changes: { seed: true }, state: { mood: "tender", affinity: 67, signature: "第一个" } }));
     await writeFile(join(secondDirectory, ".dsh/dsh-companion/state.jsonl"), encodeCompanionStateRecord({ at: "2026-09-01T00:01:00.000Z", changes: { seed: true }, state: { mood: "bright", affinity: 81, signature: "第二个" } }));
     let configured = { workspaceId: "workspace-a", companionName: "Companion", userName: "你", preferredAddress: "你", defaultAffinity: 50 };
+    let secondWorkspaceReadAttempts = 0;
     let prompt: ((context: { agent?: { session?: { header?: { cwd?: string } } } }) => string) | undefined;
     type Assemble = (assembly: PromptAssembly, context: { signal?: AbortSignal; agent?: { session?: { header?: { cwd?: string } } } }, next: () => Promise<PromptAssembly>) => Promise<PromptAssembly>;
     let assemble: Assemble | undefined;
@@ -337,7 +338,13 @@ describe("Host accepted-turn relationship contract", () => {
       fs: {
         resolve: async (path: string, options?: { cwd?: string }) => join(options?.cwd ?? firstDirectory, path),
         stat: async (path: string) => { try { const value = await stat(path); return { type: value.isFile() ? "file" : "directory", size: value.size }; } catch { return undefined; } },
-        readText: async (path: string) => readFile(path, "utf8"),
+        readText: async (path: string, signal?: AbortSignal) => {
+          if (path.startsWith(secondDirectory)) {
+            secondWorkspaceReadAttempts += 1;
+            signal?.throwIfAborted();
+          }
+          return readFile(path, "utf8");
+        },
         writeText: async (path: string, content: string) => { await mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true }); await writeFile(path, content); },
         mkdir: async (path: string, options?: { cwd?: string }) => { await mkdir(join(options?.cwd ?? firstDirectory, path), { recursive: true }); },
       },
@@ -359,9 +366,15 @@ describe("Host accepted-turn relationship contract", () => {
     const lifecycle = apply(ctx as never);
     const loaded = await lifecycle.next();
     configured = { ...configured, workspaceId: "workspace-b" };
+    const cancelled = new AbortController();
+    cancelled.abort(new Error("first assembly cancelled"));
+    const cancelledContext = { signal: cancelled.signal, agent: { session: { header: { cwd: secondDirectory } } } };
+    const cancelledAssembly: PromptAssembly = { sections: [], contexts: [{ name: "dsh-companion:relationship", text: prompt?.(cancelledContext) ?? "" }], tools: [], variables: {} };
+    await expect(assemble!(cancelledAssembly, cancelledContext, async () => cancelledAssembly)).rejects.toThrow("first assembly cancelled");
     const context = { signal: new AbortController().signal, agent: { session: { header: { cwd: secondDirectory } } } };
     const assembly: PromptAssembly = { sections: [], contexts: [{ name: "dsh-companion:relationship", text: prompt?.(context) ?? "" }], tools: [], variables: {} };
     const result = await assemble!(assembly, context, async () => assembly);
+    expect(secondWorkspaceReadAttempts).toBe(2);
     expect(result.contexts).toContainEqual(expect.objectContaining({ name: "dsh-companion:relationship", text: expect.stringContaining("affinity=81") }));
     expect(result.contexts[0]?.text).toContain('signature="第二个"');
     expect(result.contexts[0]?.text).not.toContain("affinity=67");
