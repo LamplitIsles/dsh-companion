@@ -168,7 +168,7 @@ export async function adjustAffinityForAcceptedTurn(store: CompanionStateStore, 
  * second index or client transport. The pinned static service has no SPA
  * fallback, so this lifecycle-owned alias is required for this web plugin.
  */
-function companionAliasHandler(webServer: WebServerLike, req: IncomingMessage, res: ServerResponse): Promise<void> {
+export function companionAliasHandler(webServer: WebServerLike, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const pathname = new URL(req.url ?? "/", "http://companion.local").pathname;
   if (pathname !== "/companion" && pathname !== "/companion/") {
     res.writeHead(404);
@@ -187,8 +187,11 @@ function companionAliasHandler(webServer: WebServerLike, req: IncomingMessage, r
       path: "/",
       method: req.method,
       // Alpha Web authenticates the boot document with an authority-bound
-      // cookie. Preserve it when the Companion alias proxies to `/`.
-      ...(req.headers.cookie ? { headers: { cookie: req.headers.cookie } } : {}),
+      // cookie. Preserve both pieces when the Companion alias proxies to `/`.
+      headers: {
+        ...(req.headers.cookie ? { cookie: req.headers.cookie } : {}),
+        ...(req.headers.host ? { host: req.headers.host } : {}),
+      },
     }, (response) => {
       const chunks: Buffer[] = [];
       response.on("data", (chunk: Buffer | string) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
