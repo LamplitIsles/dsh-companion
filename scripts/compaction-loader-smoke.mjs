@@ -59,6 +59,7 @@ import { createUserMessage } from ${JSON.stringify(llmUrl)};
 
 const root = new Context();
 const savedFiles = new Map();
+const registeredTools = [];
 const workspace = { id: "workspace-a", path: "/disposable/workspace", sessionIds: ["session-a"] };
 const settingsScope = {
   get: () => ({ workspaceId: workspace.id, companionName: "Companion", userName: "You", preferredAddress: "You", defaultAffinity: 50 }),
@@ -74,7 +75,7 @@ root.provide("fs", {
 });
 root.provide("settings", { register: () => settingsScope });
 root.provide("systemPrompt", { context: () => () => undefined });
-root.provide("tools", { register: () => undefined });
+root.provide("tools", { register: (tool) => { registeredTools.push(tool); return () => undefined; } });
 root.provide("connection", { rpc: { handle: () => async () => undefined } });
 root.provide("workspaceRegistry", { get: (id) => id === workspace.id ? workspace : undefined, list: () => [workspace] });
 root.provide("webServer", { port: 1, register: () => () => undefined });
@@ -114,6 +115,24 @@ function request(sessionId, purpose = "compaction") {
 await root.plugin(Loader, { baseUrl: import.meta.url });
 const entryId = await root.loader.create({ id: "dsh-companion", name: ${JSON.stringify(activationUrl)} });
 await root.loader.await();
+
+assert.deepEqual(registeredTools.map((tool) => tool.name), ["companion_update_relationship", "companion_set_signature"]);
+const relationshipTool = registeredTools[0];
+const relationshipResult = await relationshipTool.execute({
+  mood: { value: "bright", note: "A shared bright moment", reason: "The user celebrated a shared result" },
+  affinity: { delta: 2, reason: "The user valued the shared result" },
+}, {
+  signal: new AbortController().signal,
+  agent: { id: "agent-a", session: { header: { cwd: workspace.path }, events: [{ type: "turn/start", data: { turn: 1 } }] } },
+});
+assert.equal(relationshipResult.mood, "bright");
+assert.equal(relationshipResult.affinity, 52);
+const relationshipHistory = savedFiles.get("/disposable/workspace/.dsh/dsh-companion/state.jsonl");
+assert.equal(relationshipHistory.trimEnd().split("\\n").length, 2);
+const relationshipRecord = JSON.parse(relationshipHistory.trimEnd().split("\\n").at(-1));
+assert.equal(relationshipRecord.changes.mood.reason, "The user celebrated a shared result");
+assert.equal(relationshipRecord.changes.affinity.reason, "The user valued the shared result");
+assert.equal(relationshipRecord.state.affinity, 52);
 
 const qualified = request("session-a");
 const qualifiedPrefix = qualified.messages[0];

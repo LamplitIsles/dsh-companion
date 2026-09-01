@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CompanionStateStore, CompanionValidationError, MAX_AVATAR_BYTES, affinityStage, canonicalizeMood, canonicalizeSignature,
-  decodeCompanionState, decodeCompanionStateHistory, decodeLatestCompanionStateRecord, encodeCompanionState, encodeCompanionStateRecord, formatCompanionPrompt, MOOD_LABELS, selectCompanionSession, validateAvatar,
+  canonicalizeRelationshipUpdate, decodeCompanionState, decodeCompanionStateHistory, decodeLatestCompanionStateRecord, encodeCompanionState, encodeCompanionStateRecord, formatCompanionPrompt, MOOD_LABELS, selectCompanionSession, validateAvatar,
 } from "../src/domain.js";
 
 const temporary: string[] = [];
@@ -27,6 +27,12 @@ describe("relationship domain", () => {
     expect([0, 19, 20, 39, 40, 59, 60, 79, 80, 100].map(affinityStage)).toEqual(["疏离", "疏离", "生疏", "生疏", "熟悉", "熟悉", "亲近", "亲近", "深厚", "深厚"]);
   });
 
+  it("validates the at-least-one relationship rule in domain code", () => {
+    expect(() => canonicalizeRelationshipUpdate({})).toThrow("至少更新");
+    expect(() => canonicalizeRelationshipUpdate({ mood: { value: "bright", reason: "一起笑了", extra: true } })).toThrow("未知字段");
+    expect(canonicalizeRelationshipUpdate({ mood: { value: "bright", note: "心里亮亮的", reason: "一起笑了" } })).toEqual({ mood: { value: "bright", note: "心里亮亮的", reason: "一起笑了" } });
+  });
+
   it("persists atomically in a test-owned directory and enforces turn movement", async () => {
     const dir = await mkdtemp(join(tmpdir(), "dsh-companion-test-")); temporary.push(dir);
     const file = join(dir, "state.jsonl");
@@ -34,20 +40,21 @@ describe("relationship domain", () => {
     const first = new CompanionStateStore({ workspacePath: dir, defaultAffinity: 55, filePath: file, now: () => new Date(Date.UTC(2026, 8, 1, 0, 0, tick++)) });
     await first.load();
     first.beginTurn("turn-1");
-    expect((await first.adjustAffinity(8, "认真倾听", "turn-1")).delta).toBe(8);
-    expect((await first.adjustAffinity(8, "再次倾听", "turn-1")).delta).toBe(2);
-    await first.setSignature("把平凡日子折成星星");
+    expect((await first.updateRelationship({ affinity: { delta: 8, reason: "认真倾听" } }, "turn-1")).delta).toBe(8);
+    expect((await first.updateRelationship({ affinity: { delta: 8, reason: "再次倾听" } }, "turn-1")).delta).toBe(2);
+    await expect(first.setSignature("不应写入", undefined)).rejects.toThrow("变化原因");
+    await first.setSignature("把平凡日子折成星星", "想留下共同记忆");
     const second = new CompanionStateStore({ workspacePath: dir, defaultAffinity: 55, filePath: file });
     await second.load();
     expect(second.getSnapshot()).toMatchObject({ affinity: 65, signature: "把平凡日子折成星星" });
     expect(JSON.parse(encodeCompanionState(second.getSnapshot()))).toEqual({ mood: "neutral", affinity: 65, signature: "把平凡日子折成星星" });
     const history = decodeCompanionStateHistory(await readFile(file, "utf8"), 55);
     expect(history).toHaveLength(4);
-    expect(history.map((entry) => entry.change)).toEqual([
-      { kind: "seed" },
-      { kind: "affinity", delta: 8, reason: "认真倾听" },
-      { kind: "affinity", delta: 2, reason: "再次倾听" },
-      { kind: "signature" },
+    expect(history.map((entry) => entry.changes)).toEqual([
+      { seed: true },
+      { affinity: { delta: 8, value: 63, reason: "认真倾听" } },
+      { affinity: { delta: 2, value: 65, reason: "再次倾听" } },
+      { signature: { value: "把平凡日子折成星星", reason: "想留下共同记忆" } },
     ]);
     expect(history.map((entry) => entry.state.affinity)).toEqual([55, 63, 65, 65]);
   });
@@ -63,7 +70,7 @@ describe("relationship domain", () => {
   it("reads current affinity from only the final complete record", async () => {
     const latest = encodeCompanionStateRecord({
       at: "2026-09-01T00:00:00.000Z",
-      change: { kind: "affinity", delta: 6, reason: "更靠近一点" },
+      changes: { affinity: { delta: 6, value: 56, reason: "更靠近一点" } },
       state: { mood: "bright", note: "今天很好", affinity: 56, signature: "仍在这里" },
     });
     const text = `not historical json\n${latest}`;
@@ -88,11 +95,30 @@ describe("relationship domain", () => {
     await store.load();
     rejectWrites = true;
     store.beginTurn("turn-1");
-    await expect(store.adjustAffinity(8, "不会落盘", "turn-1")).rejects.toThrow("disk full");
+    await expect(store.updateRelationship({ affinity: { delta: 8, reason: "不会落盘" } }, "turn-1")).rejects.toThrow("disk full");
     expect(store.getSnapshot()).toEqual({ mood: "neutral", affinity: 50, signature: "" });
     expect(decodeCompanionStateHistory(content ?? "")).toHaveLength(1);
     rejectWrites = false;
-    expect((await store.adjustAffinity(8, "重新写入", "turn-1")).delta).toBe(8);
+    expect((await store.updateRelationship({ affinity: { delta: 8, reason: "重新写入" } }, "turn-1")).delta).toBe(8);
+  });
+
+  it("records one atomic state-and-affinity reaction with separate reasons", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dsh-companion-test-")); temporary.push(dir);
+    const file = join(dir, "state.jsonl");
+    const store = new CompanionStateStore({ workspacePath: dir, defaultAffinity: 50, filePath: file });
+    await store.load();
+    store.beginTurn("turn-1");
+    const result = await store.updateRelationship({
+      mood: { value: "bright", note: "心里亮亮的", reason: "一起完成了第一张合影" },
+      affinity: { delta: 2, reason: "用户珍惜共同留下的回忆" },
+    }, "turn-1");
+    expect(result).toMatchObject({ delta: 2, state: { mood: "bright", note: "心里亮亮的", affinity: 52 } });
+    const history = decodeCompanionStateHistory(await readFile(file, "utf8"));
+    expect(history).toHaveLength(2);
+    expect(history[1]?.changes).toEqual({
+      mood: { value: "bright", note: "心里亮亮的", reason: "一起完成了第一张合影" },
+      affinity: { delta: 2, value: 52, reason: "用户珍惜共同留下的回忆" },
+    });
   });
 
   it("serializes concurrent changes into complete ordered records", async () => {
@@ -101,14 +127,14 @@ describe("relationship domain", () => {
     const store = new CompanionStateStore({ workspacePath: dir, defaultAffinity: 50, filePath: file });
     await store.load();
     await Promise.all([
-      store.setMood({ mood: "bright", note: "一起变亮" }),
-      store.setSignature("仍在这里"),
+      store.updateRelationship({ mood: { value: "bright", note: "一起变亮", reason: "今天很开心" } }),
+      store.setSignature("仍在这里", "想表达陪伴"),
       store.setAffinity(60),
     ]);
     expect(store.getSnapshot()).toEqual({ mood: "bright", note: "一起变亮", affinity: 60, signature: "仍在这里" });
     const history = decodeCompanionStateHistory(await readFile(file, "utf8"));
     expect(history).toHaveLength(4);
-    expect(history.slice(1).map((entry) => entry.change.kind)).toEqual(["mood", "signature", "affinity"]);
+    expect(history.slice(1).map((entry) => Object.keys(entry.changes)[0])).toEqual(["mood", "signature", "affinity"]);
   });
 
   it("quotes dynamic prompt data and never accumulates old values", () => {

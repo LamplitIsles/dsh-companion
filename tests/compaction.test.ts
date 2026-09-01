@@ -23,7 +23,7 @@ function request(overrides: Partial<GenerateOptions> = {}): GenerateOptions {
     reasoningEffort: "balanced" as GenerateOptions["reasoningEffort"],
     messages: [prefix, basicTail()],
     system: "<companion-context>live metadata</companion-context>",
-    tools: [{ name: "companion_set_mood", description: "fake schema", parameters: { type: "object" } }],
+    tools: [{ name: "companion_update_relationship", description: "fake schema", parameters: { type: "object" } }],
     temperature: 0.2,
     maxTokens: 777,
     stop: ["<done>"],
