@@ -143,6 +143,8 @@
     "fixture": "vite --config fixture/vite.config.ts"
   },
   "dependencies": {
+    "@capacitor/camera": "^8.2.3",
+    "@capacitor/core": "^8.5.1",
     "dompurify": "^3.4.14",
     "lucide-svelte": "^1.0.1",
     "marked": "^18.0.11"

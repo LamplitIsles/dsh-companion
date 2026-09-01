@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { imageFilesFromClipboard, imageIntakeError } from "../src/client/image-drafts.js";
+import { imageFileFromCapturedMedia, imageFilesFromClipboard, imageIntakeError } from "../src/client/image-drafts.js";
 
 const limits = {
   maxImageBytes: 10,
@@ -34,5 +34,25 @@ describe("Companion image drafts", () => {
       files: [first, nonImage, second],
     } as unknown as DataTransfer;
     expect(imageFilesFromClipboard(clipboard)).toEqual([first, second]);
+  });
+
+  it("converts a captured media URL into an image File for the existing intake", async () => {
+    const bytes = Uint8Array.from([1, 2, 3, 4]);
+    const file = await imageFileFromCapturedMedia(
+      { webPath: "https://camera.test/capture", metadata: { format: "jpg" } },
+      async () => new Response(new Blob([bytes], { type: "application/octet-stream" }), { status: 200 }),
+    );
+
+    expect(file).toMatchObject({ name: "camera-photo.jpeg", type: "image/jpeg", size: bytes.byteLength });
+    expect(imageIntakeError([], [file], limits)).toBeUndefined();
+    expect(new Uint8Array(await file.arrayBuffer())).toEqual(bytes);
+  });
+
+  it("rejects captured results without an image URL or supported media type", async () => {
+    await expect(imageFileFromCapturedMedia({})).rejects.toThrow("camera-media-missing-url");
+    await expect(imageFileFromCapturedMedia(
+      { webPath: "https://camera.test/capture" },
+      async () => new Response(new Blob(["not-an-image"], { type: "image/heic" }), { status: 200 }),
+    )).rejects.toThrow("camera-media-unsupported-type");
   });
 });
