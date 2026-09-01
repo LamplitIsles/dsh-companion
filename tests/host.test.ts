@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, rm, stat, writeFile, mkdir } from "node:fs/promises";
-import { createServer, request as httpRequest, type Server } from "node:http";
+import { createServer, request as httpRequest, type IncomingHttpHeaders, type Server } from "node:http";
 import { join } from "node:path";
 import { createUserMessage, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import type { ToolRunContext } from "@deepseek-ai/dsh-tools";
 import { CompanionStateStore } from "../src/domain.js";
-import { CompanionHostController, RPC_CHANNEL, acceptedTurnKey, adjustAffinityForAcceptedTurn, apply, companionAliasHandler } from "../src/host.js";
+import { BOOTSTRAP_PATH, CompanionHostController, RPC_CHANNEL, acceptedTurnKey, adjustAffinityForAcceptedTurn, apply, companionAliasHandler } from "../src/host.js";
 
 const temporary: string[] = [];
 afterEach(async () => { await Promise.all(temporary.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
@@ -31,20 +31,171 @@ async function close(server: Server): Promise<void> {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 }
 
-function get(port: number, headers: Record<string, string>): Promise<{ status: number; body: string }> {
+function requestAlias(port: number, options: { method?: string; path?: string; headers?: Record<string, string>; body?: string }): Promise<{ status: number; body: string; headers: IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
-    const request = httpRequest({ host: "127.0.0.1", port, path: "/companion/", headers }, (response) => {
+    const request = httpRequest({ host: "127.0.0.1", port, method: options.method ?? "GET", path: options.path ?? "/companion/", headers: options.headers }, (response) => {
       let body = "";
       response.setEncoding("utf8");
       response.on("data", (chunk: string) => { body += chunk; });
-      response.on("end", () => resolve({ status: response.statusCode ?? 0, body }));
+      response.on("end", () => resolve({ status: response.statusCode ?? 0, body, headers: response.headers }));
     });
     request.on("error", reject);
+    if (options.body !== undefined) request.write(options.body);
     request.end();
   });
 }
 
+function get(port: number, headers: Record<string, string>): Promise<{ status: number; body: string }> {
+  return requestAlias(port, { headers }).then(({ status, body }) => ({ status, body }));
+}
+
 describe("Host accepted-turn relationship contract", () => {
+  it("renders a standalone bootstrap form when the aliased root is unauthorized", async () => {
+    const upstream = createServer((_request, response) => {
+      response.writeHead(401, { "cache-control": "no-store", "content-type": "text/plain; charset=utf-8" });
+      response.end("dsh web authentication required");
+    });
+    const upstreamPort = await listen(upstream);
+    const alias = createServer((request, response) => {
+      void companionAliasHandler({ port: upstreamPort } as never, request, response);
+    });
+    const aliasPort = await listen(alias);
+    try {
+      const result = await requestAlias(aliasPort, { headers: { host: "127.0.0.1:13080" } });
+      expect(result.status).toBe(200);
+      expect(result.headers["cache-control"]).toBe("no-store");
+      expect(result.headers["referrer-policy"]).toBe("no-referrer");
+      expect(result.headers["content-type"]).toMatch(/^text\/html; charset=utf-8$/);
+      expect(result.body).toMatch(new RegExp(`<form[^>]+method="post"[^>]+action="${BOOTSTRAP_PATH.replaceAll("/", "\\/")}"`));
+      expect(result.body).toMatch(/<input[^>]+name="token"[^>]+type="password"/);
+      expect(result.body).toMatch(/<button[^>]+type="submit"/);
+      expect(result.body).toContain('role="alert"');
+      expect(result.body).not.toContain("dsh web authentication required");
+    } finally {
+      await Promise.all([close(alias), close(upstream)]);
+    }
+  });
+
+  it("exchanges one form token through the DSH root and relays only its session cookie", async () => {
+    let upstreamMethod: string | undefined;
+    let upstreamPath: string | undefined;
+    let upstreamHost: string | undefined;
+    let upstreamCookie: string | undefined;
+    const upstream = createServer((request, response) => {
+      upstreamMethod = request.method;
+      upstreamPath = request.url;
+      upstreamHost = request.headers.host;
+      upstreamCookie = request.headers.cookie;
+      response.writeHead(303, {
+        location: "/",
+        "set-cookie": "dsh-auth-test=issued; Path=/; HttpOnly; SameSite=Strict",
+      });
+      response.end("ignored upstream body");
+    });
+    const upstreamPort = await listen(upstream);
+    const alias = createServer((request, response) => {
+      void companionAliasHandler({ port: upstreamPort } as never, request, response);
+    });
+    const aliasPort = await listen(alias);
+    try {
+      const authority = "127.0.0.1:13080";
+      const result = await requestAlias(aliasPort, {
+        method: "POST",
+        path: BOOTSTRAP_PATH,
+        headers: { host: authority, cookie: "stale-form-cookie=must-not-forward", "content-type": "application/x-www-form-urlencoded" },
+        body: "token=launch-token",
+      });
+      expect(result.status).toBe(303);
+      expect(result.headers.location).toBe("/companion/");
+      expect(result.headers["set-cookie"]).toEqual(["dsh-auth-test=issued; Path=/; HttpOnly; SameSite=Strict"]);
+      expect(result.headers["cache-control"]).toBe("no-store");
+      expect(result.headers["referrer-policy"]).toBe("no-referrer");
+      expect(upstreamMethod).toBe("GET");
+      expect(upstreamPath).toBe("/?token=launch-token");
+      expect(upstreamHost).toBe(authority);
+      expect(upstreamCookie).toBeUndefined();
+      expect(result.body).toBe("");
+    } finally {
+      await Promise.all([close(alias), close(upstream)]);
+    }
+  });
+
+  it("keeps invalid exchanges generic and refuses unsupported paths or methods", async () => {
+    const secret = "launch-token-that-must-not-appear";
+    let exchangeCalls = 0;
+    const upstream = createServer((request, response) => {
+      exchangeCalls += 1;
+      expect(request.url).toBe(`/?token=${encodeURIComponent(secret)}`);
+      response.writeHead(401, { "content-type": "text/plain" });
+      response.end(`upstream rejected ${secret}`);
+    });
+    const upstreamPort = await listen(upstream);
+    const alias = createServer((request, response) => {
+      void companionAliasHandler({ port: upstreamPort } as never, request, response);
+    });
+    const aliasPort = await listen(alias);
+    try {
+      const invalid = await requestAlias(aliasPort, {
+        method: "POST",
+        path: BOOTSTRAP_PATH,
+        headers: { host: "127.0.0.1:13080", cookie: "stale=1", "content-type": "application/x-www-form-urlencoded" },
+        body: `token=${encodeURIComponent(secret)}`,
+      });
+      expect(invalid.status).toBe(400);
+      expect(invalid.headers["cache-control"]).toBe("no-store");
+      expect(invalid.headers["referrer-policy"]).toBe("no-referrer");
+      expect(invalid.body).toContain("令牌无效或已过期");
+      expect(invalid.body).not.toContain(secret);
+      expect(invalid.body).not.toContain("upstream rejected");
+      expect(invalid.headers.location).toBeUndefined();
+      expect(invalid.headers["set-cookie"]).toBeUndefined();
+      expect(exchangeCalls).toBe(1);
+
+      await expect(requestAlias(aliasPort, {
+        method: "POST",
+        path: BOOTSTRAP_PATH,
+        headers: { host: "127.0.0.1:13080", "content-type": "application/x-www-form-urlencoded" },
+        body: "token=one&extra=two",
+      })).resolves.toMatchObject({ status: 400 });
+      await expect(requestAlias(aliasPort, {
+        method: "POST",
+        path: BOOTSTRAP_PATH,
+        headers: { host: "127.0.0.1:13080", "content-type": "application/x-www-form-urlencoded" },
+        body: `token=${"x".repeat(5000)}`,
+      })).resolves.toMatchObject({ status: 413 });
+      expect(exchangeCalls).toBe(1);
+
+      await expect(requestAlias(aliasPort, { method: "GET", path: BOOTSTRAP_PATH, headers: { host: "127.0.0.1:13080" } })).resolves.toMatchObject({ status: 405, body: "" });
+      await expect(requestAlias(aliasPort, { method: "POST", path: "/companion/", headers: { host: "127.0.0.1:13080" }, body: "token=ignored" })).resolves.toMatchObject({ status: 405, body: "" });
+      await expect(requestAlias(aliasPort, { method: "GET", path: "/companion/not-a-route", headers: { host: "127.0.0.1:13080" } })).resolves.toMatchObject({ status: 404, body: "" });
+    } finally {
+      await Promise.all([close(alias), close(upstream)]);
+    }
+  });
+
+  it("returns bootstrap headers without a body for an unauthorized HEAD root request", async () => {
+    const upstream = createServer((_request, response) => {
+      response.writeHead(401, { "content-type": "text/plain" });
+      response.end();
+    });
+    const upstreamPort = await listen(upstream);
+    const alias = createServer((request, response) => {
+      void companionAliasHandler({ port: upstreamPort } as never, request, response);
+    });
+    const aliasPort = await listen(alias);
+    try {
+      const result = await requestAlias(aliasPort, { method: "HEAD", path: "/companion/", headers: { host: "127.0.0.1:13080" } });
+      expect(result.status).toBe(200);
+      expect(result.body).toBe("");
+      expect(result.headers["content-type"]).toBe("text/html; charset=utf-8");
+      expect(Number(result.headers["content-length"])).toBeGreaterThan(0);
+      expect(result.headers["cache-control"]).toBe("no-store");
+      expect(result.headers["referrer-policy"]).toBe("no-referrer");
+    } finally {
+      await Promise.all([close(alias), close(upstream)]);
+    }
+  });
+
   it("preserves the external authority while proxying the authenticated Companion root", async () => {
     let upstreamHost: string | undefined;
     let upstreamCookie: string | undefined;
