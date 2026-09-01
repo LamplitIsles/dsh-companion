@@ -51,8 +51,6 @@ let sendSequence = 0;
 let submissionSequence = 0;
 let promptErrorSequence = 0;
 let deferredSends = false;
-let internalSendFailure = false;
-let healthyInternalSendFailure = false;
 let pendingSends: Array<{
   text: string;
   images: readonly CompanionImageDraft[];
@@ -77,15 +75,6 @@ const fixtureProps: CompanionBridgeProps = {
     sendCalls += 1;
     lastSend = { text, images };
     const echoId = appendSubmissionEcho(text, images);
-    if (internalSendFailure || healthyInternalSendFailure) {
-      const reconnecting = internalSendFailure;
-      internalSendFailure = false;
-      healthyInternalSendFailure = false;
-      setPromptError("fixture carrier unavailable", "internal", "send", reconnecting ? "reconnecting" : undefined);
-      removeSubmissionEcho(echoId);
-      onRetire?.({ reason: "failed" });
-      throw new Error("fixture carrier unavailable");
-    }
     if (!deferredSends) {
       appendDurableSend(text, images);
       removeSubmissionEcho(echoId);
@@ -158,7 +147,7 @@ function setPromptError(text: string, code: string, op: "send" | "stop" = "send"
   }));
 }
 
-function settlePendingSend(kind: "resolve" | "reject" | "transport", message = "host-send-rejected"): void {
+function settlePendingSend(kind: "resolve" | "reject", message = "host-send-rejected"): void {
   const pending = pendingSends.shift();
   if (!pending) return;
   if (kind === "resolve") {
@@ -170,12 +159,6 @@ function settlePendingSend(kind: "resolve" | "reject" | "transport", message = "
     removeSubmissionEcho(pending.echoId);
     pending.onRetire?.({ reason: "failed" });
     pending.reject(new Error(message));
-  }
-  else {
-    removeSubmissionEcho(pending.echoId);
-    pending.onRetire?.({ reason: "failed" });
-    pending.reject(new Error(message));
-    propsStore.update((current) => ({ ...current, projection: { ...current.projection!, status: "reconnecting" } }));
   }
 }
 
@@ -217,13 +200,9 @@ declare global {
       deferSend(): void;
       resolveSend(): void;
       rejectSend(message?: string): void;
-      transportFail(message?: string): void;
-      internalFail(): void;
-      internalHealthyFail(): void;
       seedInternalPromptError(): void;
       sendError(message?: string): void;
       confirmSend(): void;
-      refreshAuthoritative(): void;
       switchSession(sessionId: string): void;
       setCapacity(value: ContextPressureProjection | undefined): void;
       startCompaction(id?: string): void;
@@ -262,9 +241,6 @@ window.__companionFixture = {
   deferSend() { deferredSends = true; },
   resolveSend() { settlePendingSend("resolve"); },
   rejectSend(message = "host-send-rejected") { settlePendingSend("reject", message); },
-  transportFail(message = "transport-failed") { settlePendingSend("transport", message); },
-  internalFail() { internalSendFailure = true; },
-  internalHealthyFail() { healthyInternalSendFailure = true; },
   seedInternalPromptError() {
     setPromptError("fixture existing carrier error", "internal");
   },
@@ -278,7 +254,6 @@ window.__companionFixture = {
     }
   },
   confirmSend() { confirmLastSend(); },
-  refreshAuthoritative() { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, status: "ready", openState: "open" } })); },
   switchSession(sessionId) { switchFixtureSession(sessionId); },
   setCapacity(value) { propsStore.update((current) => ({ ...current, continuity: { ...current.continuity, contextPressure: value } })); },
   startCompaction(id) {

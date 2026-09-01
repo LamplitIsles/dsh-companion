@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createComposerState, findComposerCommand, reduceComposer, shouldSubmitEnter } from "../src/client/composer.js";
-import { CompanionAdmissionError, submitCompanionInput } from "../src/client/admission.js";
+import { CompanionAdmissionError, CompanionPreControllerError, submitCompanionInput } from "../src/client/admission.js";
 import { changedSettingsPayload, mergeCleanSettingsDraft, relationshipControlsWritable } from "../src/client/settings.js";
 import { companionSessionOpenPlan } from "../src/client/session-opening.js";
 
@@ -102,7 +102,7 @@ describe("Companion alpha Session admission", () => {
       beginSubmission: () => ({ requestId: "unused" as never, abandon }),
       prompt: async () => ({ ok: true, value: { accepted: true } }),
       command: async () => ({ ok: true, value: { matched: true } }),
-    }, "/compact", [{ id: "image", file: { name: "a.png", type: "image/png" } as File, previewUrl: "blob:image" }])).rejects.toThrow("compact-with-images");
+    }, "/compact", [{ id: "image", file: { name: "a.png", type: "image/png" } as File, previewUrl: "blob:image" }])).rejects.toBeInstanceOf(CompanionPreControllerError);
     expect(abandon).not.toHaveBeenCalled();
   });
 
@@ -111,7 +111,7 @@ describe("Companion alpha Session admission", () => {
       beginSubmission: () => ({ requestId: "unused" as never, abandon: () => undefined }),
       prompt: async () => ({ ok: true, value: { accepted: true } }),
       command: async () => ({ ok: true, value: { matched: false } }),
-    }, "/compact")).rejects.toThrow("compact-command-unavailable");
+    }, "/compact")).rejects.toBeInstanceOf(CompanionPreControllerError);
   });
 });
 

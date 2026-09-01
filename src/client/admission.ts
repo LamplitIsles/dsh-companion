@@ -17,6 +17,14 @@ export class CompanionAdmissionError extends Error {
   }
 }
 
+/** A caller-side failure before any Session-controller submission exists. */
+export class CompanionPreControllerError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CompanionPreControllerError";
+  }
+}
+
 function reject(error: { code?: string; message?: string } | undefined, fallback: string): never {
   const code = typeof error?.code === "string" && error.code ? error.code : "prompt-rejected";
   throw new CompanionAdmissionError(error?.message || fallback, code);
@@ -35,10 +43,10 @@ export async function submitCompanionInput(
   onRetire?: (retirement: PendingSubmissionRetirement) => void,
 ): Promise<void> {
   if (text === "/compact") {
-    if (drafts.length > 0) throw new Error("compact-with-images");
+    if (drafts.length > 0) throw new CompanionPreControllerError("compact-with-images");
     const result = await session.command(text);
-    if (!result.ok) reject(result.error, "compact-command-rejected");
-    if (!result.value?.matched) throw new Error("compact-command-unavailable");
+    if (!result.ok) throw new CompanionPreControllerError(result.error?.message || "compact-command-rejected");
+    if (!result.value?.matched) throw new CompanionPreControllerError("compact-command-unavailable");
     return;
   }
 

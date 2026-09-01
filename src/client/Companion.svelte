@@ -13,6 +13,7 @@
   import type { CompanionProjection, TimelineImage, TimelineVoice } from "../projection.js";
   import type { CompanionContinuityView } from "./companion-bridge.js";
   import type { PendingSubmissionRetirement } from "@deepseek-ai/dsh-api-session-controller/client";
+  import { CompanionPreControllerError } from "./admission.js";
   import { createComposerState, findComposerCommand, reduceComposer, shouldSubmitEnter, type ComposerCommand } from "./composer.js";
   import { createImageDrafts, imageFilesFromClipboard, imageIntakeError, IMAGE_ACCEPT, releaseImageDrafts, type CompanionImageDraft } from "./image-drafts.js";
   import { INTENSITY_LABELS } from "./relationship.js";
@@ -491,13 +492,15 @@
     composer = { ...reduceComposer(composer, { type: "submit" }), draft: "", composing: false };
     imageDrafts = [];
     const token = ++submissionToken;
-    let retired = false;
     const onRetire = (retirement: PendingSubmissionRetirement): void => {
-      retired = true;
       retireSubmission(submittedDrafts, retirement, restoreText, originSessionId);
     };
     void Promise.resolve().then(() => actions.send(text, submittedDrafts, onRetire)).catch((error: unknown) => {
-      if (!retired && token === submissionToken && sessionId === originSessionId) {
+      // Once beginSubmission() succeeds, the Session controller is the only
+      // owner that retires its echo and restores a rejected draft. The only
+      // local restoration path is an explicitly marked caller failure before
+      // that controller boundary (for example no bound Session or /compact).
+      if (error instanceof CompanionPreControllerError && token === submissionToken && sessionId === originSessionId) {
         composer = { ...composer, draft: composer.draft ? `${restoreText}\n${composer.draft}` : restoreText, composing: false };
         imageDrafts = [...imageDrafts, ...submittedDrafts];
       }

@@ -11,7 +11,7 @@ import type { CompanionBridgeProps } from "./companion-bridge.js";
 import { affinityStage, companionSessionList, MOOD_LABELS, selectCompanionSession } from "./relationship.js";
 import { projectConversation } from "../projection.js";
 import { TtsPreparationCache } from "./voice-cache.js";
-import { submitCompanionInput } from "./admission.js";
+import { CompanionPreControllerError, submitCompanionInput } from "./admission.js";
 import { companionSessionOpenPlan } from "./session-opening.js";
 import type { ClientSettings } from "./settings.js";
 import { RPC_CHANNEL as TTS_CHANNEL, RPC_ENDPOINT as TTS_ENDPOINT } from "./tts-contract.js";
@@ -191,7 +191,7 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
     const rpc: ClientConnectionRpc = connection.rpc;
     return {
       async send(text: string, images: readonly CompanionImageDraft[], onRetire?: (retirement: PendingSubmissionRetirement) => void): Promise<void> {
-        if (!session) throw new Error("session-unavailable");
+        if (!session) throw new CompanionPreControllerError("session-unavailable");
         await submitCompanionInput(session, text, images, onRetire);
       },
       async stop(): Promise<void> {

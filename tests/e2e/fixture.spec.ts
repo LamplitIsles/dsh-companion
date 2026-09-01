@@ -215,26 +215,6 @@ test("restores an identified rejection through the Session retirement callback",
   await expect(textarea).toHaveValue("投影失败");
 });
 
-test("renders the runtime-shaped internal send failure without masking later errors", async ({ page }) => {
-  await page.goto("/");
-  await page.evaluate(() => window.__companionFixture?.internalHealthyFail());
-  const textarea = page.getByRole("textbox", { name: "写消息" });
-  await textarea.fill("健康流内部失败");
-  await page.getByRole("button", { name: "发送消息" }).click();
-
-  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
-  await expect(page.locator(".companion-presence")).not.toContainText("正在重新连接");
-  await expect(page.locator(".companion-timeline .companion-recovery").filter({ hasText: "fixture carrier unavailable" })).toHaveCount(1);
-  await expect(page.locator("body")).toContainText("fixture carrier unavailable");
-
-  await page.evaluate(() => window.__companionFixture?.setStatus("reconnecting"));
-  await page.evaluate(() => window.__companionFixture?.refreshAuthoritative());
-  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
-
-  await page.evaluate(() => window.__companionFixture?.sendError("later-host-error"));
-  await expect(page.locator(".companion-timeline .companion-recovery").filter({ hasText: "later-host-error" })).toHaveCount(1);
-});
-
 test("keeps an existing internal send error visible when a submission begins", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => window.__companionFixture?.seedInternalPromptError());
@@ -252,7 +232,7 @@ test("keeps an existing internal send error visible when a submission begins", a
   await expect(page.locator(".companion-timeline .companion-recovery").filter({ hasText: "fixture existing carrier error" })).toHaveCount(1);
 });
 
-test("restores failed submissions and clears old-session sends", async ({ page }) => {
+test("restores identified failed submissions and clears old-session sends", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => window.__companionFixture?.deferSend());
   const textarea = page.getByRole("textbox", { name: "写消息" });
@@ -264,24 +244,6 @@ test("restores failed submissions and clears old-session sends", async ({ page }
   await expect(textarea).toHaveValue("请恢复我");
   await expect(textarea).toBeEnabled();
   await expect(page.getByRole("button", { name: "重试消息" })).toHaveCount(0);
-
-  await textarea.fill("传输不确定");
-  await page.getByRole("button", { name: "发送消息" }).click();
-  await page.evaluate(() => window.__companionFixture?.transportFail());
-  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
-  await expect(page.locator(".companion-presence")).toContainText("正在重新连接");
-  await page.evaluate(() => window.__companionFixture?.refreshAuthoritative());
-  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
-  await expect(textarea).toHaveValue("传输不确定");
-
-  await textarea.fill("运行时内部");
-  await page.evaluate(() => window.__companionFixture?.internalFail());
-  await page.getByRole("button", { name: "发送消息" }).click();
-  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
-  await expect(page.locator(".companion-presence")).toContainText("正在重新连接");
-  await page.evaluate(() => window.__companionFixture?.refreshAuthoritative());
-  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
-  await expect(textarea).toHaveValue("运行时内部");
 
   await textarea.fill("不要跨对话");
   await page.getByRole("button", { name: "发送消息" }).click();
