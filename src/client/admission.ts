@@ -41,6 +41,7 @@ export async function submitCompanionInput(
   text: string,
   drafts: readonly CompanionImageDraft[] = [],
   onRetire?: (retirement: PendingSubmissionRetirement) => void,
+  onSubmissionRetire?: (requestId: string, retirement: PendingSubmissionRetirement) => void,
 ): Promise<void> {
   if (text === "/compact") {
     if (drafts.length > 0) throw new CompanionPreControllerError("compact-with-images");
@@ -50,12 +51,17 @@ export async function submitCompanionInput(
     return;
   }
 
+  let requestId: string | undefined;
   const handle = session.beginSubmission({
     mode: "queue",
     text,
     images: drafts.map((draft) => ({ previewUrl: draft.previewUrl, ...(draft.file.name ? { name: draft.file.name } : {}) })),
-    onRetire,
+    onRetire: (retirement) => {
+      if (requestId) onSubmissionRetire?.(requestId, retirement);
+      onRetire?.(retirement);
+    },
   });
+  requestId = handle.requestId;
   try {
     const images = await serializeImageDrafts(drafts);
     const content: CompanionAdmissionPart[] = [...images, ...(text ? [{ type: "text" as const, text }] : [])];
