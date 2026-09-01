@@ -177,6 +177,11 @@ function rpcIdOf(node: Record<string, unknown>): string | undefined {
   return typeof source?.rpcId === "string" ? source.rpcId : undefined;
 }
 
+/** Keep the render identity of a correlated outgoing contribution across its handoff. */
+function messageKeyFor(authoritativeId: string, rpcId?: string): string {
+  return rpcId ? `submission:${rpcId}` : authoritativeId;
+}
+
 function isFinalized(node: Record<string, unknown>): boolean {
   if (node.finalized === false || node.streaming === true || node.partial === true) return false;
   if (node.status === "streaming" || node.status === "running") return false;
@@ -346,10 +351,14 @@ export function projectConversation(snapshot: unknown, connected = true, continu
   const nodes = orderedNodes(snapshot);
   const normalizedNodes = nodes.map(normalizeChatNode);
   const observedRpcIds = new Set<string>();
+  const durableRpcIds = new Set<string>();
   for (const node of normalizedNodes) {
     if (!node || (!isUserNode(node) && !isSteeringNode(node))) continue;
     const rpcId = rpcIdOf(node);
-    if (rpcId) observedRpcIds.add(rpcId);
+    if (rpcId) {
+      observedRpcIds.add(rpcId);
+      durableRpcIds.add(rpcId);
+    }
   }
   const continuityValue = continuity ?? root.continuity;
   const continuityRecords = projectContinuityRecords(continuityValue, normalizedNodes.filter((node): node is Record<string, unknown> => node !== undefined));
@@ -371,8 +380,9 @@ export function projectConversation(snapshot: unknown, connected = true, continu
     const time = nodeTime(node);
     if (isUserNode(node)) {
       const text = textFromValue(node.text) ?? textFromValue(node.content) ?? "";
-      if (text) items.push({ id, messageKey: id, kind: "text", side: "outgoing", origin: "user", text, time });
-      items.push(...nodeMedia(node, id, "outgoing", time, "user", id));
+      const messageKey = messageKeyFor(id, rpcIdOf(node));
+      if (text) items.push({ id, messageKey, kind: "text", side: "outgoing", origin: "user", text, time });
+      items.push(...nodeMedia(node, id, "outgoing", time, "user", messageKey));
       if (sequence !== undefined) emitContinuityRecords((anchorSeq) => anchorSeq === sequence);
       continue;
     }
@@ -389,8 +399,9 @@ export function projectConversation(snapshot: unknown, connected = true, continu
       const text = textFromValue(node.text) ?? textFromValue(node.content) ?? "";
       const messageId = typeof node.messageId === "string" ? node.messageId : undefined;
       if (messageId) admittedQueueIds.add(messageId);
-      if (text) items.push({ id, projectionKey: id, messageKey: id, kind: "text", side: "outgoing", origin: "steering", text, time });
-      items.push(...nodeMedia(node, id, "outgoing", time, "steering", id));
+      const messageKey = messageKeyFor(id, rpcIdOf(node));
+      if (text) items.push({ id, projectionKey: id, messageKey, kind: "text", side: "outgoing", origin: "steering", text, time });
+      items.push(...nodeMedia(node, id, "outgoing", time, "steering", messageKey));
       if (sequence !== undefined) emitContinuityRecords((anchorSeq) => anchorSeq === sequence);
       continue;
     }
@@ -438,11 +449,14 @@ export function projectConversation(snapshot: unknown, connected = true, continu
     if (!row) continue;
     const identity = typeof row.messageId === "string" ? row.messageId : typeof row.id === "string" ? row.id : `pending-${index}`;
     if (admittedQueueIds.has(identity)) continue;
+    const rpcId = typeof row.rpcId === "string" ? row.rpcId : undefined;
+    if (rpcId && durableRpcIds.has(rpcId)) continue;
     const text = typeof row.text === "string" ? row.text : textFromValue(row.content) ?? "";
     const pendingKey = `pending:${identity}`;
-    if (text) items.push({ id: pendingKey, messageKey: pendingKey, kind: "text", side: "outgoing", text, pending: true });
+    const messageKey = messageKeyFor(pendingKey, rpcId);
+    if (text) items.push({ id: pendingKey, messageKey, kind: "text", side: "outgoing", text, pending: true });
     const content = Array.isArray(row.content) ? row.content : [];
-    items.push(...nodeMedia({ id: identity, content }, identity, "outgoing", undefined, undefined, pendingKey));
+    items.push(...nodeMedia({ id: identity, content }, identity, "outgoing", undefined, undefined, messageKey));
   }
   const promptError = asRecord(root.promptError);
   const promptErrorKey = promptError ? stableValueKey(root.promptError) : undefined;
