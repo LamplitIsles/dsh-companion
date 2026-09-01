@@ -46,6 +46,21 @@ describe("chat projection", () => {
     expect(durable.items.some((item) => item.id.startsWith("submission:req-1"))).toBe(false);
   });
 
+  it("hands a pending submission to its observed queue row without duplicate images", () => {
+    const image = { attachmentId: "queued-image", mediaType: "image/png", name: "queued.png" };
+    const result = projectConversation({
+      pendingSubmissions: [{ requestId: "req-queued", placement: "queued", time: 10, text: "稍后发送", images: [{ previewUrl: "blob:queued", name: "queued.png" }] }],
+      queue: [{ id: "queue-1", rpcId: "req-queued", content: [{ type: "image", attachment: image }, { type: "text", text: "稍后发送" }] }],
+    });
+
+    expect(result.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "pending:queue-1", kind: "text", side: "outgoing", text: "稍后发送", pending: true }),
+      expect.objectContaining({ id: "image:queue-1:0", kind: "image", side: "outgoing", attachment: image }),
+    ]));
+    expect(result.items.some((item) => item.id.startsWith("submission:req-queued"))).toBe(false);
+    expect(result.items.filter((item) => item.kind === "image" && item.side === "outgoing")).toHaveLength(1);
+  });
+
   it("keeps one keyed ImageGen row while a call settles", () => {
     const running = projectConversation({ nodes: [{ kind: "tool-call", seq: 1, callId: "call-1", name: "kepos_image_generate", state: "running" }] });
     const ready = projectConversation({ nodes: [{ kind: "tool-result", seq: 1, callId: "call-1", name: "kepos_image_generate", content: [{ type: "image", attachment: { attachmentId: "att-1", mediaType: "image/png" } }] }] });
