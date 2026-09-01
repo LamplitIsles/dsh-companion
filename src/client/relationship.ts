@@ -1,4 +1,3 @@
-export const MOOD_LABELS: Readonly<Record<string, string>> = Object.freeze({ neutral: "如常", serene: "平静", bright: "愉快", playful: "俏皮", tender: "柔和", pensive: "若有所思", tired: "疲惫", low: "低落" });
 export function affinityStage(value: number): "疏离" | "生疏" | "熟悉" | "亲近" | "深厚" {
   const n = Math.max(0, Math.min(100, Math.trunc(value)));
   return n < 20 ? "疏离" : n < 40 ? "生疏" : n < 60 ? "熟悉" : n < 80 ? "亲近" : "深厚";

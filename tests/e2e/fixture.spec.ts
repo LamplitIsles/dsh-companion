@@ -210,6 +210,12 @@ test("CompanionRoot bridge keeps delayed authorities neutral and exposes only se
   await expect(page.getByRole("textbox", { name: "写消息" })).toBeVisible();
   await page.evaluate(() => window.__companionBridgeFixture?.setSession("error"));
   await expect(page.getByRole("heading", { name: "这段对话暂时打不开" })).toBeVisible();
+
+  await page.goto("/?bridge=1");
+  await page.evaluate(() => window.__companionBridgeFixture?.setSettingsUnavailable());
+  await expect(page.getByRole("heading", { name: "聊天空间暂时打不开" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "重新连接" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "还没有设置聊天空间" })).toHaveCount(0);
 });
 
 test("Pixel 7a geometry keeps composer and relationship overlay usable", async ({ page }) => {

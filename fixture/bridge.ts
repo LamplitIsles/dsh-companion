@@ -4,7 +4,7 @@ import type { Context as ClientContext } from "@deepseek-ai/cordis";
 import type { ClientConnectionRpc, ConnectionRpcResult } from "@deepseek-ai/dsh-client-connection/client";
 import type { SessionListState, SessionSnapshot } from "@deepseek-ai/dsh-api-session-controller/client";
 import type { WorkspaceSnapshot, WorkspaceView } from "@deepseek-ai/dsh-api-workspace-controller/client";
-import type { SettingsScope } from "@deepseek-ai/dsh-client-ui-settings/client";
+import type { SettingsScope, SettingsScopeSnapshot } from "@deepseek-ai/dsh-client-ui-settings/client";
 import type { ClientSettings } from "../src/client/settings.js";
 import { CompanionRoot } from "../src/client/CompanionRoot.js";
 
@@ -59,7 +59,7 @@ const settingsValue: ClientSettings = {
   preferredAddress: "小岛",
   defaultAffinity: 67,
 };
-const settingsSnapshot = {
+const settingsSnapshot: SettingsScopeSnapshot<ClientSettings> = {
   status: "ready" as const,
   value: settingsValue,
   base: settingsValue,
@@ -117,6 +117,7 @@ export function mountBridgeFixture(target: HTMLElement): void {
   const workspaceStore = new FixtureStore<WorkspaceSnapshot>({ items: [], archivedSessionIds: [], state: "loading", phase: "pending", error: null });
   const sessionListStore = new FixtureStore<SessionListState>(listSnapshot("pending"));
   const sessionStore = new FixtureStore<SessionSnapshot>(sessionSnapshot("cold"));
+  const settingsStore = new FixtureStore<SettingsScopeSnapshot<ClientSettings>>(settingsSnapshot);
   const connectionStore = new FixtureStore<string>("connected");
   const chatStore = new FixtureStore<unknown>({ order: [], nodes: new Map() });
   const undefinedProjection = new FixtureStore<unknown>(undefined);
@@ -174,8 +175,8 @@ export function mountBridgeFixture(target: HTMLElement): void {
   };
 
   const settings: SettingsScope<ClientSettings> = {
-    getSnapshot: () => settingsSnapshot,
-    subscribe: () => () => undefined,
+    getSnapshot: settingsStore.getSnapshot,
+    subscribe: settingsStore.subscribe,
     mutate: async () => undefined,
     set: async () => undefined,
     unset: async () => undefined,
@@ -212,8 +213,9 @@ export function mountBridgeFixture(target: HTMLElement): void {
     sessionStore.set(sessionSnapshot(mode === "error" ? "error" : "cold"));
     if (mode === "ready") queueMicrotask(() => sessionStore.set(sessionSnapshot("open")));
   };
+  const setSettingsUnavailable = (): void => { settingsStore.set({ ...settingsSnapshot, status: "unavailable", value: undefined }); };
   const dispose = (): void => { reactRoot.unmount(); };
-  window.__companionBridgeFixture = { setWorkspace, setRelationship, setSession, dispose };
+  window.__companionBridgeFixture = { setWorkspace, setRelationship, setSession, setSettingsUnavailable, dispose };
 }
 
 declare global {
@@ -222,6 +224,7 @@ declare global {
       setWorkspace(mode: "ready" | "missing" | "error"): void;
       setRelationship(mode: "ready" | "missing" | "error"): void;
       setSession(mode: "ready" | "error"): void;
+      setSettingsUnavailable(): void;
       dispose(): void;
     };
   }

@@ -8,7 +8,7 @@ import type { SettingsScope } from "@deepseek-ai/dsh-client-ui-settings/client";
 import type { ClientConnectionRpc, ConnectionHandle } from "@deepseek-ai/dsh-client-connection/client";
 import CompanionBridge from "./CompanionBridge.svelte";
 import type { CompanionBridgeProps } from "./companion-bridge.js";
-import { affinityStage, companionSessionList, MOOD_LABELS, selectCompanionSession } from "./relationship.js";
+import { affinityStage, companionSessionList, selectCompanionSession } from "./relationship.js";
 import { projectConversation } from "../projection.js";
 import { TtsPreparationCache } from "./voice-cache.js";
 import { CompanionPreControllerError, submitCompanionInput } from "./admission.js";
@@ -19,6 +19,7 @@ import { CONTINUITY_VIEW_TARGET, type CompanionContinuitySnapshot, type ContextP
 import type { ImageAttachmentLimits } from "@deepseek-ai/dsh-attachment";
 import type { CompanionImageDraft } from "./image-drafts.js";
 import { resolveSessionReadiness, resolveWorkspaceReadiness, type CompanionReadiness } from "./readiness.js";
+import { MOOD_LABELS } from "../domain.js";
 
 export interface CompanionRootInjected {
   ctx: ClientContext;
@@ -89,7 +90,9 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
   const workspace = workspaceFor(configured, workspaceList);
   const workspaceReadiness: CompanionReadiness = settingsSnapshot.status === "loading"
     ? "loading"
-    : resolveWorkspaceReadiness(configured?.workspaceId, workspaceList);
+    : settingsSnapshot.status === "unavailable"
+      ? "error"
+      : resolveWorkspaceReadiness(configured?.workspaceId, workspaceList);
   const remembered = workspace ? mostRecentSession(list, workspace, workspaceList.archivedSessionIds) : undefined;
   const workspaceRows = useMemo(() => {
     if (!workspace) return [];

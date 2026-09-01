@@ -177,10 +177,6 @@
     composerInput.style.overflowY = resolved.scrollable ? "auto" : "hidden";
   }
 
-  function messageUnits(value: CompanionProjection): TimelineMessageUnit[] {
-    return [...value.messageUnits];
-  }
-
   function messageContentParts(unit: TimelineMessageUnit): MessageContentPart[] {
     const content = unit.items.filter((item): item is TimelineText | TimelineImage | TimelineVoice => item.kind === "text" || item.kind === "image" || item.kind === "voice");
     if (unit.side === "outgoing") {
@@ -952,7 +948,7 @@
           {#if displayedProjection.items.length === 0}
             <div class="companion-recovery"><div class="companion-mood-orb" aria-hidden="true"></div><h1>嗨，{identity.preferredAddress}</h1><p>今天想聊点什么？</p></div>
           {/if}
-          {#each messageUnits(displayedProjection) as unit (unit.id)}
+          {#each displayedProjection.messageUnits as unit (unit.id)}
             {@const first = unit.items[0]}
             {#if first?.kind === "continuity"}
               <div class="companion-continuity-record" data-testid={`continuity-record-${first.compactionId}`} aria-live="off">{first.text}</div>
