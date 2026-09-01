@@ -73,6 +73,51 @@ test("assembled image preview dismisses from its backdrop and returns focus to t
   await expect(opener).toBeFocused();
 });
 
+test("assembled image preview follows the official lightbox visual contract", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "查看大图：今晚的海" }).click();
+  const dialog = page.getByRole("dialog");
+  const close = page.getByRole("button", { name: "关闭大图" });
+  const image = dialog.getByRole("img", { name: "今晚的海" });
+  const backdrop = page.locator(".companion-lightbox-backdrop");
+
+  await expect(close.locator("svg")).toHaveCount(1);
+  await expect.poll(async () => ({
+    dialog: await dialog.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return { background: style.backgroundColor, paddingTop: style.paddingTop };
+    }),
+    close: await close.evaluate((node) => {
+      const style = getComputedStyle(node);
+      const box = node.getBoundingClientRect();
+      return { width: box.width, height: box.height, radius: Number.parseFloat(style.borderTopLeftRadius), top: box.top, right: window.innerWidth - box.right };
+    }),
+    image: await image.evaluate((node) => {
+      const box = node.getBoundingClientRect();
+      const centerDelta = box.left + box.width / 2 - window.innerWidth / 2;
+      return {
+        radius: Number.parseFloat(getComputedStyle(node).borderTopLeftRadius),
+        centerDelta: Math.abs(centerDelta) < 0.5 ? 0 : Math.round(centerDelta),
+      };
+    }),
+    backdrop: await backdrop.evaluate((node) => {
+      const box = node.getBoundingClientRect();
+      return {
+        filter: getComputedStyle(node).backdropFilter,
+        top: box.top,
+        right: window.innerWidth - box.right,
+        bottom: window.innerHeight - box.bottom,
+        left: box.left,
+      };
+    }),
+  })).toEqual({
+    dialog: { background: "rgba(0, 0, 0, 0)", paddingTop: "40px" },
+    close: { width: 36, height: 36, radius: 999, top: 20, right: 20 },
+    image: { radius: 12, centerDelta: 0 },
+    backdrop: { filter: "blur(12px)", top: 0, right: 0, bottom: 0, left: 0 },
+  });
+});
+
 test("Pixel 7a browser Back dismisses the assembled image preview and returns focus", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "pixel-7a", "browser Back preview coverage runs on the mobile project");
   await page.goto("/");
@@ -144,6 +189,7 @@ test("composer grows, caps, and shrinks without document overflow", async ({ pag
   expect(multiline.height).toBeGreaterThan(initial.height);
   await textarea.fill("x".repeat(2_000));
   await expect.poll(metrics).toMatchObject({ height: 150, overflowY: "auto" });
+  await expect.poll(() => textarea.evaluate((node) => Number.parseFloat(getComputedStyle(node).borderTopLeftRadius))).toBe(0);
   const capped = await metrics();
   expect(capped.documentHeight).toBeLessThanOrEqual(capped.viewportHeight + 1);
   await textarea.fill("缩回去");
@@ -691,10 +737,16 @@ test("chat shell has rendered Markdown, viewport scrolling, sessions, rounded fo
   await textarea.focus();
   const focusStyle = await textarea.evaluate((node) => {
     const style = getComputedStyle(node);
-    return { outlineColor: style.outlineColor, radius: Number.parseFloat(style.borderRadius) };
+    const shellStyle = getComputedStyle(node.closest(".companion-compose-row")!);
+    return {
+      outlineColor: style.outlineColor,
+      innerRadius: Number.parseFloat(style.borderRadius),
+      shellRadius: Number.parseFloat(shellStyle.borderRadius),
+    };
   });
   expect(focusStyle.outlineColor).not.toBe("rgb(255, 255, 255)");
-  expect(focusStyle.radius).toBeGreaterThanOrEqual(20);
+  expect(focusStyle.innerRadius).toBe(0);
+  expect(focusStyle.shellRadius).toBeGreaterThanOrEqual(20);
 
   const bubbles = await page.evaluate(() => {
     const measure = (id: string) => {

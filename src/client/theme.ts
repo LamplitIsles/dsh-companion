@@ -105,7 +105,7 @@ export const companionStyles = `
 #dsh-companion .companion-image-input{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 #dsh-companion .companion-compose-row{display:flex;align-items:flex-end;gap:8px;max-width:820px;margin:auto;padding:5px 6px;border:1px solid color-mix(in srgb,var(--color-base-content) 12%,transparent);border-radius:22px;overflow:hidden;background:color-mix(in srgb,var(--color-base-100) 92%,var(--color-base-200));box-shadow:0 6px 22px color-mix(in srgb,var(--color-base-content) 7%,transparent);transition:border-color .16s ease,box-shadow .16s ease}
 #dsh-companion .companion-compose-row:focus-within{border-color:color-mix(in srgb,var(--color-primary) 65%,transparent);box-shadow:0 0 0 4px color-mix(in srgb,var(--color-primary) 16%,transparent),0 8px 26px color-mix(in srgb,var(--color-base-content) 8%,transparent)}
-#dsh-companion .companion-textarea{flex:1;min-height:43px;max-height:150px;padding:11px 0;border:0!important;border-radius:24px!important;outline:0!important;background:transparent!important;color:inherit;resize:none;line-height:1.42;box-shadow:none!important}
+#dsh-companion .companion-textarea{flex:1;min-height:43px;max-height:150px;padding:11px 2px;border:0!important;border-radius:0!important;outline:0!important;background:transparent!important;color:inherit;resize:none;line-height:1.42;box-shadow:none!important}
 #dsh-companion .companion-textarea::placeholder{color:color-mix(in srgb,var(--color-base-content) 46%,transparent)}
 #dsh-companion .companion-attach{width:40px;min-width:40px!important;height:40px;min-height:40px!important;flex:none;margin:0 0 1px;padding:0;color:color-mix(in srgb,var(--color-base-content) 56%,transparent);touch-action:manipulation;-webkit-touch-callout:none;user-select:none}
 #dsh-companion .companion-attach:hover,#dsh-companion .companion-attach:focus-visible{color:var(--color-primary)}
@@ -171,13 +171,16 @@ export const companionStyles = `
 #dsh-companion .companion-relationship-list{display:grid;grid-template-columns:auto minmax(0,1fr);gap:9px 18px;margin:13px 20px 20px;padding-top:14px;border-top:1px solid var(--cmp-line);font-size:.77rem}
 #dsh-companion .companion-relationship-list dt{opacity:.5}
 #dsh-companion .companion-relationship-list dd{margin:0;text-align:right}
-#dsh-companion .companion-lightbox{width:100vw;max-width:none;height:100vh;max-height:none;padding:24px;background:rgb(5 9 17 / .86)}
-#dsh-companion .companion-lightbox-dialog{position:relative;max-width:none;margin:0;padding:0;border:0;background:transparent}
-#dsh-companion .companion-lightbox .cmp-modal-box{position:relative;max-width:none;margin:0;padding:0;background:transparent;box-shadow:none}
-#dsh-companion .companion-lightbox img{display:block;max-width:min(94vw,1000px);max-height:86vh;border-radius:22px;object-fit:contain}
+#dsh-companion .companion-lightbox{width:100vw;max-width:none;height:100dvh;max-height:none;margin:0;padding:40px;border:0;background:transparent;place-items:center;overflow:hidden}
+#dsh-companion .companion-lightbox::backdrop{background:transparent}
+#dsh-companion .companion-lightbox-dialog{position:relative;z-index:1;display:grid;max-width:calc(100vw - 80px);max-height:calc(100dvh - 80px);margin:0;padding:0;border:0;background:transparent;place-items:center;box-shadow:none}
+#dsh-companion .companion-lightbox .cmp-modal-box{margin:0;padding:0;background:transparent;box-shadow:none}
+#dsh-companion .companion-lightbox img{position:relative;display:block;max-width:min(100%,1600px);max-height:calc(100dvh - 80px);border-radius:12px;background:var(--color-base-200);object-fit:contain;box-shadow:0 20px 60px rgb(0 0 0 / .36)}
 #dsh-companion .companion-loading-shell{display:flex;align-items:center;justify-content:center;gap:9px;color:color-mix(in srgb,var(--color-base-content) 60%,transparent);font-size:.8rem}
 #dsh-companion .companion-new-message{background:var(--color-primary);color:var(--color-primary-content)}
-#dsh-companion .companion-lightbox-close{position:absolute;top:12px;right:12px;z-index:1}
+#dsh-companion .companion-lightbox-backdrop{position:fixed;z-index:0;inset:0;display:block;background:color-mix(in srgb,var(--color-neutral) 72%,transparent);backdrop-filter:blur(12px)}
+#dsh-companion .companion-lightbox-backdrop>button{position:absolute;inset:0;width:100%;height:100%;padding:0;border:0;opacity:0;cursor:default}
+#dsh-companion .companion-lightbox-close{position:fixed;z-index:2;top:20px;right:20px;width:36px!important;min-width:36px!important;height:36px!important;min-height:36px!important;padding:0;border:1px solid color-mix(in srgb,var(--color-base-content) 16%,transparent);border-radius:999px;background:var(--color-base-100)!important;color:var(--color-base-content)!important;box-shadow:0 8px 24px rgb(0 0 0 / .18)}
 @keyframes companion-card-in{from{opacity:0;transform:translateY(-8px) scale(.96)}to{opacity:1;transform:none}}
 @keyframes companion-waiting-in{from{opacity:0;transform:translateX(-4px)}to{opacity:1;transform:none}}
 @keyframes companion-spin{to{transform:rotate(360deg)}}
