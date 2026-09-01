@@ -2,6 +2,7 @@ import type { CompanionProjection } from "../projection.js";
 import type { CompanionContinuitySnapshot, ContextPressureProjection } from "../continuity.js";
 import type { ImageAttachmentLimits } from "@deepseek-ai/dsh-attachment";
 import type { CompanionImageDraft } from "./image-drafts.js";
+import type { PendingSubmissionRetirement } from "@deepseek-ai/dsh-api-session-controller/client";
 
 export interface CompanionIdentityView {
   companionName: string;
@@ -18,7 +19,7 @@ export interface CompanionIdentityView {
   affinityStage?: string;
 }
 export interface CompanionActions {
-  send: (text: string, images: readonly CompanionImageDraft[]) => Promise<void>;
+  send: (text: string, images: readonly CompanionImageDraft[], onRetire?: (retirement: PendingSubmissionRetirement) => void) => Promise<void>;
   stop?: () => Promise<void>;
   selectSession?: (sessionId: string) => Promise<void>;
   loadOlder?: () => Promise<void>;

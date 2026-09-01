@@ -1,6 +1,12 @@
 import type { Context as ClientContext } from "@deepseek-ai/cordis";
 import type {} from "@deepseek-ai/dsh-client-connection/client";
-import type {} from "@deepseek-ai/dsh-client-runtime/client";
+import type {} from "@deepseek-ai/dsh-api-remotes/client";
+import type {} from "@deepseek-ai/dsh-api-session-controller/client";
+import type {} from "@deepseek-ai/dsh-api-workspace-controller/client";
+import type {} from "@deepseek-ai/dsh-client-ui-conversation/client";
+import type {} from "@deepseek-ai/dsh-client-ui-chat/client";
+import type {} from "@deepseek-ai/dsh-client-ui-renderer/client";
+import type {} from "@deepseek-ai/dsh-client-ui-session/client";
 import type {} from "@deepseek-ai/dsh-client-ui-settings/client";
 import type {} from "@deepseek-ai/dsh-client-ui-settings-plugins/client";
 import type {} from "@deepseek-ai/dsh-client-ui-slots";
@@ -15,7 +21,7 @@ import settingsCardStyles from "./client/CompanionSettingsCard.module.css?inline
 import { registerCompanionContinuity } from "./continuity.js";
 
 export const name = "dsh-companion" as const;
-export const inject = ["connection", "conversationEvents", "conversationViews", "locale", "sessions", "settingsScope", "slots", "theme", "workspaces"] as const;
+export const inject = ["connection", "locale", "sessions", "settingsScope", "slots", "theme", "uiConversation", "workspaces"] as const;
 
 const SETTINGS_NAMESPACE = "dsh-companion";
 

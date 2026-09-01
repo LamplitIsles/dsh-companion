@@ -7,5 +7,8 @@ export default defineConfig({
   clean: true,
   sourcemap: true,
   target: "es2022",
-  external: ["@deepseek-ai/cordis", "@deepseek-ai/dsh-attachment", "@deepseek-ai/dsh-llm", "@deepseek-ai/dsh-tools", "@deepseek-ai/dsh-host-apiproxy/api", "@deepseek-ai/schemastery", /^node:/],
+  external: [
+    "@deepseek-ai/cordis", "@deepseek-ai/dsh-attachment", "@deepseek-ai/dsh-llm", "@deepseek-ai/dsh-tools", "@deepseek-ai/dsh-fs", "@deepseek-ai/dsh-session/types", "@deepseek-ai/dsh-session", "@deepseek-ai/dsh-token-meter/client", "@deepseek-ai/schemastery",
+    /^@deepseek-ai\//, "react", "react-dom", "svelte", /^node:/,
+  ],
 });

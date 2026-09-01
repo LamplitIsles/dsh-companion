@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -15,6 +15,17 @@ function dshEntry() {
   const cli = configured ?? execFileSync("which", ["dsh"], { encoding: "utf8" }).trim();
   if (!cli || !existsSync(cli)) throw new Error("set DSH_CLI to the installed dsh executable");
   return cli;
+}
+
+/**
+ * The profile manager extracts a plugin without installing its peer graph.
+ * Link the real alpha CLI's dependency tree into this disposable profile so
+ * Node resolves the packed plugin exactly as it would inside the DSH install,
+ * without touching the repository or a user's profile.
+ */
+function linkCliDependencies(temp, entry) {
+  const cliNodeModules = dirname(dirname(dirname(dirname(realpathSync(entry)))));
+  symlinkSync(cliNodeModules, join(temp, "node_modules"), "dir");
 }
 
 function isolatedEnvironment(temp, dshHome) {
@@ -134,6 +145,7 @@ try {
   const dshHome = join(temp, "dsh-home");
   const env = isolatedEnvironment(temp, dshHome);
   const entry = dshEntry();
+  linkCliDependencies(temp, entry);
   execFileSync(process.execPath, ["--expose-internals", entry, "plugin", "--profile", "web", "add", tarball, "--ignore-scripts"], { cwd: temp, env, stdio: "pipe" });
 
   const config = execFileSync(process.execPath, ["--expose-internals", entry, "--profile", "web", "--dump-config"], { cwd: temp, env, encoding: "utf8" });
@@ -143,12 +155,22 @@ try {
   const manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
   if (manifest.name !== "@lamplitisles/dsh-companion" || manifest.dsh?.bundle?.patch !== "./cordis.patch.yml") throw new Error("packed manifest lost the existing single DSH bundle identity");
   for (const dependencySection of ["peerDependencies", "devDependencies"]) {
-    if (manifest[dependencySection]?.["@deepseek-ai/dsh-llm"] !== "0.1.1-rc.2") throw new Error(`packed manifest lacks the exact LLM ${dependencySection} pin`);
+    for (const [name, version] of Object.entries(manifest[dependencySection] ?? {})) {
+      if (name.startsWith("@deepseek-ai/dsh-") && version !== "0.1.2-alpha.3") throw new Error(`packed manifest mixes DSH contract versions in ${dependencySection}: ${name}@${version}`);
+    }
+  }
+  const bundledDshDependencies = Object.keys(manifest.dependencies ?? {}).filter((name) => name.startsWith("@deepseek-ai/dsh-"));
+  if (bundledDshDependencies.length) throw new Error(`packed manifest bundles DSH runtime dependencies: ${bundledDshDependencies.join(", ")}`);
+  for (const dependencySection of ["peerDependencies", "devDependencies"]) {
+    if (manifest[dependencySection]?.["@deepseek-ai/dsh-llm"] !== "0.1.2-alpha.3") throw new Error(`packed manifest lacks the exact alpha.3 LLM ${dependencySection} pin`);
   }
   const patch = readFileSync(join(packageDir, "cordis.patch.yml"), "utf8");
   if (!/inject:\s*\[[^\]]*\bllm\b[^\]]*\]/u.test(patch)) throw new Error("packed Cordis patch lacks hard llm injection");
   const packageEntry = join(packageDir, "dist", "index.js");
   if (!existsSync(packageEntry)) throw new Error("packed Host entry is missing");
+  const clientEntry = join(packageDir, "dist", "client.js");
+  const packedCode = `${readFileSync(packageEntry, "utf8")}\n${readFileSync(clientEntry, "utf8")}`;
+  if (packedCode.includes("@deepseek-ai/dsh-client-runtime")) throw new Error("packed artifact still references the retired client Runtime");
 
   const activationPath = join(temp, "activate-companion.mjs");
   writeFileSync(activationPath, `import { apply, inject, name } from ${JSON.stringify(pathToFileURL(packageEntry).href)};\nif (name !== "dsh-companion" || typeof apply !== "function" || !inject.includes("llm")) throw new Error("packed Host entry lost its LLM contract");\nexport default { apply, inject, name };\n`);

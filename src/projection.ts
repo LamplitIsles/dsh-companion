@@ -16,9 +16,10 @@ export interface TimelineText {
   projectionKey?: string;
   kind: "text";
   side: MessageSide;
+  /** Durable source kind used by the Chat target. */
+  origin?: "user" | "steering";
   text: string;
   pending?: boolean;
-  failed?: boolean;
   time?: number;
   replyTo?: string;
 }
@@ -29,8 +30,12 @@ export interface TimelineImage {
   projectionKey?: string;
   kind: "image";
   side: MessageSide;
+  /** Durable source kind used by the Chat target. */
+  origin?: "user" | "steering";
   state: "loading" | "ready" | "failed" | "running";
   attachment?: ImageAttachmentRef;
+  /** Page-local preview owned by the Session submission controller. */
+  previewUrl?: string;
   alt: string;
   error?: string;
   time?: number;
@@ -70,6 +75,12 @@ export interface CompanionProjection {
   hasMore: boolean;
   loadingOlder: boolean;
   promptError?: string;
+  /** Stable identity for a prompt result, used to distinguish a new rejection. */
+  promptErrorKey?: string;
+  /** Original prompt operation, when the runtime provides it. */
+  promptErrorOp?: string;
+  /** Public prompt error code, retained so admission failures can be distinguished from carrier internals. */
+  promptErrorCode?: string;
   lastAgentError?: string;
 }
 
@@ -137,6 +148,13 @@ function isSteeringNode(node: Record<string, unknown>): boolean {
   return kindOf(node).toLowerCase() === "steering";
 }
 
+function rpcIdOf(node: Record<string, unknown>): string | undefined {
+  const direct = node.rpcId;
+  if (typeof direct === "string") return direct;
+  const source = asRecord(node.source);
+  return typeof source?.rpcId === "string" ? source.rpcId : undefined;
+}
+
 function isFinalized(node: Record<string, unknown>): boolean {
   if (node.finalized === false || node.streaming === true || node.partial === true) return false;
   if (node.status === "streaming" || node.status === "running") return false;
@@ -157,7 +175,7 @@ function assistantText(node: Record<string, unknown>): string {
   return parts.join("");
 }
 
-function nodeMedia(node: Record<string, unknown>, id: string, side: MessageSide, time?: number): TimelineItem[] {
+function nodeMedia(node: Record<string, unknown>, id: string, side: MessageSide, time?: number, origin?: "user" | "steering"): TimelineItem[] {
   const items: TimelineItem[] = [];
   const blocks = contentOf(node);
   let imageIndex = 0;
@@ -170,6 +188,7 @@ function nodeMedia(node: Record<string, unknown>, id: string, side: MessageSide,
         id: imageProjectionId(id, imageIndex++),
         kind: "image",
         side,
+        ...(origin ? { origin } : {}),
         state: "ready",
         attachment,
         alt: attachment.name ?? (side === "incoming" ? "Companion 图片" : "图片"),
@@ -180,7 +199,7 @@ function nodeMedia(node: Record<string, unknown>, id: string, side: MessageSide,
   // A node may use a single attachment property rather than content[].
   if (items.length === 0 && node.attachment && imageFromContent([{ type: "image", attachment: node.attachment }])) {
     const attachment = imageFromContent([{ type: "image", attachment: node.attachment }])!;
-    items.push({ id: imageProjectionId(id, 0), kind: "image", side, state: "ready", attachment, alt: attachment.name ?? "图片", time });
+    items.push({ id: imageProjectionId(id, 0), kind: "image", side, ...(origin ? { origin } : {}), state: "ready", attachment, alt: attachment.name ?? "图片", time });
   }
   return items;
 }
@@ -230,6 +249,12 @@ export function projectConversation(snapshot: unknown, connected = true, continu
   const admittedQueueIds = new Set<string>();
   const nodes = orderedNodes(snapshot);
   const normalizedNodes = nodes.map(normalizeChatNode);
+  const observedRpcIds = new Set<string>();
+  for (const node of normalizedNodes) {
+    if (!node || (!isUserNode(node) && !isSteeringNode(node))) continue;
+    const rpcId = rpcIdOf(node);
+    if (rpcId) observedRpcIds.add(rpcId);
+  }
   const continuityValue = continuity ?? root.continuity;
   const continuityRecords = projectContinuityRecords(continuityValue, normalizedNodes.filter((node): node is Record<string, unknown> => node !== undefined));
   const emittedRecords = new Set<string>();
@@ -250,8 +275,8 @@ export function projectConversation(snapshot: unknown, connected = true, continu
     const time = nodeTime(node);
     if (isUserNode(node)) {
       const text = textFromValue(node.text) ?? textFromValue(node.content) ?? "";
-      if (text) items.push({ id, kind: "text", side: "outgoing", text, time });
-      items.push(...nodeMedia(node, id, "outgoing", time));
+      if (text) items.push({ id, kind: "text", side: "outgoing", origin: "user", text, time });
+      items.push(...nodeMedia(node, id, "outgoing", time, "user"));
       if (sequence !== undefined) emitContinuityRecords((anchorSeq) => anchorSeq === sequence);
       continue;
     }
@@ -273,7 +298,7 @@ export function projectConversation(snapshot: unknown, connected = true, continu
       const text = textFromValue(node.text) ?? textFromValue(node.content) ?? "";
       const messageId = typeof node.messageId === "string" ? node.messageId : undefined;
       if (messageId) admittedQueueIds.add(messageId);
-      if (text) items.push({ id, projectionKey: id, kind: "text", side: "outgoing", text, time });
+      if (text) items.push({ id, projectionKey: id, kind: "text", side: "outgoing", origin: "steering", text, time });
       if (sequence !== undefined) emitContinuityRecords((anchorSeq) => anchorSeq === sequence);
       continue;
     }
@@ -287,6 +312,34 @@ export function projectConversation(snapshot: unknown, connected = true, continu
   }
   for (const record of continuityRecords) if (!emittedRecords.has(record.id)) items.push(record);
   const pending = pendingNodes(snapshot);
+  for (const value of pending) {
+    const row = asRecord(value);
+    if (typeof row?.rpcId === "string") observedRpcIds.add(row.rpcId);
+  }
+  const pendingSubmissions = Array.isArray(root.pendingSubmissions) ? root.pendingSubmissions : [];
+  for (const value of pendingSubmissions) {
+    const submission = asRecord(value);
+    if (!submission || typeof submission.requestId !== "string" || observedRpcIds.has(submission.requestId)) continue;
+    const text = typeof submission.text === "string" ? submission.text : "";
+    const time = typeof submission.time === "number" ? submission.time : undefined;
+    const baseId = `submission:${submission.requestId}`;
+    if (text) items.push({ id: `${baseId}:text`, kind: "text", side: "outgoing", origin: "user", text, time });
+    const images = Array.isArray(submission.images) ? submission.images : [];
+    for (let imageIndex = 0; imageIndex < images.length; imageIndex += 1) {
+      const image = asRecord(images[imageIndex]);
+      if (!image || typeof image.previewUrl !== "string") continue;
+      items.push({
+        id: `${baseId}:image:${imageIndex}`,
+        kind: "image",
+        side: "outgoing",
+        origin: "user",
+        state: "ready",
+        previewUrl: image.previewUrl,
+        alt: typeof image.name === "string" && image.name ? image.name : "图片",
+        time,
+      });
+    }
+  }
   for (let index = 0; index < pending.length; index += 1) {
     const row = asRecord(pending[index]);
     if (!row) continue;
@@ -294,9 +347,13 @@ export function projectConversation(snapshot: unknown, connected = true, continu
     if (admittedQueueIds.has(identity)) continue;
     const text = typeof row.text === "string" ? row.text : textFromValue(row.content) ?? "";
     if (text) items.push({ id: `pending:${identity}`, kind: "text", side: "outgoing", text, pending: true });
+    const content = Array.isArray(row.content) ? row.content : [];
+    items.push(...nodeMedia({ id: identity, content }, identity, "outgoing"));
   }
   const promptError = asRecord(root.promptError);
+  const promptErrorKey = promptError ? stableValueKey(root.promptError) : undefined;
   const error = asRecord(promptError?.error);
+  const promptErrorCode = typeof error?.code === "string" ? error.code : undefined;
   const promptErrorNotice = promptError?.op === "stop"
     ? "暂时无法停止当前回复，请重试。"
     : typeof error?.message === "string"
@@ -322,8 +379,19 @@ export function projectConversation(snapshot: unknown, connected = true, continu
     hasMore: root.hasMore === true,
     loadingOlder: root.loadingOlder === true,
     ...(promptErrorAnnouncement ? { promptError: promptErrorAnnouncement } : {}),
+    ...(promptErrorKey ? { promptErrorKey } : {}),
+    ...(typeof promptError?.op === "string" ? { promptErrorOp: promptError.op } : {}),
+    ...(promptErrorCode ? { promptErrorCode } : {}),
     ...(lastError ? { lastAgentError: lastError } : {}),
   };
+}
+
+function stableValueKey(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function dedupeTimeline(items: readonly TimelineItem[]): TimelineItem[] {
@@ -368,8 +436,4 @@ export function scrollPlan(input: { scrollTop: number; scrollHeight: number; cli
   }
   const nearBottom = distance <= threshold;
   return { follow: nearBottom, preserveAnchor: !nearBottom, showNewMessageAffordance: !nearBottom };
-}
-
-export function reconcilePending(items: readonly TimelineItem[], durableIds: ReadonlySet<string>): TimelineItem[] {
-  return items.filter((item) => !(item.kind === "text" && item.pending && durableIds.has(item.id.replace(/^pending:/u, ""))));
 }

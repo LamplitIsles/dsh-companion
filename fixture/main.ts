@@ -6,7 +6,10 @@ import { companionStyles } from "../src/client/theme.js";
 import daisyStyles from "../src/client/daisy.css?inline";
 import tailwindStyles from "../src/client/tailwind.css?inline";
 import type { CompanionProjection } from "../src/projection.js";
+import type { TimelineItem } from "../src/projection.js";
 import type { CompanionContinuityView } from "../src/client/companion-bridge.js";
+import type { CompanionImageDraft } from "../src/client/image-drafts.js";
+import type { PendingSubmissionRetirement } from "@deepseek-ai/dsh-api-session-controller/client";
 import type { CompactionLifecycleState, ContextPressureProjection } from "../src/continuity.js";
 import type { ImageAttachmentLimits } from "@deepseek-ai/dsh-attachment";
 
@@ -44,6 +47,19 @@ const root = document.getElementById("fixture")!;
 let revokedImageUrls = 0;
 let stopCalls = 0;
 let sendCalls = 0;
+let sendSequence = 0;
+let submissionSequence = 0;
+let promptErrorSequence = 0;
+let deferredSends = false;
+let pendingSends: Array<{
+  text: string;
+  images: readonly CompanionImageDraft[];
+  echoId: string;
+  onRetire?: (retirement: PendingSubmissionRetirement) => void;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+}> = [];
+let lastSend: { text: string; images: readonly CompanionImageDraft[] } | undefined;
 const revokeObjectUrl = URL.revokeObjectURL.bind(URL);
 URL.revokeObjectURL = (url: string) => { revokedImageUrls += 1; revokeObjectUrl(url); };
 const fixtureProps: CompanionBridgeProps = {
@@ -55,7 +71,18 @@ const fixtureProps: CompanionBridgeProps = {
     { id: "first-hello", title: "第一次说晚安", updatedAt: now - 172_800_000, running: false, selected: false },
   ],
   identity: { companionName: "小灯", companionAvatar: svg, userName: "小岛", userAvatar: svg, preferredAddress: "小岛", signature: query.get("signature") === "empty" ? "" : "把平凡日子折成星星，等风来时再写一行很长很长的晚安", ...mood, affinity: 67, affinityStage: "亲近" },
-  actions: { send: async () => { sendCalls += 1; }, stop: async () => { stopCalls += 1; }, selectSession: async () => undefined, loadOlder: async () => undefined, attachmentUrl: async () => URL.createObjectURL(new Blob([svgDocument], { type: "image/svg+xml" })), prepareVoice: async (text: string) => { if (text.includes("失败")) throw new Error("fixture voice failure"); return "/kepos-tts/audio/fixture.mp3"; } },
+  actions: { send: async (text: string, images: readonly CompanionImageDraft[], onRetire?: (retirement: PendingSubmissionRetirement) => void) => {
+    sendCalls += 1;
+    lastSend = { text, images };
+    const echoId = appendSubmissionEcho(text, images);
+    if (!deferredSends) {
+      appendDurableSend(text, images);
+      removeSubmissionEcho(echoId);
+      onRetire?.({ reason: "observed", attachments: [] });
+      return;
+    }
+    await new Promise<void>((resolve, reject) => { pendingSends.push({ text, images, echoId, onRetire, resolve, reject }); });
+  }, stop: async () => { stopCalls += 1; }, selectSession: async (sessionId: string) => { switchFixtureSession(sessionId); }, loadOlder: async () => undefined, attachmentUrl: async () => URL.createObjectURL(new Blob([svgDocument], { type: "image/svg+xml" })), prepareVoice: async (text: string) => { if (text.includes("失败")) throw new Error("fixture voice failure"); return "/kepos-tts/audio/fixture.mp3"; } },
   workspaceReady: true,
   sessionReady: true,
   sessionId: "quiet-evening",
@@ -69,6 +96,95 @@ const fixtureProps: CompanionBridgeProps = {
   } satisfies ImageAttachmentLimits,
 };
 const propsStore = writable(fixtureProps);
+
+function appendDurableSend(text: string, images: readonly CompanionImageDraft[]): void {
+  const sendId = `fixture-user-${++sendSequence}`;
+  const additions: TimelineItem[] = [];
+  if (text) additions.push({ id: sendId, kind: "text", side: "outgoing", origin: "user", text, time: Date.now() });
+  images.forEach((draft, index) => {
+    additions.push({
+      id: `image:${sendId}:${index}`,
+      kind: "image",
+      side: "outgoing",
+      origin: "user",
+      state: "ready",
+      attachment: { attachmentId: `fixture-att-${sendSequence}-${index}` as never, mediaType: draft.file.type as never, bytes: draft.file.size, width: 1, height: 1, ...(draft.file.name ? { name: draft.file.name } : {}) },
+      alt: draft.file.name || "图片",
+      time: Date.now(),
+    });
+  });
+  propsStore.update((current) => ({ ...current, projection: { ...current.projection!, items: [...current.projection!.items, ...additions] } }));
+}
+
+function appendSubmissionEcho(text: string, images: readonly CompanionImageDraft[]): string {
+  const id = `submission:fixture-${++submissionSequence}`;
+  const additions: TimelineItem[] = [];
+  if (text) additions.push({ id: `${id}:text`, kind: "text", side: "outgoing", origin: "user", text, time: Date.now() });
+  images.forEach((draft, index) => additions.push({ id: `${id}:image:${index}`, kind: "image", side: "outgoing", origin: "user", state: "ready", previewUrl: draft.previewUrl, alt: draft.file.name || "图片", time: Date.now() }));
+  propsStore.update((current) => ({ ...current, projection: { ...current.projection!, items: [...current.projection!.items, ...additions] } }));
+  return id;
+}
+
+function removeSubmissionEcho(id: string): void {
+  propsStore.update((current) => ({ ...current, projection: { ...current.projection!, items: current.projection!.items.filter((item) => !item.id.startsWith(`${id}:`)) } }));
+}
+
+function setPromptError(text: string, code: string, op: "send" | "stop" = "send", status?: CompanionProjection["status"]): void {
+  propsStore.update((current) => ({
+    ...current,
+    projection: {
+      ...current.projection!,
+      ...(status ? { status } : {}),
+      promptError: text,
+      promptErrorKey: `fixture-prompt-error-${++promptErrorSequence}`,
+      promptErrorOp: op,
+      promptErrorCode: code,
+      items: [
+        ...current.projection!.items.filter((item) => item.id !== "prompt-error"),
+        { id: "prompt-error", kind: "notice", side: "incoming", tone: "error", text, time: Date.now() },
+      ],
+    },
+  }));
+}
+
+function settlePendingSend(kind: "resolve" | "reject", message = "host-send-rejected"): void {
+  const pending = pendingSends.shift();
+  if (!pending) return;
+  if (kind === "resolve") {
+    removeSubmissionEcho(pending.echoId);
+    pending.onRetire?.({ reason: "observed", attachments: [] });
+    pending.resolve();
+  }
+  else if (kind === "reject") {
+    removeSubmissionEcho(pending.echoId);
+    pending.onRetire?.({ reason: "failed" });
+    pending.reject(new Error(message));
+  }
+}
+
+function confirmLastSend(): void {
+  const pending = pendingSends[0];
+  const send = pending ?? lastSend;
+  if (!send) return;
+  appendDurableSend(send.text, send.images);
+  if (pending) {
+    const settled = pendingSends.shift()!;
+    removeSubmissionEcho(settled.echoId);
+    settled.onRetire?.({ reason: "observed", attachments: [] });
+    settled.resolve();
+  }
+  propsStore.update((current) => ({ ...current, projection: { ...current.projection!, status: "ready" } }));
+}
+
+function switchFixtureSession(sessionId: string): void {
+  propsStore.update((current) => ({
+    ...current,
+    sessionId,
+    sessions: current.sessions.map((session) => ({ ...session, selected: session.id === sessionId })),
+    projection: { ...current.projection!, items: [], pendingCount: 0, running: false, status: "ready", openState: "open", promptError: undefined, promptErrorKey: undefined, promptErrorOp: undefined, promptErrorCode: undefined, lastAgentError: undefined },
+  }));
+}
+
 const component = mount(CompanionBridge, { target: root, props: { propsStore } });
 const mountedCompanionRoot = document.getElementById("dsh-companion");
 
@@ -81,6 +197,13 @@ declare global {
       setStatus(status: CompanionProjection["status"]): void;
       setRunning(running: boolean): void;
       finishImageGeneration(): void;
+      deferSend(): void;
+      resolveSend(): void;
+      rejectSend(message?: string): void;
+      seedInternalPromptError(): void;
+      sendError(message?: string): void;
+      confirmSend(): void;
+      switchSession(sessionId: string): void;
       setCapacity(value: ContextPressureProjection | undefined): void;
       startCompaction(id?: string): void;
       finishCompaction(id?: string): void;
@@ -115,6 +238,23 @@ window.__companionFixture = {
   setStatus(status) { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, status } })); },
   setRunning(running) { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, running } })); },
   finishImageGeneration() { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, items: current.projection!.items.filter((item) => item.id !== "imagegen:demo:loading") } })); },
+  deferSend() { deferredSends = true; },
+  resolveSend() { settlePendingSend("resolve"); },
+  rejectSend(message = "host-send-rejected") { settlePendingSend("reject", message); },
+  seedInternalPromptError() {
+    setPromptError("fixture existing carrier error", "internal");
+  },
+  sendError(message = "host-send-rejected") {
+    setPromptError(message, "attachment-error");
+    const pending = pendingSends.shift();
+    if (pending) {
+      removeSubmissionEcho(pending.echoId);
+      pending.onRetire?.({ reason: "failed" });
+      pending.reject(new Error(message));
+    }
+  },
+  confirmSend() { confirmLastSend(); },
+  switchSession(sessionId) { switchFixtureSession(sessionId); },
   setCapacity(value) { propsStore.update((current) => ({ ...current, continuity: { ...current.continuity, contextPressure: value } })); },
   startCompaction(id) {
     const compactionId = lifecycleId(id);

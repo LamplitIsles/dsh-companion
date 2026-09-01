@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, rm, stat, writeFile, mkdir } from "node:fs/promises";
+import { createServer, request as httpRequest, type Server } from "node:http";
 import { join } from "node:path";
 import { createUserMessage, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import type { ToolRunContext } from "@deepseek-ai/dsh-tools";
 import { CompanionStateStore } from "../src/domain.js";
-import { CompanionHostController, RPC_CHANNEL, acceptedTurnKey, adjustAffinityForAcceptedTurn, apply } from "../src/host.js";
+import { CompanionHostController, RPC_CHANNEL, acceptedTurnKey, adjustAffinityForAcceptedTurn, apply, companionAliasHandler } from "../src/host.js";
 
 const temporary: string[] = [];
 afterEach(async () => { await Promise.all(temporary.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
@@ -13,7 +14,62 @@ function execution(events: readonly { type: string; data: { turn: number } }[]):
   return { agent: { id: "agent-a", session: { events } }, signal: new AbortController().signal } as unknown as ToolRunContext;
 }
 
+async function listen(server: Server): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("test server did not expose a TCP port");
+  return address.port;
+}
+
+async function close(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+}
+
+function get(port: number, headers: Record<string, string>): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest({ host: "127.0.0.1", port, path: "/companion/", headers }, (response) => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk: string) => { body += chunk; });
+      response.on("end", () => resolve({ status: response.statusCode ?? 0, body }));
+    });
+    request.on("error", reject);
+    request.end();
+  });
+}
+
 describe("Host accepted-turn relationship contract", () => {
+  it("preserves the external authority while proxying the authenticated Companion root", async () => {
+    let upstreamHost: string | undefined;
+    let upstreamCookie: string | undefined;
+    const upstream = createServer((request, response) => {
+      upstreamHost = request.headers.host;
+      upstreamCookie = request.headers.cookie;
+      response.end("root document");
+    });
+    const upstreamPort = await listen(upstream);
+    const alias = createServer((request, response) => {
+      void companionAliasHandler({ port: upstreamPort } as never, request, response);
+    });
+    const aliasPort = await listen(alias);
+    try {
+      const authority = "127.0.0.1:13080";
+      const response = await get(aliasPort, { host: authority, cookie: "dsh-auth-test=authenticated" });
+      expect(response.status).toBe(200);
+      expect(response.body).toBe("root document");
+      expect(upstreamHost).toBe(authority);
+      expect(upstreamCookie).toBe("dsh-auth-test=authenticated");
+    } finally {
+      await Promise.all([close(alias), close(upstream)]);
+    }
+  });
+
   it("caps cumulative movement within the published Session turn and starts fresh next turn", async () => {
     const directory = await mkdtemp("/tmp/dsh-companion-host-"); temporary.push(directory);
     const store = new CompanionStateStore({ workspacePath: directory, defaultAffinity: 50, filePath: join(directory, "state.json") });

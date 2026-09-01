@@ -15,8 +15,9 @@ export default defineConfig({
     lib: { entry: "src/client.ts", formats: ["es"], fileName: () => "client.esm.js" },
     rollupOptions: {
       external: [
-        "@deepseek-ai/cordis", "@deepseek-ai/dsh-client-connection/client", "@deepseek-ai/dsh-client-runtime/client",
-        "@deepseek-ai/dsh-client-ui-settings/client", "@deepseek-ai/dsh-client-ui-settings-plugins/client", "@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-theme/client",
+        "@deepseek-ai/cordis", "@deepseek-ai/dsh-api-remotes/client", "@deepseek-ai/dsh-api-session-controller/client", "@deepseek-ai/dsh-api-workspace-controller/client", "@deepseek-ai/dsh-client-connection/client",
+        "@deepseek-ai/dsh-client-ui-chat/client", "@deepseek-ai/dsh-client-ui-conversation/client", "@deepseek-ai/dsh-client-ui-renderer/client", "@deepseek-ai/dsh-client-ui-settings/client", "@deepseek-ai/dsh-client-ui-settings-plugins/client", "@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-theme/client",
+        "@deepseek-ai/dsh-attachment", "@deepseek-ai/dsh-fs", "@deepseek-ai/dsh-llm", "@deepseek-ai/dsh-session/types", "@deepseek-ai/dsh-token-meter/client",
         "react", "react-dom",
       ],
       output: { assetFileNames: "client.[ext]" },

@@ -2,7 +2,8 @@ import { basename, normalize, resolve as resolvePath } from "node:path";
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import z from "@deepseek-ai/schemastery";
 import { defineTool, type ToolDefinition, type ToolRunContext } from "@deepseek-ai/dsh-tools";
-import type { RpcResult } from "@deepseek-ai/dsh-host-apiproxy/api";
+import type { RpcResult } from "@deepseek-ai/dsh-client-connection/client";
+import type { FsInfo, FsTarget, FsWriteIntent, FsWriteOutcome } from "@deepseek-ai/dsh-fs";
 import type { GenerateOptions, LlmRuntime, StreamChunk } from "@deepseek-ai/dsh-llm";
 import {
   CompanionStateStore,
@@ -47,11 +48,10 @@ interface SettingsScopeLike<T> {
 }
 
 interface DshFileSystem {
-  resolve(path: string, options?: { cwd?: string; signal?: AbortSignal }): Promise<unknown>;
-  stat(target: unknown, signal?: AbortSignal): Promise<{ type: string; size?: number } | undefined>;
-  readText(target: unknown, signal?: AbortSignal): Promise<string>;
-  writeText(target: unknown, content: string, expected?: unknown, signal?: AbortSignal): Promise<unknown>;
-  mkdir?(path: string, options?: { cwd?: string; signal?: AbortSignal }): Promise<void>;
+  resolve(path: string, options?: { cwd?: string; signal?: AbortSignal }): Promise<FsTarget>;
+  stat(target: FsTarget, signal?: AbortSignal): Promise<FsInfo | undefined>;
+  readText(target: FsTarget, signal?: AbortSignal): Promise<string>;
+  writeText(target: FsTarget, content: string, expected?: FsWriteIntent, signal?: AbortSignal): Promise<FsWriteOutcome>;
 }
 
 interface WorkspaceRecord {
@@ -66,7 +66,7 @@ interface WorkspaceRegistryLike {
 }
 
 interface RpcLike {
-  handle(channel: string, handler: (endpoint: string, payload: unknown, signal: AbortSignal) => Promise<RpcResult<unknown>>, options: { authority: "trusted-host" | "loopback" }): () => Promise<void>;
+  handle(channel: string, handler: (endpoint: string, payload: unknown, signal: AbortSignal) => Promise<RpcResult<unknown>>): () => Promise<void>;
 }
 
 interface WebServerLike {
@@ -136,10 +136,9 @@ function currentCwd(exec: ToolRunContext): string | undefined {
 function adaptFs(fs: DshFileSystem): CompanionFileSystem {
   return {
     resolve: (path, options) => fs.resolve(path, options),
-    stat: (target, signal) => fs.stat(target, signal),
-    readText: (target, signal) => fs.readText(target, signal),
-    writeText: (target, content, expected, signal) => fs.writeText(target, content, expected, signal),
-    ...(fs.mkdir ? { mkdir: (path, options) => fs.mkdir!(path, options) } : {}),
+    stat: (target, signal) => fs.stat(target as FsTarget, signal),
+    readText: (target, signal) => fs.readText(target as FsTarget, signal),
+    writeText: (target, content, expected, signal) => fs.writeText(target as FsTarget, content, expected as FsWriteIntent | undefined, signal),
   };
 }
 
@@ -169,7 +168,7 @@ export async function adjustAffinityForAcceptedTurn(store: CompanionStateStore, 
  * second index or client transport. The pinned static service has no SPA
  * fallback, so this lifecycle-owned alias is required for this web plugin.
  */
-function companionAliasHandler(webServer: WebServerLike, req: IncomingMessage, res: ServerResponse): Promise<void> {
+export function companionAliasHandler(webServer: WebServerLike, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const pathname = new URL(req.url ?? "/", "http://companion.local").pathname;
   if (pathname !== "/companion" && pathname !== "/companion/") {
     res.writeHead(404);
@@ -182,7 +181,18 @@ function companionAliasHandler(webServer: WebServerLike, req: IncomingMessage, r
     return Promise.resolve();
   }
   return new Promise((resolve) => {
-    const upstream = httpRequest({ host: "127.0.0.1", port: webServer.port, path: "/", method: req.method }, (response) => {
+    const upstream = httpRequest({
+      host: "127.0.0.1",
+      port: webServer.port,
+      path: "/",
+      method: req.method,
+      // Alpha Web authenticates the boot document with an authority-bound
+      // cookie. Preserve both pieces when the Companion alias proxies to `/`.
+      headers: {
+        ...(req.headers.cookie ? { cookie: req.headers.cookie } : {}),
+        ...(req.headers.host ? { host: req.headers.host } : {}),
+      },
+    }, (response) => {
       const chunks: Buffer[] = [];
       response.on("data", (chunk: Buffer | string) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
       response.on("end", () => {
@@ -350,7 +360,7 @@ export class CompanionHostController {
       }
       if (endpoint === "relationship/get") return ok(await this.relationship(requested, signal));
       return fail("未知的 Companion 请求。", "bad-request");
-    }, { authority: "trusted-host" }));
+    }));
     this.disposers.push(this.ctx.systemPrompt.context({
       name: "dsh-companion:relationship",
       order: 140,

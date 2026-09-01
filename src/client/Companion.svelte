@@ -12,6 +12,8 @@
   import { COMPACTION_STATUS_DURATION_MS, formatTokenCount, resolveContextCapacity, type CompactionLifecycleState } from "../continuity.js";
   import type { CompanionProjection, TimelineImage, TimelineVoice } from "../projection.js";
   import type { CompanionContinuityView } from "./companion-bridge.js";
+  import type { PendingSubmissionRetirement } from "@deepseek-ai/dsh-api-session-controller/client";
+  import { CompanionPreControllerError } from "./admission.js";
   import { createComposerState, findComposerCommand, reduceComposer, shouldSubmitEnter, type ComposerCommand } from "./composer.js";
   import { createImageDrafts, imageFilesFromClipboard, imageIntakeError, IMAGE_ACCEPT, releaseImageDrafts, type CompanionImageDraft } from "./image-drafts.js";
   import { INTENSITY_LABELS } from "./relationship.js";
@@ -33,7 +35,7 @@
     affinityStage?: string;
   }
   export interface CompanionActions {
-    send: (text: string, images: readonly CompanionImageDraft[]) => Promise<void>;
+    send: (text: string, images: readonly CompanionImageDraft[], onRetire?: (retirement: PendingSubmissionRetirement) => void) => Promise<void>;
     stop?: () => Promise<void>;
     selectSession?: (sessionId: string) => Promise<void>;
     loadOlder?: () => Promise<void>;
@@ -120,7 +122,9 @@
   let continuityStatusTimer: ReturnType<typeof setTimeout> | undefined;
   let imageDrafts: CompanionImageDraft[] = [];
   let imageDraftSessionId: string | undefined;
-  let submitting = false;
+  let deferredPreviewReleases: CompanionImageDraft[] = [];
+  let displayedProjection: CompanionProjection = projection;
+  let submissionToken = 0;
   let imagePickerPointer: { id: number; startedAt: number } | undefined;
   let suppressImagePickerClick = false;
 
@@ -133,11 +137,29 @@
   $: syncContinuityStatus(latestContinuityLifecycle);
   $: if (!contextCapacity && contextMeterOpen) closeContextMeter(false);
   $: syncWaitingState(typingVisible, `${sessions.find((session) => session.selected)?.id ?? "none"}:${latestSettledReplyKey(projection)}`);
-  $: if (projection) void reconcileProjection(projection);
+  $: displayedProjection = projection;
+  $: if (displayedProjection) void reconcileProjection(displayedProjection);
   $: if (sessionId !== imageDraftSessionId) {
     releaseImageDrafts(imageDrafts);
     imageDrafts = [];
     imageDraftSessionId = sessionId;
+    composer = createComposerState();
+    submissionToken += 1;
+  }
+
+  function releaseDeferredPreviewReleases(): void {
+    if (deferredPreviewReleases.length === 0) return;
+    const drafts = deferredPreviewReleases;
+    deferredPreviewReleases = [];
+    releaseImageDrafts(drafts);
+  }
+
+  function releaseSubmissionImages(images: readonly CompanionImageDraft[]): void {
+    const protectedPreview = lightboxUrl && lightbox?.previewUrl === lightboxUrl ? lightboxUrl : undefined;
+    const deferred = protectedPreview ? images.filter((draft) => draft.previewUrl === protectedPreview) : [];
+    const releasable = deferred.length ? images.filter((draft) => draft.previewUrl !== protectedPreview) : images;
+    if (deferred.length) deferredPreviewReleases = [...deferredPreviewReleases, ...deferred];
+    if (releasable.length) void tick().then(() => releaseImageDrafts(releasable));
   }
 
   function latestSettledReplyKey(value: CompanionProjection): string {
@@ -146,6 +168,22 @@
       if (item.side === "incoming" && (item.kind !== "image" || item.state === "ready" || item.state === "failed")) return item.projectionKey ?? item.id;
     }
     return "empty";
+  }
+
+  function retireSubmission(images: readonly CompanionImageDraft[], retirement: PendingSubmissionRetirement, restoreText: string, originSessionId: string | undefined): void {
+    if (retirement.reason === "observed") {
+      releaseSubmissionImages(images);
+      return;
+    }
+    if (sessionId === originSessionId && sessionId === imageDraftSessionId) {
+      composer = { ...composer, draft: composer.draft ? `${restoreText}\n${composer.draft}` : restoreText, composing: false };
+      imageDrafts = [...imageDrafts, ...images];
+      liveAnnouncement = "消息没有发送成功，内容已恢复。";
+      return;
+    }
+    // A rejection from a Session that is no longer selected cannot be
+    // restored into the current composer; release its page-owned previews.
+    releaseSubmissionImages(images);
   }
 
   function readDesktopSidebarPreference(): boolean {
@@ -296,7 +334,7 @@
     imageLoads = { ...imageLoads, [item.id]: source };
     try {
       const url = await actions.attachmentUrl(item.attachment);
-      const live = projection.items.find((candidate) => candidate.kind === "image" && candidate.id === item.id) as TimelineImage | undefined;
+      const live = displayedProjection.items.find((candidate) => candidate.kind === "image" && candidate.id === item.id) as TimelineImage | undefined;
       if (live && imageSource(live) === source) {
         if (imageUrls[item.id] && imageUrls[item.id] !== url) revokeImage(item.id);
         imageUrls = { ...imageUrls, [item.id]: url }; imageSources = { ...imageSources, [item.id]: source };
@@ -446,20 +484,30 @@
   }
 
   function submit(): void {
-    const text = composer.draft.trim();
-    if ((!text && imageDrafts.length === 0) || composer.composing || submitting) return;
-    const submittedDrafts = imageDrafts;
-    composer = reduceComposer(composer, { type: "submit" });
-    submitting = true;
-    void actions.send(text, submittedDrafts).then(() => {
-      releaseImageDrafts(submittedDrafts);
-      imageDrafts = imageDrafts.filter((draft) => !submittedDrafts.includes(draft));
-    }).catch((error: unknown) => {
-      composer = { ...composer, draft: text };
+    const restoreText = composer.draft;
+    const text = restoreText.trim();
+    if ((!text && imageDrafts.length === 0) || composer.composing) return;
+    const submittedDrafts = [...imageDrafts];
+    const originSessionId = sessionId;
+    composer = { ...reduceComposer(composer, { type: "submit" }), draft: "", composing: false };
+    imageDrafts = [];
+    const token = ++submissionToken;
+    const onRetire = (retirement: PendingSubmissionRetirement): void => {
+      retireSubmission(submittedDrafts, retirement, restoreText, originSessionId);
+    };
+    void Promise.resolve().then(() => actions.send(text, submittedDrafts, onRetire)).catch((error: unknown) => {
+      // Once beginSubmission() succeeds, the Session controller is the only
+      // owner that retires its echo and restores a rejected draft. The only
+      // local restoration path is an explicitly marked caller failure before
+      // that controller boundary (for example no bound Session or /compact).
+      if (error instanceof CompanionPreControllerError && token === submissionToken && sessionId === originSessionId) {
+        composer = { ...composer, draft: composer.draft ? `${restoreText}\n${composer.draft}` : restoreText, composing: false };
+        imageDrafts = [...imageDrafts, ...submittedDrafts];
+      }
       liveAnnouncement = error instanceof Error && error.message === "compact-with-images"
         ? "整理时请先移除图片。"
-        : "消息发送失败，内容已保留，可以重试。";
-    }).finally(() => { submitting = false; });
+        : "消息没有发送成功，内容已恢复。";
+    });
   }
 
   async function stop(): Promise<void> {
@@ -492,7 +540,6 @@
   function onCompositionEnd(event: CompositionEvent): void { composer = reduceComposer(composer, { type: "compositionend", value: (event.currentTarget as HTMLTextAreaElement).value }); }
   function onCompositionStart(): void { composer = reduceComposer(composer, { type: "compositionstart" }); }
   function addImages(files: readonly File[]): void {
-    if (submitting) return;
     const error = imageIntakeError(imageDrafts, files, imageLimits);
     if (error) { liveAnnouncement = error; return; }
     imageDrafts = [...imageDrafts, ...createImageDrafts(files)];
@@ -509,7 +556,6 @@
     addImages(images);
   }
   function removeImage(draft: CompanionImageDraft): void {
-    if (submitting) return;
     releaseImageDrafts([draft]);
     imageDrafts = imageDrafts.filter((candidate) => candidate !== draft);
   }
@@ -528,7 +574,6 @@
   }
   function clearImagePickerPointer(): void { imagePickerPointer = undefined; }
   function choosePhoto(): void {
-    if (submitting) return;
     if (suppressImagePickerClick) { suppressImagePickerClick = false; return; }
     photoLibraryInput?.click();
   }
@@ -604,7 +649,7 @@
   function openLightbox(item: TimelineImage): void {
     lightboxReturnFocus = document.activeElement as HTMLElement;
     lightbox = item;
-    lightboxUrl = imageUrls[item.id] ?? "";
+    lightboxUrl = item.previewUrl ?? imageUrls[item.id] ?? "";
     void tick().then(() => {
       if (lightboxDialog && !lightboxDialog.open) lightboxDialog.showModal();
       focusFirst(() => lightboxDialog);
@@ -616,6 +661,7 @@
     lightbox = undefined;
     lightboxUrl = "";
     lightboxReturnFocus = undefined;
+    releaseDeferredPreviewReleases();
     if (target) target.focus();
     if (!fromHistory && hadHistory) closeHistory();
   }
@@ -654,6 +700,7 @@
 
   onDestroy(() => {
     if (timelineRevealFrame) cancelAnimationFrame(timelineRevealFrame);
+    releaseDeferredPreviewReleases();
     releaseImageDrafts(imageDrafts);
     clearWaitingTimers();
     clearContinuityStatusTimer();
@@ -714,13 +761,13 @@
       {:else}
         <div bind:this={timeline} class="companion-timeline" class:timeline-ready={timelineReady} role="log" aria-live="polite" aria-relevant="additions text" on:scroll={onScroll}>
           <div class="companion-timeline-content" use:keepBottomOnResize>
-          {#if projection.hasMore}
-            <button class="cmp-btn cmp-btn-ghost cmp-btn-sm" style="display:block;margin:0 auto 18px" on:click={loadOlder} disabled={projection.loadingOlder}>{projection.loadingOlder ? "正在加载…" : "查看更早的消息"}</button>
+          {#if displayedProjection.hasMore}
+            <button class="cmp-btn cmp-btn-ghost cmp-btn-sm" style="display:block;margin:0 auto 18px" on:click={loadOlder} disabled={displayedProjection.loadingOlder}>{displayedProjection.loadingOlder ? "正在加载…" : "查看更早的消息"}</button>
           {/if}
-          {#if projection.items.length === 0}
+          {#if displayedProjection.items.length === 0}
             <div class="companion-recovery"><div class="companion-mood-orb" aria-hidden="true"></div><h1>嗨，{identity.preferredAddress}</h1><p>从一句今天的心情开始吧。</p></div>
           {/if}
-          {#each projection.items as item (item.projectionKey ?? item.id)}
+          {#each displayedProjection.items as item (item.projectionKey ?? item.id)}
             {#if item.kind === "text"}
               <article class="cmp-chat companion-row" class:cmp-chat-start={item.side === "incoming"} class:cmp-chat-end={item.side === "outgoing"} class:outgoing={item.side === "outgoing"} class:incoming={item.side === "incoming"} data-testid={`message-${item.id}`}>
                 <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder cmp:rounded-full message-avatar">
@@ -736,7 +783,7 @@
                 <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder cmp:rounded-full message-avatar"><div class="companion-avatar-crop cmp:rounded-full">{#if item.side === "incoming" && identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else if item.side === "outgoing" && identity.userAvatar}<img src={identity.userAvatar} alt="" />{:else}<span aria-hidden="true">{item.side === "incoming" ? "✦" : "你"}</span>{/if}</div></div>
                 <div class="cmp-chat-bubble companion-media">
                   {#if item.state === "running" || item.state === "loading"}<div class="cmp-skeleton" style="height:260px" aria-hidden="true"></div><div style="padding:12px" role="status">正在画一张图…</div>
-                  {:else if imageUrls[item.id]}<button class="companion-media-button" aria-label={"查看大图：" + item.alt} on:click={() => showLightbox(item)}><img src={imageUrls[item.id]} alt={item.alt} /></button>
+                  {:else if item.previewUrl || imageUrls[item.id]}<button class="companion-media-button" aria-label={"查看大图：" + item.alt} on:click={() => showLightbox(item)}><img src={item.previewUrl ?? imageUrls[item.id]} alt={item.alt} /></button>
                   {:else if imageErrors[item.id] || item.state === "failed"}<div role="alert" style="padding:22px">{item.error || imageErrors[item.id] || "图片暂时无法显示。"}</div>
                   {:else}<div class="cmp-loading cmp-loading-spinner" style="margin:32px auto"></div>{/if}
                 </div>
@@ -787,7 +834,7 @@
               <div class="cmp-chat-bubble companion-bubble companion-typing-bubble"><span class="cmp-loading cmp-loading-dots cmp-loading-sm" aria-hidden="true"></span>{#if waitingCopy}<span class="companion-waiting-copy">{waitingCopy}</span>{/if}</div>
             </article>
           {/if}
-          {#if !wasNearBottom && projection.items.length > 0}<button class="cmp-btn cmp-btn-primary cmp-btn-sm" style="position:sticky;bottom:10px;left:50%;transform:translateX(-50%)" on:click={() => timeline.scrollTop = timeline.scrollHeight}>有新消息 ↓</button>{/if}
+          {#if !wasNearBottom && displayedProjection.items.length > 0}<button class="cmp-btn cmp-btn-primary cmp-btn-sm" style="position:sticky;bottom:10px;left:50%;transform:translateX(-50%)" on:click={() => timeline.scrollTop = timeline.scrollHeight}>有新消息 ↓</button>{/if}
           </div>
         </div>
         <div class="companion-composer">
@@ -810,7 +857,7 @@
               {#each imageDrafts as draft (draft.id)}
                 <div class="companion-image-draft">
                   <img src={draft.previewUrl} alt={draft.file.name || "待发送图片"} />
-                  <button class="cmp-btn cmp-btn-circle companion-image-draft-remove" type="button" aria-label="移除图片" disabled={submitting} on:click={() => removeImage(draft)}><X size={13} strokeWidth={2.5} aria-hidden="true" /></button>
+                  <button class="cmp-btn cmp-btn-circle companion-image-draft-remove" type="button" aria-label="移除图片" on:click={() => removeImage(draft)}><X size={13} strokeWidth={2.5} aria-hidden="true" /></button>
                 </div>
               {/each}
             </div>
@@ -818,7 +865,7 @@
           <div class="companion-compose-row">
             <input bind:this={photoLibraryInput} id="companion-image-library" class="cmp-file-input companion-image-input" type="file" accept={IMAGE_ACCEPT} multiple tabindex="-1" aria-hidden="true" on:change={onImageInput} />
             <input bind:this={cameraInput} id="companion-image-camera" class="cmp-file-input companion-image-input" type="file" accept={IMAGE_ACCEPT} capture="environment" tabindex="-1" aria-hidden="true" on:change={onImageInput} />
-            <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-attach" type="button" aria-label="选择照片；长按拍照" title="选择照片；长按拍照" disabled={!imageLimits || submitting} on:pointerdown={onImagePickerPointerDown} on:pointerup={onImagePickerPointerUp} on:pointercancel={clearImagePickerPointer} on:contextmenu|preventDefault on:click={choosePhoto}><ImagePlus size={19} strokeWidth={2} aria-hidden="true" /></button>
+            <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-attach" type="button" aria-label="选择照片；长按拍照" title="选择照片；长按拍照" disabled={!imageLimits} on:pointerdown={onImagePickerPointerDown} on:pointerup={onImagePickerPointerUp} on:pointercancel={clearImagePickerPointer} on:contextmenu|preventDefault on:click={choosePhoto}><ImagePlus size={19} strokeWidth={2} aria-hidden="true" /></button>
             <textarea bind:this={composerInput} class="cmp-textarea companion-textarea" aria-label="写消息" aria-autocomplete={commandSuggestion ? "list" : undefined} aria-controls={commandSuggestion ? "companion-command-suggestions" : undefined} placeholder={"写给 " + identity.companionName + "…"} rows="1" value={composer.draft} on:input={onInput} on:paste={onPaste} on:compositionstart={onCompositionStart} on:compositionend={onCompositionEnd} on:keydown={onKeydown}></textarea>
             {#if contextCapacity}
               <div class="companion-context-meter-wrap">
@@ -837,10 +884,10 @@
             {#if projection.running && !composer.draft.trim() && imageDrafts.length === 0}
               <button class="cmp-btn cmp-btn-primary cmp-btn-circle companion-send" aria-label="停止当前回复" on:click={() => void stop()} disabled={!actions.stop || stopping}><Square size={15} fill="currentColor" aria-hidden="true" /></button>
             {:else}
-              <button class="cmp-btn cmp-btn-primary cmp-btn-circle companion-send" aria-label="发送消息" on:click={submit} disabled={(!composer.draft.trim() && imageDrafts.length === 0) || submitting}><span aria-hidden="true">↑</span></button>
+              <button class="cmp-btn cmp-btn-primary cmp-btn-circle companion-send" aria-label="发送消息" on:click={submit} disabled={!composer.draft.trim() && imageDrafts.length === 0}><span aria-hidden="true">↑</span></button>
             {/if}
           </div>
-          <div class="companion-compose-hint">Enter 发送 · Shift+Enter 换行{projection.pendingCount ? ` · ${projection.pendingCount} 条消息排队中` : ""}</div>
+          <div class="companion-compose-hint">Enter 发送 · Shift+Enter 换行{displayedProjection.pendingCount ? ` · ${displayedProjection.pendingCount} 条消息排队中` : ""}</div>
         </div>
       {/if}
     </main>

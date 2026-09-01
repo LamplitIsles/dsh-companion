@@ -6,7 +6,7 @@
  * projections) easy to exercise with test-owned fakes.
  */
 
-export const DSH_VERSION = "0.1.1-rc.2" as const;
+export const DSH_VERSION = "0.1.2-alpha.3" as const;
 export const COMPANION_PATH = "/companion/" as const;
 export const STATE_DIRECTORY = ".dsh/dsh-companion" as const;
 export const STATE_FILE = `${STATE_DIRECTORY}/state.json` as const;

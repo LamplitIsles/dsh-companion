@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent } from "react";
-import type { SettingsScope, SettingsScopeSnapshot, WorkspaceListState } from "@deepseek-ai/dsh-client-runtime/client";
+import type { WorkspaceSnapshot } from "@deepseek-ai/dsh-api-workspace-controller/client";
+import type { SettingsScope, SettingsScopeSnapshot } from "@deepseek-ai/dsh-client-ui-settings/client";
 import { changedSettingsPayload, mergeCleanSettingsDraft, readAvatar, relationshipControlsWritable, settingValueAccepted, settingsPayload, type ClientSettings } from "./settings.js";
 import styles from "./CompanionSettingsCard.module.css";
 
 export interface CompanionSettingsCardProps {
   scope: SettingsScope<ClientSettings>;
   workspaceSource: {
-    getSnapshot(): WorkspaceListState;
+    getSnapshot(): WorkspaceSnapshot;
     subscribe(listener: () => void): () => void;
   };
   currentAffinity?: () => Promise<number | undefined>;
@@ -15,7 +16,7 @@ export interface CompanionSettingsCardProps {
   clearSignature?: () => Promise<void>;
 }
 
-const EMPTY_WORKSPACES: WorkspaceListState = { items: [], archivedSessionIds: [], state: "loading", phase: "pending", error: null, baselinesReady: false, recentWorkspaceId: undefined };
+const EMPTY_WORKSPACES: WorkspaceSnapshot = { items: [], archivedSessionIds: [], state: "loading", phase: "pending", error: null };
 
 export function CompanionSettingsCard({ scope, workspaceSource, currentAffinity, resetAffinity, setAffinity, clearSignature }: CompanionSettingsCardProps): JSX.Element | null {
   const [snapshot, setSnapshot] = useState<SettingsScopeSnapshot<ClientSettings>>(() => scope.getSnapshot());

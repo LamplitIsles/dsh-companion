@@ -1,7 +1,7 @@
-export function companionSessionOpenPlan(baselinesReady: boolean, workspaceId: string | undefined, selectedSessionId: string | undefined):
+export function companionSessionOpenPlan(listReady: boolean, workspaceId: string | undefined, selectedSessionId: string | undefined):
   | { kind: "open"; sessionId: string }
-  | { kind: "connect"; workspaceId: string }
+  | { kind: "create"; workspaceId: string }
   | undefined {
-  if (!baselinesReady || !workspaceId) return undefined;
-  return selectedSessionId ? { kind: "open", sessionId: selectedSessionId } : { kind: "connect", workspaceId };
+  if (!listReady || !workspaceId) return undefined;
+  return selectedSessionId ? { kind: "open", sessionId: selectedSessionId } : { kind: "create", workspaceId };
 }
