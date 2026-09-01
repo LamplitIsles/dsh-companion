@@ -76,11 +76,12 @@ test("assembled image preview dismisses from its backdrop and returns focus to t
 test("assembled image preview follows the official lightbox visual contract", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "查看大图：今晚的海" }).click();
-  const dialog = page.getByRole("dialog");
+  const dialog = page.getByRole("dialog", { name: "图片预览" });
   const close = page.getByRole("button", { name: "关闭大图" });
-  const image = dialog.getByRole("img", { name: "今晚的海" });
+  const image = dialog.getByRole("img", { name: "预览图片" });
   const backdrop = page.locator(".companion-lightbox-backdrop");
 
+  await expect(dialog).not.toContainText("今晚的海");
   await expect(close.locator("svg")).toHaveCount(1);
   await expect.poll(async () => ({
     dialog: await dialog.evaluate((node) => {
@@ -326,7 +327,7 @@ test("admits photos from the library or desktop paste and sends them as a draft"
   const draftPreview = drafts.getByRole("button", { name: "查看大图：island.png" });
   await draftPreview.click();
   await expect(page.getByRole("button", { name: "关闭大图" })).toBeFocused();
-  await expect(page.getByRole("dialog").getByRole("img", { name: "island.png" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "图片预览" }).getByRole("img", { name: "预览图片" })).toBeVisible();
   await page.getByRole("button", { name: "关闭大图" }).click();
   await expect(draftPreview).toBeFocused();
   await expect(send).toBeEnabled();
@@ -551,6 +552,11 @@ test("keeps the capacity cue optional and makes its explanation keyboard reachab
   await expect(popover).toContainText("58%");
   await expect(popover).toContainText("18k / 32k");
   await expect(popover).not.toContainText("连续性摘要");
+  await expect.poll(() => popover.evaluate((node) => {
+    const box = node.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + 20);
+    return hit !== null && node.contains(hit);
+  })).toBe(true);
   await page.keyboard.press("Escape");
   await expect(popover).toHaveCount(0);
   await expect(meter).toBeFocused();

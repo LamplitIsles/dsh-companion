@@ -1104,10 +1104,9 @@
     </div>
   </div>
   {#if lightbox}
-    <dialog bind:this={lightboxDialog} id="companion-image-lightbox" class="cmp-modal companion-lightbox" aria-labelledby="lightbox-title" on:close={onLightboxClose}>
+    <dialog bind:this={lightboxDialog} id="companion-image-lightbox" class="cmp-modal companion-lightbox" aria-label="图片预览" on:close={onLightboxClose}>
       <div class="cmp-modal-box companion-lightbox-dialog">
-        <h2 id="lightbox-title" class="companion-sr-only">图片预览：{lightbox.alt}</h2>
-        {#if lightboxUrl}<img src={lightboxUrl} alt={lightbox.alt} />{:else}<div class="cmp-loading cmp-loading-spinner"></div>{/if}
+        {#if lightboxUrl}<img src={lightboxUrl} alt="预览图片" />{:else}<div class="cmp-loading cmp-loading-spinner"></div>{/if}
       </div>
       <button class="cmp-btn cmp-btn-circle companion-lightbox-close" aria-label="关闭大图" on:click={() => closeLightbox()}><X size={16} strokeWidth={2} aria-hidden="true" /></button>
       <form method="dialog" class="cmp-modal-backdrop companion-lightbox-backdrop"><button type="submit" aria-label="关闭图片预览背景">关闭</button></form>
