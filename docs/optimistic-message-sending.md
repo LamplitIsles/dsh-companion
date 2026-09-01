@@ -33,6 +33,33 @@ The send path has deliberately narrow owners:
 
 There must not be a second custom optimistic-send owner. In particular, Companion does not maintain a bespoke outbox, infer acknowledgements from matching text, or create a retry-card state machine.
 
+## The alpha.3 API: `session.beginSubmission`
+
+The DSH `0.1.2-alpha.3` behavior behind this design is named `beginSubmission`, not simply `submit`. Companion uses it like this:
+
+```ts
+const handle = session.beginSubmission({
+  mode: "queue",
+  text,
+  images: previewMetadata,
+  onRetire,
+});
+
+await session.prompt(content, "queue", undefined, handle.requestId);
+```
+
+Its contract is:
+
+- `beginSubmission` synchronously adds an official local echo to `SessionSnapshot.pendingSubmissions` before serialization or transport begins;
+- it derives `transcript`, `queued`, or `steering` placement from the requested mode and current Session state;
+- it returns `{ requestId, abandon }`;
+- the exact `requestId` must be passed into `prompt`;
+- the Host echoes that identity as `rpcId` on an admitted queue occurrence or durable user source;
+- the Session retires the local echo as `observed` after seeing that authoritative correlation, or as `failed` after rejection/abandonment; and
+- the registered retirement callback runs exactly once and owns restoration/preview cleanup at the UI boundary.
+
+This is why Companion no longer needs content-shape matching or its former custom optimistic batch state. `beginSubmission` owns delivery correlation; Companion owns only presentation projection and cross-store visual continuity.
+
 ## Identity model
 
 One logical send has several legitimate identities. They must not be conflated.
@@ -279,6 +306,25 @@ Before merging a change to ordinary sending, confirm:
 - `tests/projection.test.ts` — correlated projection contract.
 - `tests/message-handoff.test.ts` — independently published snapshot interleavings.
 - `tests/e2e/fixture.spec.ts` and `fixture/main.ts` — rendered continuity and image-lifecycle coverage.
+
+## Implementation history
+
+This is the complete commit lineage that establishes or directly fixes the current optimistic-send contract. Squash commits represent their complete merged PR implementation.
+
+| Commit | Contribution |
+| --- | --- |
+| `7b8d96d` | `feat(companion): migrate to alpha session submissions (#5)` — migrated to DSH alpha.3 and replaced the custom optimistic overlay with `beginSubmission`, exact request-ID propagation, and controller retirement. |
+| `4cef10f` | `feat(companion): improve composer, media, and relationship state (#7)` — established canonical message units, text/image grouping, optimistic preview ownership, and durable media takeover behavior used by this design. |
+| `e32097f` | `fix(companion): preserve correlated message continuity` — made pending, queue, steering, and durable contributions share `submission:<rpcId>`. |
+| `d7fce01` | `chore(companion): add implementation report` — recorded the first continuity implementation and verification. |
+| `4813cb1` | `fix(companion): simplify correlated durable fixture helper` — removed the fixture's optional fallback identity and made correlation deterministic. |
+| `ae40f48` | `chore(companion): document deterministic review fix` — updated the implementation record after review. |
+| `8aa5fca` | `chore(deploy): add local DSH update recipe` — added the guarded local build/restart/readiness workflow. |
+| `432f80e` | `chore(deploy): document local update command` — made `just deploy-local` discoverable to future agents. |
+| `22a383e` | `fix(companion): bridge submission snapshot handoff` — fixed the real Session/Chat empty-snapshot race and added idle, queued, and failed handoff tests. |
+| `56ca048` | `chore(docs): document optimistic message continuity` — consolidated the final architecture, diagnostic lessons, and regression contract into this document. |
+
+Commits for unrelated Companion features are intentionally not listed. The table is exhaustive for the alpha.3 optimistic submission, message-unit/media continuity foundation, follow-up continuity fixes, and their local deployment/documentation path.
 
 ## Explicit non-goals
 
