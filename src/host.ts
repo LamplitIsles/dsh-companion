@@ -161,6 +161,291 @@ export async function adjustAffinityForAcceptedTurn(store: CompanionStateStore, 
   return store.adjustAffinity(delta, reason, turnId, exec.signal);
 }
 
+export const BOOTSTRAP_PATH = "/companion/bootstrap" as const;
+const COMPANION_ROOT_PATH = "/companion/" as const;
+const BOOTSTRAP_TOKEN_FIELD = "token" as const;
+const BOOTSTRAP_MAX_BODY_BYTES = 4096;
+const BOOTSTRAP_ERROR = "令牌无效或已过期，请检查后重试。";
+
+const BOOTSTRAP_PAGE_STYLE = `
+*{box-sizing:border-box}
+:root{color-scheme:light;--cmp-bg:#fff8f1;--cmp-surface:rgba(255,255,255,.82);--cmp-ink:#292326;--cmp-muted:#786d70;--cmp-line:rgba(70,45,50,.16);--cmp-primary:#d86156;--cmp-primary-ink:#fffaf8;--cmp-glow:rgba(216,97,86,.2);--cmp-orbit:#f6c9a9}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;--cmp-bg:#091326;--cmp-surface:rgba(17,31,55,.86);--cmp-ink:#eef3ff;--cmp-muted:#a7b3cb;--cmp-line:rgba(201,215,243,.18);--cmp-primary:#8bc7ff;--cmp-primary-ink:#071426;--cmp-glow:rgba(139,199,255,.2);--cmp-orbit:#536ea5}}
+html,body{min-height:100%}
+body{margin:0;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 14% 10%,var(--cmp-orbit),transparent 34%),radial-gradient(circle at 90% 86%,var(--cmp-glow),transparent 32%),var(--cmp-bg);color:var(--cmp-ink);font-family:ui-rounded,"Noto Sans SC",system-ui,sans-serif;line-height:1.5}
+.companion-bootstrap-shell{width:min(100%,420px)}
+.companion-bootstrap-card{padding:clamp(24px,7vw,38px);border:1px solid var(--cmp-line);border-radius:28px;background:var(--cmp-surface);box-shadow:0 24px 64px rgba(25,20,28,.13);backdrop-filter:blur(18px)}
+@media (prefers-color-scheme:dark){.companion-bootstrap-card{box-shadow:0 24px 68px rgba(0,0,0,.35)}}
+.companion-bootstrap-mark{display:grid;width:50px;height:50px;place-items:center;margin-bottom:20px;border:1px solid var(--cmp-line);border-radius:18px;background:linear-gradient(145deg,var(--cmp-primary),var(--cmp-orbit));box-shadow:0 10px 24px var(--cmp-glow);color:var(--cmp-primary-ink);font-size:1.3rem;font-weight:800}
+.companion-bootstrap-eyebrow{margin:0 0 7px;color:var(--cmp-primary);font-size:.72rem;font-weight:750;letter-spacing:.14em;text-transform:uppercase}
+h1{margin:0;font-size:clamp(1.45rem,5vw,1.8rem);letter-spacing:-.035em;line-height:1.15}
+.companion-bootstrap-intro{margin:12px 0 24px;color:var(--cmp-muted);font-size:.9rem}
+.companion-bootstrap-form{display:grid;gap:10px}
+.companion-bootstrap-label{font-size:.8rem;font-weight:700}
+.input{width:100%;min-height:46px;padding:11px 14px;border:1px solid var(--cmp-line);border-radius:15px;outline:0;background:color-mix(in srgb,var(--cmp-surface) 70%,transparent);color:inherit;font:inherit;letter-spacing:.04em}
+.input:focus-visible{border-color:var(--cmp-primary);box-shadow:0 0 0 4px var(--cmp-glow)}
+.btn{min-height:46px;margin-top:5px;padding:11px 16px;border:1px solid transparent;border-radius:15px;background:var(--cmp-primary);color:var(--cmp-primary-ink);font:inherit;font-weight:750;cursor:pointer;transition:transform .16s ease,box-shadow .16s ease,filter .16s ease}
+.btn:hover{box-shadow:0 9px 22px var(--cmp-glow);filter:saturate(1.08);transform:translateY(-1px)}
+.btn:focus-visible{outline:2px solid var(--cmp-primary);outline-offset:3px}
+.companion-bootstrap-error{min-height:1.5em;margin:2px 0 0;color:var(--cmp-primary);font-size:.8rem}
+.companion-bootstrap-note{margin:22px 0 0;color:var(--cmp-muted);font-size:.72rem}
+@media (prefers-reduced-motion:reduce){.btn{transition:none}.btn:hover{transform:none}}
+`;
+
+/**
+ * This document is intentionally independent of the authenticated DSH bundle.
+ * It is only shown while BrowserAuth has not yet accepted a browser session.
+ */
+function bootstrapPage(hasError: boolean): string {
+  const error = hasError ? BOOTSTRAP_ERROR : "";
+  return `<!doctype html>
+<html lang="zh-Hans">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <title>Companion · 继续</title>
+    <style>${BOOTSTRAP_PAGE_STYLE}</style>
+  </head>
+  <body>
+    <main class="companion-bootstrap-shell" data-testid="companion-bootstrap">
+      <section class="card companion-bootstrap-card" aria-labelledby="companion-bootstrap-title">
+        <div class="companion-bootstrap-mark" aria-hidden="true">✦</div>
+        <p class="companion-bootstrap-eyebrow">Companion</p>
+        <h1 id="companion-bootstrap-title">继续进入 Companion</h1>
+        <p class="companion-bootstrap-intro">输入本次 DSH 启动令牌，完成一次安全验证。</p>
+        <form class="companion-bootstrap-form" method="post" action="${BOOTSTRAP_PATH}" autocomplete="off">
+          <label class="companion-bootstrap-label" for="companion-bootstrap-token">启动令牌</label>
+          <input class="input" id="companion-bootstrap-token" name="${BOOTSTRAP_TOKEN_FIELD}" type="password" required maxlength="2048" autocomplete="off" spellcheck="false" aria-describedby="companion-bootstrap-error">
+          <button class="btn btn-primary" type="submit">进入 Companion</button>
+          <p class="companion-bootstrap-error" id="companion-bootstrap-error" role="alert" aria-live="polite">${error}</p>
+        </form>
+        <p class="companion-bootstrap-note">令牌仅用于这一次验证，不会保存在 Companion。</p>
+      </section>
+    </main>
+  </body>
+</html>`;
+}
+
+function writeBootstrap(res: ServerResponse, status: number, method: string | undefined, hasError: boolean): void {
+  const body = bootstrapPage(hasError);
+  res.writeHead(status, {
+    "cache-control": "no-store",
+    "content-length": String(Buffer.byteLength(body)),
+    "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'",
+    "content-type": "text/html; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+  });
+  if (method === "HEAD") res.end();
+  else res.end(body);
+}
+
+function writeBootstrapError(res: ServerResponse, status = 400): void {
+  writeBootstrap(res, status, "POST", true);
+}
+
+function writePlainError(res: ServerResponse, status: 404 | 405, allow?: string): void {
+  res.writeHead(status, {
+    "cache-control": "no-store",
+    "referrer-policy": "no-referrer",
+    ...(allow ? { allow } : {}),
+  });
+  res.end();
+}
+
+type BootstrapTokenResult = { token: string } | { status: 400 | 413 };
+
+function readBootstrapToken(req: IncomingMessage): Promise<BootstrapTokenResult> {
+  const contentType = req.headers["content-type"];
+  if (typeof contentType === "string" && contentType.split(";", 1)[0]?.trim().toLowerCase() !== "application/x-www-form-urlencoded") {
+    req.resume();
+    return Promise.resolve({ status: 400 });
+  }
+  const contentLength = req.headers["content-length"];
+  if (contentLength !== undefined) {
+    const declared = typeof contentLength === "string" ? Number(contentLength) : Number.NaN;
+    if (!Number.isSafeInteger(declared) || declared < 0) {
+      req.resume();
+      return Promise.resolve({ status: 400 });
+    }
+    if (declared > BOOTSTRAP_MAX_BODY_BYTES) {
+      req.resume();
+      return Promise.resolve({ status: 413 });
+    }
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    let size = 0;
+    const chunks: Buffer[] = [];
+    const finish = (result: BootstrapTokenResult): void => {
+      if (settled) return;
+      settled = true;
+      req.off("data", onData);
+      req.off("end", onEnd);
+      req.off("aborted", onAborted);
+      req.off("error", onError);
+      resolve(result);
+    };
+    const rejectBody = (status: 400 | 413): void => {
+      req.resume();
+      finish({ status });
+    };
+    const onData = (chunk: Buffer | string): void => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.byteLength;
+      if (size > BOOTSTRAP_MAX_BODY_BYTES) {
+        rejectBody(413);
+        return;
+      }
+      chunks.push(buffer);
+    };
+    const onEnd = (): void => {
+      const body = Buffer.concat(chunks).toString("utf8");
+      const entries = [...new URLSearchParams(body).entries()];
+      if (entries.length !== 1 || entries[0]?.[0] !== BOOTSTRAP_TOKEN_FIELD) {
+        finish({ status: 400 });
+        return;
+      }
+      const token = entries[0][1];
+      if (!token.trim() || Buffer.byteLength(token, "utf8") > BOOTSTRAP_MAX_BODY_BYTES) {
+        finish({ status: 400 });
+        return;
+      }
+      finish({ token });
+    };
+    const onAborted = (): void => finish({ status: 400 });
+    const onError = (): void => finish({ status: 400 });
+    req.on("data", onData);
+    req.on("end", onEnd);
+    req.on("aborted", onAborted);
+    req.on("error", onError);
+  });
+}
+
+function externalHeaders(req: IncomingMessage, includeCookie: boolean): Record<string, string> {
+  return {
+    ...(includeCookie && req.headers.cookie ? { cookie: req.headers.cookie } : {}),
+    ...(req.headers.host ? { host: req.headers.host } : {}),
+  };
+}
+
+function proxyCompanionRoot(webServer: WebServerLike, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const fail = (status: 502 | 504): void => {
+      if (!res.headersSent) res.writeHead(status, { "cache-control": "no-store", "referrer-policy": "no-referrer" });
+      if (!res.writableEnded) res.end();
+      finish();
+    };
+    let upstream;
+    try {
+      upstream = httpRequest({
+        host: "127.0.0.1",
+        port: webServer.port,
+        path: "/",
+        method: req.method,
+        // BrowserAuth binds its cookie to the caller's external authority.
+        headers: externalHeaders(req, true),
+      }, (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk: Buffer | string) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+        response.on("error", () => fail(502));
+        response.on("end", () => {
+          if (settled) return;
+          if (response.statusCode === 401) {
+            writeBootstrap(res, 200, req.method, false);
+            finish();
+            return;
+          }
+          const contentType = response.headers["content-type"];
+          res.writeHead(response.statusCode ?? 502, contentType ? { "content-type": contentType } : undefined);
+          if (req.method === "HEAD") res.end();
+          else res.end(Buffer.concat(chunks));
+          finish();
+        });
+      });
+    } catch {
+      fail(502);
+      return;
+    }
+    upstream.setTimeout(3000, () => {
+      upstream.destroy();
+      fail(504);
+    });
+    upstream.on("error", () => fail(502));
+    upstream.end();
+  });
+}
+
+function setCookieHeaders(value: string[] | undefined): string[] | undefined {
+  if (!Array.isArray(value) || value.length !== 1 || !value[0]) return undefined;
+  return [value[0]];
+}
+
+function exchangeBootstrapToken(webServer: WebServerLike, req: IncomingMessage, res: ServerResponse, token: string): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const fail = (status = 502): void => {
+      if (!res.headersSent) writeBootstrapError(res, status);
+      else if (!res.writableEnded) res.end();
+      finish();
+    };
+    let upstream;
+    try {
+      upstream = httpRequest({
+        host: "127.0.0.1",
+        port: webServer.port,
+        method: "GET",
+        path: `/?${BOOTSTRAP_TOKEN_FIELD}=${encodeURIComponent(token)}`,
+        // Deliberately omit the form request's Cookie. BrowserAuth must see
+        // only the submitted launch token during this root exchange.
+        headers: externalHeaders(req, false),
+      }, (response) => {
+        response.resume();
+        response.on("error", () => fail());
+        response.on("end", () => {
+          if (settled) return;
+          const cookie = setCookieHeaders(response.headers["set-cookie"]);
+          if (response.statusCode !== 303 || cookie === undefined) {
+            writeBootstrapError(res, 400);
+            finish();
+            return;
+          }
+          res.writeHead(303, {
+            "cache-control": "no-store",
+            "content-length": "0",
+            location: COMPANION_ROOT_PATH,
+            "referrer-policy": "no-referrer",
+            "set-cookie": cookie,
+          });
+          res.end();
+          finish();
+        });
+      });
+    } catch {
+      fail();
+      return;
+    }
+    upstream.setTimeout(3000, () => {
+      upstream.destroy();
+      fail(504);
+    });
+    upstream.on("error", () => fail());
+    upstream.end();
+  });
+}
+
 /**
  * The pinned web static service serves explicit files and otherwise returns
  * 404. Reuse its rendered root document for the Companion alias so the
@@ -169,53 +454,39 @@ export async function adjustAffinityForAcceptedTurn(store: CompanionStateStore, 
  * fallback, so this lifecycle-owned alias is required for this web plugin.
  */
 export function companionAliasHandler(webServer: WebServerLike, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const pathname = new URL(req.url ?? "/", "http://companion.local").pathname;
-  if (pathname !== "/companion" && pathname !== "/companion/") {
-    res.writeHead(404);
-    res.end();
+  let pathname: string;
+  try {
+    pathname = new URL(req.url ?? "/", "http://companion.local").pathname;
+  } catch {
+    req.resume();
+    writePlainError(res, 404);
+    return Promise.resolve();
+  }
+  if (pathname === BOOTSTRAP_PATH) {
+    if (req.method !== "POST") {
+      req.resume();
+      writePlainError(res, 405, "POST");
+      return Promise.resolve();
+    }
+    return readBootstrapToken(req).then((parsed) => {
+      if ("status" in parsed) {
+        writeBootstrapError(res, parsed.status);
+        return;
+      }
+      return exchangeBootstrapToken(webServer, req, res, parsed.token);
+    });
+  }
+  if (pathname !== "/companion" && pathname !== COMPANION_ROOT_PATH) {
+    req.resume();
+    writePlainError(res, 404);
     return Promise.resolve();
   }
   if (req.method !== "GET" && req.method !== "HEAD") {
-    res.writeHead(405);
-    res.end();
+    req.resume();
+    writePlainError(res, 405, "GET, HEAD");
     return Promise.resolve();
   }
-  return new Promise((resolve) => {
-    const upstream = httpRequest({
-      host: "127.0.0.1",
-      port: webServer.port,
-      path: "/",
-      method: req.method,
-      // Alpha Web authenticates the boot document with an authority-bound
-      // cookie. Preserve both pieces when the Companion alias proxies to `/`.
-      headers: {
-        ...(req.headers.cookie ? { cookie: req.headers.cookie } : {}),
-        ...(req.headers.host ? { host: req.headers.host } : {}),
-      },
-    }, (response) => {
-      const chunks: Buffer[] = [];
-      response.on("data", (chunk: Buffer | string) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-      response.on("end", () => {
-        const contentType = response.headers["content-type"];
-        res.writeHead(response.statusCode ?? 502, contentType ? { "content-type": contentType } : undefined);
-        if (req.method === "HEAD") res.end();
-        else res.end(Buffer.concat(chunks));
-        resolve();
-      });
-    });
-    upstream.setTimeout(3000, () => {
-      upstream.destroy();
-      if (!res.headersSent) res.writeHead(504);
-      res.end();
-      resolve();
-    });
-    upstream.on("error", () => {
-      if (!res.headersSent) res.writeHead(502);
-      res.end();
-      resolve();
-    });
-    upstream.end();
-  });
+  return proxyCompanionRoot(webServer, req, res);
 }
 
 const moodTool = (owner: CompanionHostController): ToolDefinition => defineTool({
