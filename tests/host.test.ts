@@ -4,7 +4,7 @@ import { createServer, request as httpRequest, type IncomingHttpHeaders, type Se
 import { join } from "node:path";
 import { createUserMessage, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import type { ToolRunContext } from "@deepseek-ai/dsh-tools";
-import { CompanionStateStore } from "../src/domain.js";
+import { CompanionStateStore, encodeCompanionStateRecord } from "../src/domain.js";
 import { BOOTSTRAP_PATH, CompanionHostController, RPC_CHANNEL, acceptedTurnKey, adjustAffinityForAcceptedTurn, apply, companionAliasHandler } from "../src/host.js";
 
 const temporary: string[] = [];
@@ -223,7 +223,7 @@ describe("Host accepted-turn relationship contract", () => {
 
   it("caps cumulative movement within the published Session turn and starts fresh next turn", async () => {
     const directory = await mkdtemp("/tmp/dsh-companion-host-"); temporary.push(directory);
-    const store = new CompanionStateStore({ workspacePath: directory, defaultAffinity: 50, filePath: join(directory, "state.json") });
+    const store = new CompanionStateStore({ workspacePath: directory, defaultAffinity: 50, filePath: join(directory, "state.jsonl") });
     const first = execution([{ type: "turn/start", data: { turn: 7 } }]);
     expect(acceptedTurnKey(first)).toBe("agent-a:turn:7");
     expect((await adjustAffinityForAcceptedTurn(store, 8, "第一次", first)).delta).toBe(8);
@@ -235,9 +235,9 @@ describe("Host accepted-turn relationship contract", () => {
 
   it("waits for persisted state, validates narrow recovery RPCs, and publishes live updates", async () => {
     const directory = await mkdtemp("/tmp/dsh-companion-host-"); temporary.push(directory);
-    const statePath = join(directory, ".dsh/dsh-companion/state.json");
+    const statePath = join(directory, ".dsh/dsh-companion/state.jsonl");
     await mkdir(join(directory, ".dsh/dsh-companion"), { recursive: true });
-    await writeFile(statePath, JSON.stringify({ mood: "tender", affinity: 67, signature: "旧签名" }));
+    await writeFile(statePath, encodeCompanionStateRecord({ at: "2026-09-01T00:00:00.000Z", change: { kind: "seed" }, state: { mood: "tender", affinity: 67, signature: "旧签名" } }));
     let rpcHandler: ((endpoint: string, payload: unknown, signal: AbortSignal) => Promise<unknown>) | undefined;
     const registeredTools: unknown[] = [];
     const scope = {
@@ -284,7 +284,7 @@ describe("Host accepted-turn relationship contract", () => {
   it("preloads persisted relationship state before the first prompt callback is registered", async () => {
     const directory = await mkdtemp("/tmp/dsh-companion-host-"); temporary.push(directory);
     await mkdir(join(directory, ".dsh/dsh-companion"), { recursive: true });
-    await writeFile(join(directory, ".dsh/dsh-companion/state.json"), JSON.stringify({ mood: "tender", affinity: 67, signature: "旧签名" }));
+    await writeFile(join(directory, ".dsh/dsh-companion/state.jsonl"), encodeCompanionStateRecord({ at: "2026-09-01T00:00:00.000Z", change: { kind: "seed" }, state: { mood: "tender", affinity: 67, signature: "旧签名" } }));
     let prompt: ((context: { agent?: { session?: { header?: { cwd?: string } } } }) => string) | undefined;
     const scope = {
       get: () => ({ workspaceId: "workspace-a", companionName: "Companion", userName: "你", preferredAddress: "你", defaultAffinity: 50 }),

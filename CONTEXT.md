@@ -42,3 +42,11 @@ _Avoid_: 普通展示, 图片详情页
 **此刻状态**:
 The Companion's current bounded descriptive state, represented by one fixed state key and an optional short note. It has no degree, rank, or intensity dimension.
 _Avoid_: 心情强度, 情绪等级
+
+**状态记录**:
+One timestamped complete Companion relationship state written after a successful change. The newest record is authoritative, while older records preserve how the state, short note, affinity, and signature changed over time.
+_Avoid_: 当前状态快照, 状态事件
+
+**状态历史**:
+The Workspace-owned ordered collection of 状态记录. It is append-only: a new change adds a complete record and never rewrites the meaning of an older one.
+_Avoid_: 状态文件, 当前状态

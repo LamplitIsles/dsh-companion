@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CompanionStateStore, CompanionValidationError, MAX_AVATAR_BYTES, affinityStage, canonicalizeMood, canonicalizeSignature,
-  decodeCompanionState, encodeCompanionState, formatCompanionPrompt, MOOD_LABELS, selectCompanionSession, validateAvatar,
+  decodeCompanionState, decodeCompanionStateHistory, decodeLatestCompanionStateRecord, encodeCompanionState, encodeCompanionStateRecord, formatCompanionPrompt, MOOD_LABELS, selectCompanionSession, validateAvatar,
 } from "../src/domain.js";
 
 const temporary: string[] = [];
@@ -29,8 +29,9 @@ describe("relationship domain", () => {
 
   it("persists atomically in a test-owned directory and enforces turn movement", async () => {
     const dir = await mkdtemp(join(tmpdir(), "dsh-companion-test-")); temporary.push(dir);
-    const file = join(dir, "state.json");
-    const first = new CompanionStateStore({ workspacePath: dir, defaultAffinity: 55, filePath: file });
+    const file = join(dir, "state.jsonl");
+    let tick = 0;
+    const first = new CompanionStateStore({ workspacePath: dir, defaultAffinity: 55, filePath: file, now: () => new Date(Date.UTC(2026, 8, 1, 0, 0, tick++)) });
     await first.load();
     first.beginTurn("turn-1");
     expect((await first.adjustAffinity(8, "认真倾听", "turn-1")).delta).toBe(8);
@@ -40,6 +41,74 @@ describe("relationship domain", () => {
     await second.load();
     expect(second.getSnapshot()).toMatchObject({ affinity: 65, signature: "把平凡日子折成星星" });
     expect(JSON.parse(encodeCompanionState(second.getSnapshot()))).toEqual({ mood: "neutral", affinity: 65, signature: "把平凡日子折成星星" });
+    const history = decodeCompanionStateHistory(await readFile(file, "utf8"), 55);
+    expect(history).toHaveLength(4);
+    expect(history.map((entry) => entry.change)).toEqual([
+      { kind: "seed" },
+      { kind: "affinity", delta: 8, reason: "认真倾听" },
+      { kind: "affinity", delta: 2, reason: "再次倾听" },
+      { kind: "signature" },
+    ]);
+    expect(history.map((entry) => entry.state.affinity)).toEqual([55, 63, 65, 65]);
+  });
+
+  it("rejects blank or partial state history instead of falling back", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dsh-companion-test-")); temporary.push(dir);
+    const file = join(dir, "state.jsonl");
+    await writeFile(file, '{"at":"2026-09-01T00:00:00.000Z"}');
+    await expect(new CompanionStateStore({ workspacePath: dir, defaultAffinity: 50, filePath: file }).load()).rejects.toThrow("不完整");
+    expect(() => decodeCompanionStateHistory("\n")).toThrow("空记录");
+  });
+
+  it("reads current affinity from only the final complete record", async () => {
+    const latest = encodeCompanionStateRecord({
+      at: "2026-09-01T00:00:00.000Z",
+      change: { kind: "affinity", delta: 6, reason: "更靠近一点" },
+      state: { mood: "bright", note: "今天很好", affinity: 56, signature: "仍在这里" },
+    });
+    const text = `not historical json\n${latest}`;
+    expect(decodeLatestCompanionStateRecord(text).state).toEqual({ mood: "bright", note: "今天很好", affinity: 56, signature: "仍在这里" });
+    expect(() => decodeCompanionStateHistory(text)).toThrow("无效 JSON");
+  });
+
+  it("does not publish a logical record when persistence fails", async () => {
+    let content: string | undefined;
+    let rejectWrites = false;
+    const store = new CompanionStateStore({
+      workspacePath: "/test-owned",
+      defaultAffinity: 50,
+      now: () => new Date("2026-09-01T00:00:00.000Z"),
+      fs: {
+        resolve: async () => "state.jsonl",
+        stat: async () => content === undefined ? undefined : { type: "file", size: Buffer.byteLength(content) },
+        readText: async () => content ?? "",
+        writeText: async (_target, next) => { if (rejectWrites) throw new Error("disk full"); content = next; },
+      },
+    });
+    await store.load();
+    rejectWrites = true;
+    store.beginTurn("turn-1");
+    await expect(store.adjustAffinity(8, "不会落盘", "turn-1")).rejects.toThrow("disk full");
+    expect(store.getSnapshot()).toEqual({ mood: "neutral", affinity: 50, signature: "" });
+    expect(decodeCompanionStateHistory(content ?? "")).toHaveLength(1);
+    rejectWrites = false;
+    expect((await store.adjustAffinity(8, "重新写入", "turn-1")).delta).toBe(8);
+  });
+
+  it("serializes concurrent changes into complete ordered records", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dsh-companion-test-")); temporary.push(dir);
+    const file = join(dir, "state.jsonl");
+    const store = new CompanionStateStore({ workspacePath: dir, defaultAffinity: 50, filePath: file });
+    await store.load();
+    await Promise.all([
+      store.setMood({ mood: "bright", note: "一起变亮" }),
+      store.setSignature("仍在这里"),
+      store.setAffinity(60),
+    ]);
+    expect(store.getSnapshot()).toEqual({ mood: "bright", note: "一起变亮", affinity: 60, signature: "仍在这里" });
+    const history = decodeCompanionStateHistory(await readFile(file, "utf8"));
+    expect(history).toHaveLength(4);
+    expect(history.slice(1).map((entry) => entry.change.kind)).toEqual(["mood", "signature", "affinity"]);
   });
 
   it("quotes dynamic prompt data and never accumulates old values", () => {
