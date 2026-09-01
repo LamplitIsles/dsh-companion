@@ -716,11 +716,21 @@ test("chat shell has rendered Markdown, viewport scrolling, sessions, rounded fo
 
   const geometry = await page.evaluate(() => {
     const root = document.querySelector<HTMLElement>("#dsh-companion")!;
+    const app = document.querySelector<HTMLElement>(".companion-app")!;
+    const composeRow = document.querySelector<HTMLElement>(".companion-compose-row")!;
     const timeline = document.querySelector<HTMLElement>(".companion-timeline")!;
+    const appRect = app.getBoundingClientRect();
+    const appStyle = getComputedStyle(app);
     return {
       rootHeight: root.getBoundingClientRect().height,
       viewportHeight: window.innerHeight,
+      viewportWidth: window.innerWidth,
       documentHeight: document.documentElement.scrollHeight,
+      appRect: { top: appRect.top, left: appRect.left, width: appRect.width, height: appRect.height },
+      appBorder: appStyle.borderTopWidth,
+      appRadius: Number.parseFloat(appStyle.borderRadius),
+      appShadow: appStyle.boxShadow,
+      composerBottomInset: window.innerHeight - composeRow.getBoundingClientRect().bottom,
       timelineClient: timeline.clientHeight,
       timelineScroll: timeline.scrollHeight,
       overflowY: getComputedStyle(timeline).overflowY,
@@ -728,6 +738,11 @@ test("chat shell has rendered Markdown, viewport scrolling, sessions, rounded fo
   });
   expect(Math.abs(geometry.rootHeight - geometry.viewportHeight)).toBeLessThanOrEqual(1);
   expect(geometry.documentHeight).toBeLessThanOrEqual(geometry.viewportHeight + 1);
+  expect(geometry.appRect).toEqual({ top: 0, left: 0, width: geometry.viewportWidth, height: geometry.viewportHeight });
+  expect(geometry.appBorder).toBe("0px");
+  expect(geometry.appRadius).toBe(0);
+  expect(geometry.appShadow).toBe("none");
+  expect(geometry.composerBottomInset).toBeGreaterThanOrEqual(20);
   expect(geometry.overflowY).toBe("auto");
   expect(geometry.timelineScroll).toBeGreaterThan(geometry.timelineClient);
   await page.locator(".companion-timeline").evaluate((node) => { node.scrollTop = 120; });

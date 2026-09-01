@@ -12,6 +12,7 @@ import {
   type CompanionState,
   CompanionValidationError,
   affinityStage,
+  canonicalizeHistoryRead,
   canonicalizeRelationshipUpdate,
   canonicalizeChangeReason,
   canonicalizeSignature,
@@ -545,6 +546,59 @@ const relationshipTool = (owner: CompanionHostController): ToolDefinition => def
   },
 });
 
+const historyTool = (owner: CompanionHostController): ToolDefinition => defineTool({
+  name: "companion_read_history",
+  description: "Read a small recent slice of this Workspace's Companion relationship history when an earlier mood, note, affinity reason, or signature change is relevant. Records are newest first. This does not change current state; omit limit for 10 records, with a maximum of 20.",
+  parameters: {
+    limit: { type: "integer", description: "Optional number of newest records to return, from 1 through 20; defaults to 10" },
+  },
+  output: {
+    schema: {
+      type: "object",
+      properties: {
+        records: {
+          type: "array",
+          required: true,
+          items: {
+            type: "object",
+            properties: {
+              at: { type: "string", required: true },
+              changes: {
+                type: "object",
+                required: true,
+                properties: {
+                  seed: { type: "boolean" },
+                  mood: { type: "object", properties: { value: { type: "string", required: true }, note: { type: "string" }, reason: { type: "string" } }, additionalProperties: false },
+                  affinity: { type: "object", properties: { delta: { type: "integer", required: true }, value: { type: "integer", required: true }, reason: { type: "string" } }, additionalProperties: false },
+                  signature: { type: "object", properties: { value: { type: "string", required: true }, reason: { type: "string" } }, additionalProperties: false },
+                },
+                additionalProperties: false,
+              },
+              state: {
+                type: "object",
+                required: true,
+                properties: { mood: { type: "string", required: true }, note: { type: "string" }, affinity: { type: "integer", required: true }, signature: { type: "string", required: true } },
+                additionalProperties: false,
+              },
+            },
+            additionalProperties: false,
+          },
+        },
+        message: { type: "string", required: true },
+      },
+      additionalProperties: false,
+    },
+    render: (_args, value) => [{ type: "text", text: `${String(value.message)}\n${JSON.stringify(value.records, null, 2)}` }],
+  },
+  async execute(args, exec) {
+    const workspace = owner.configuredWorkspace(undefined, currentCwd(exec))?.workspace;
+    if (!workspace) throw new CompanionValidationError("Companion 只能在已配置的 Workspace 中读取关系历史。");
+    const limit = canonicalizeHistoryRead(args);
+    const records = await owner.storeFor(workspace).readHistory(limit, exec.signal);
+    return { records, message: `读取了最近 ${records.length} 条关系记录（由新到旧）。` };
+  },
+});
+
 const signatureTool = (owner: CompanionHostController): ToolDefinition => defineTool({
   name: "companion_set_signature",
   description: "Replace or clear the Companion's relatively durable personal signature for this Workspace, with a concise factual reason for the change.",
@@ -623,6 +677,7 @@ export class CompanionHostController {
   }
 
   register(): void {
+    this.ctx.tools.register(historyTool(this));
     this.ctx.tools.register(relationshipTool(this));
     this.ctx.tools.register(signatureTool(this));
     this.disposers.push(this.ctx.on("llm/stream", (options, next) => {

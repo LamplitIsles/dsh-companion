@@ -10,8 +10,8 @@ import { BOOTSTRAP_PATH, CompanionHostController, RPC_CHANNEL, acceptedTurnKey, 
 const temporary: string[] = [];
 afterEach(async () => { await Promise.all(temporary.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
 
-function execution(events: readonly { type: string; data: { turn: number } }[]): ToolRunContext {
-  return { agent: { id: "agent-a", session: { events } }, signal: new AbortController().signal } as unknown as ToolRunContext;
+function execution(events: readonly { type: string; data: { turn: number } }[], cwd?: string): ToolRunContext {
+  return { agent: { id: "agent-a", session: { events, ...(cwd === undefined ? {} : { header: { cwd } }) } }, signal: new AbortController().signal } as unknown as ToolRunContext;
 }
 
 async function listen(server: Server): Promise<number> {
@@ -264,7 +264,11 @@ describe("Host accepted-turn relationship contract", () => {
     };
     const host = new CompanionHostController(ctx as never, scope);
     host.register();
-    expect(registeredTools.map((tool) => (tool as { name: string }).name)).toEqual(["companion_update_relationship", "companion_set_signature"]);
+    expect(registeredTools.map((tool) => (tool as { name: string }).name)).toEqual(["companion_read_history", "companion_update_relationship", "companion_set_signature"]);
+    const historyTool = registeredTools.find((tool): tool is { name: string; parameters: Record<string, unknown>; execute(args: unknown, exec: ToolRunContext): Promise<Record<string, unknown>> } => typeof tool === "object" && tool !== null && (tool as { name?: unknown }).name === "companion_read_history");
+    await expect(historyTool?.execute({ limit: 0 }, execution([]))).rejects.toThrow("1 到 20");
+    await expect(historyTool?.execute({ limit: 1 }, execution([], "/foreign"))).rejects.toThrow("已配置的 Workspace");
+    await expect(historyTool?.execute({ limit: 1 }, execution([], directory))).resolves.toMatchObject({ records: [{ changes: { seed: true }, state: { affinity: 67 } }] });
     const relationshipTool = registeredTools.find((tool): tool is { name: string; parameters: Record<string, unknown>; output: { schema: { properties?: Record<string, unknown> } }; execute(args: unknown, exec: ToolRunContext): Promise<Record<string, unknown>> } => typeof tool === "object" && tool !== null && (tool as { name?: unknown }).name === "companion_update_relationship");
     expect(relationshipTool?.parameters).toMatchObject({ properties: { mood: expect.any(Object), affinity: expect.any(Object) } });
     expect(relationshipTool?.parameters).not.toHaveProperty("required");

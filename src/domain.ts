@@ -16,6 +16,8 @@ export const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 export const MAX_NOTE_CODE_POINTS = 40;
 export const MAX_SIGNATURE_CODE_POINTS = 80;
 export const MAX_CHANGE_REASON_CODE_POINTS = 160;
+export const DEFAULT_HISTORY_LIMIT = 10;
+export const MAX_HISTORY_LIMIT = 20;
 
 export const MOODS = [
   "neutral",
@@ -157,6 +159,25 @@ export function canonicalizeChangeReason(value: unknown): string {
     throw new CompanionValidationError("请提供不超过 160 个字符的变化原因。");
   }
   return normalized;
+}
+
+export function canonicalizeHistoryLimit(value: unknown): number {
+  if (value === undefined) return DEFAULT_HISTORY_LIMIT;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > MAX_HISTORY_LIMIT) {
+    throw new CompanionValidationError("历史记录数量必须是 1 到 20 的整数。");
+  }
+  return value;
+}
+
+export function canonicalizeHistoryRead(value: unknown): number {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new CompanionValidationError("历史读取格式无效。");
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => key !== "limit")) {
+    throw new CompanionValidationError("历史读取包含未知字段。");
+  }
+  return canonicalizeHistoryLimit(record.limit);
 }
 
 function canonicalizeOptionalChangeReason(value: unknown): string | undefined {
@@ -496,6 +517,13 @@ export class CompanionStateStore {
   }
 
   getRevision(): number { return this.revision; }
+
+  /** Deliberate bounded slow path; current-state reads never traverse history. */
+  async readHistory(limitInput?: unknown, signal?: AbortSignal): Promise<CompanionStateRecord[]> {
+    const limit = canonicalizeHistoryLimit(limitInput);
+    await this.load(signal);
+    return decodeCompanionStateHistory(this.historyText, this.defaultAffinity).slice(-limit).reverse();
+  }
 
   subscribe(listener: (state: CompanionState) => void): () => void {
     this.listeners.add(listener);

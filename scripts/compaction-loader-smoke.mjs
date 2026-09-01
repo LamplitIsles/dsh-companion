@@ -116,8 +116,9 @@ await root.plugin(Loader, { baseUrl: import.meta.url });
 const entryId = await root.loader.create({ id: "dsh-companion", name: ${JSON.stringify(activationUrl)} });
 await root.loader.await();
 
-assert.deepEqual(registeredTools.map((tool) => tool.name), ["companion_update_relationship", "companion_set_signature"]);
-const relationshipTool = registeredTools[0];
+assert.deepEqual(registeredTools.map((tool) => tool.name), ["companion_read_history", "companion_update_relationship", "companion_set_signature"]);
+const historyTool = registeredTools[0];
+const relationshipTool = registeredTools[1];
 const relationshipResult = await relationshipTool.execute({
   mood: { value: "bright", note: "A shared bright moment", reason: "The user celebrated a shared result" },
   affinity: { delta: 2, reason: "The user valued the shared result" },
@@ -133,6 +134,13 @@ const relationshipRecord = JSON.parse(relationshipHistory.trimEnd().split("\\n")
 assert.equal(relationshipRecord.changes.mood.reason, "The user celebrated a shared result");
 assert.equal(relationshipRecord.changes.affinity.reason, "The user valued the shared result");
 assert.equal(relationshipRecord.state.affinity, 52);
+const historyResult = await historyTool.execute({ limit: 1 }, {
+  signal: new AbortController().signal,
+  agent: { id: "agent-a", session: { header: { cwd: workspace.path }, events: [{ type: "turn/start", data: { turn: 1 } }] } },
+});
+assert.equal(historyResult.records.length, 1);
+assert.equal(historyResult.records[0].state.affinity, 52);
+assert.equal(savedFiles.get("/disposable/workspace/.dsh/dsh-companion/state.jsonl"), relationshipHistory, "history reads must not mutate state");
 
 const qualified = request("session-a");
 const qualifiedPrefix = qualified.messages[0];

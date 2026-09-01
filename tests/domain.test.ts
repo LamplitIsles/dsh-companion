@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CompanionStateStore, CompanionValidationError, MAX_AVATAR_BYTES, affinityStage, canonicalizeMood, canonicalizeSignature,
-  canonicalizeRelationshipUpdate, decodeCompanionState, decodeCompanionStateHistory, decodeLatestCompanionStateRecord, encodeCompanionState, encodeCompanionStateRecord, formatCompanionPrompt, MOOD_LABELS, selectCompanionSession, validateAvatar,
+  canonicalizeHistoryLimit, canonicalizeHistoryRead, canonicalizeRelationshipUpdate, decodeCompanionState, decodeCompanionStateHistory, decodeLatestCompanionStateRecord, encodeCompanionState, encodeCompanionStateRecord, formatCompanionPrompt, MOOD_LABELS, selectCompanionSession, validateAvatar,
 } from "../src/domain.js";
 
 const temporary: string[] = [];
@@ -31,6 +31,30 @@ describe("relationship domain", () => {
     expect(() => canonicalizeRelationshipUpdate({})).toThrow("至少更新");
     expect(() => canonicalizeRelationshipUpdate({ mood: { value: "bright", reason: "一起笑了", extra: true } })).toThrow("未知字段");
     expect(canonicalizeRelationshipUpdate({ mood: { value: "bright", note: "心里亮亮的", reason: "一起笑了" } })).toEqual({ mood: { value: "bright", note: "心里亮亮的", reason: "一起笑了" } });
+  });
+
+  it("reads a bounded newest-first history slice without mutating it", async () => {
+    expect(canonicalizeHistoryLimit(undefined)).toBe(10);
+    expect(canonicalizeHistoryLimit(20)).toBe(20);
+    expect(() => canonicalizeHistoryLimit(0)).toThrow("1 到 20");
+    expect(() => canonicalizeHistoryLimit(21)).toThrow("1 到 20");
+    expect(canonicalizeHistoryRead({})).toBe(10);
+    expect(() => canonicalizeHistoryRead({ limit: 2, extra: true })).toThrow("未知字段");
+    const dir = await mkdtemp(join(tmpdir(), "dsh-companion-test-")); temporary.push(dir);
+    const file = join(dir, "state.jsonl");
+    let tick = 0;
+    const store = new CompanionStateStore({ workspacePath: dir, defaultAffinity: 50, filePath: file, now: () => new Date(Date.UTC(2026, 8, 1, 0, 0, tick++)) });
+    await store.load();
+    for (let index = 0; index < 12; index += 1) {
+      await store.updateRelationship({ mood: { value: index % 2 === 0 ? "bright" : "serene", note: `记录 ${index}`, reason: `第 ${index} 次变化` } });
+    }
+    const before = await readFile(file, "utf8");
+    const recent = await store.readHistory();
+    expect(recent).toHaveLength(10);
+    expect(recent[0]?.changes.mood?.note).toBe("记录 11");
+    expect(recent[9]?.changes.mood?.note).toBe("记录 2");
+    expect((await store.readHistory(20))).toHaveLength(13);
+    expect(await readFile(file, "utf8")).toBe(before);
   });
 
   it("persists atomically in a test-owned directory and enforces turn movement", async () => {
@@ -76,6 +100,27 @@ describe("relationship domain", () => {
     const text = `not historical json\n${latest}`;
     expect(decodeLatestCompanionStateRecord(text).state).toEqual({ mood: "bright", note: "今天很好", affinity: 56, signature: "仍在这里" });
     expect(() => decodeCompanionStateHistory(text)).toThrow("无效 JSON");
+  });
+
+  it("validates all records only on an explicit history read", async () => {
+    const latest = encodeCompanionStateRecord({
+      at: "2026-09-01T00:00:00.000Z",
+      changes: { affinity: { delta: 6, value: 56, reason: "更靠近一点" } },
+      state: { mood: "bright", affinity: 56, signature: "仍在这里" },
+    });
+    const content = `invalid earlier record\n${latest}`;
+    const store = new CompanionStateStore({
+      workspacePath: "/test-owned",
+      defaultAffinity: 50,
+      fs: {
+        resolve: async () => "state.jsonl",
+        stat: async () => ({ type: "file", size: Buffer.byteLength(content) }),
+        readText: async () => content,
+        writeText: async () => undefined,
+      },
+    });
+    await expect(store.load()).resolves.toMatchObject({ affinity: 56 });
+    await expect(store.readHistory()).rejects.toThrow("无效 JSON");
   });
 
   it("does not publish a logical record when persistence fails", async () => {
