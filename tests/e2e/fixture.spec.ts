@@ -157,36 +157,43 @@ test("renders a deferred text-and-two-image send immediately and replaces it ato
   await textarea.fill("两张照片");
   await page.getByRole("button", { name: "发送消息" }).click();
 
-  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(1);
-  await expect(page.locator('[data-testid^="image-optimistic:"]')).toHaveCount(2);
-  await expect(page.locator('[data-testid^="image-optimistic:"] .companion-media img')).toHaveCount(2);
-  await expect(textarea).toBeDisabled();
-  await page.evaluate(() => window.__companionFixture?.resolveSend());
-  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(1);
+  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(1);
+  await expect(page.locator('[data-testid^="image-submission:"]')).toHaveCount(2);
+  await expect(page.locator('[data-testid^="image-submission:"] .companion-media img')).toHaveCount(2);
+  await expect(textarea).toBeEnabled();
+
+  await textarea.fill("连续发送");
+  await page.getByRole("button", { name: "发送消息" }).click();
+  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(2);
+  await expect.poll(() => page.evaluate(() => window.__companionFixture?.sendCalls() ?? 0)).toBe(2);
 
   await page.evaluate(() => window.__companionFixture?.confirmSend());
-  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(0);
-  await expect(page.locator('[data-testid^="image-optimistic:"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(1);
   await expect(page.getByText("两张照片", { exact: true })).toHaveCount(1);
+  await page.evaluate(() => window.__companionFixture?.confirmSend());
+  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid^="image-submission:"]')).toHaveCount(0);
+  await expect(page.getByText("两张照片", { exact: true })).toHaveCount(1);
+  await expect(page.getByText("连续发送", { exact: true })).toHaveCount(1);
   await expect(textarea).toBeEnabled();
   await expect.poll(() => page.evaluate(() => window.__companionFixture?.revoked() ?? 0)).toBeGreaterThanOrEqual(2);
 });
 
-test("keeps an optimistic lightbox preview alive until the dialog closes", async ({ page }) => {
+test("keeps a submission lightbox preview alive until the dialog closes", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => window.__companionFixture?.deferSend());
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL9pwAAAABJRU5ErkJggg==", "base64");
   await page.locator("#companion-image-library").setInputFiles({ name: "lightbox.png", mimeType: "image/png", buffer: png });
   await page.getByRole("textbox", { name: "写消息" }).fill("灯下照片");
   await page.getByRole("button", { name: "发送消息" }).click();
-  const optimisticImage = page.locator('[data-testid^="image-optimistic:"]').first();
-  await expect(optimisticImage).toBeVisible();
-  await optimisticImage.getByRole("button", { name: /查看大图/ }).click();
+  const submissionImage = page.locator('[data-testid^="image-submission:"]').first();
+  await expect(submissionImage).toBeVisible();
+  await submissionImage.getByRole("button", { name: /查看大图/ }).click();
   await expect(page.getByRole("button", { name: "关闭大图" })).toBeVisible();
   const revokedBeforeConfirmation = await page.evaluate(() => window.__companionFixture?.revoked() ?? 0);
 
   await page.evaluate(() => window.__companionFixture?.confirmSend());
-  await expect(page.locator('[data-testid^="image-optimistic:"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid^="image-submission:"]')).toHaveCount(0);
   await expect(page.getByRole("button", { name: "关闭大图" })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.__companionFixture?.revoked() ?? 0)).toBe(revokedBeforeConfirmation);
 
@@ -194,66 +201,66 @@ test("keeps an optimistic lightbox preview alive until the dialog closes", async
   await expect.poll(() => page.evaluate(() => window.__companionFixture?.revoked() ?? 0)).toBeGreaterThan(revokedBeforeConfirmation);
 });
 
-test("hides a handled send projection error", async ({ page }) => {
+test("restores an identified rejection through the Session retirement callback", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => window.__companionFixture?.deferSend());
   const textarea = page.getByRole("textbox", { name: "写消息" });
   await textarea.fill("投影失败");
   await page.getByRole("button", { name: "发送消息" }).click();
-  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(1);
+  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(1);
   await page.evaluate(() => window.__companionFixture?.sendError());
-  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(0);
-  await expect(page.getByText("host-send-rejected", { exact: true })).toHaveCount(0);
-  await expect(page.locator("body")).not.toContainText("可以重试");
+  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
+  await expect(page.locator(".companion-timeline .companion-recovery").filter({ hasText: "host-send-rejected" })).toHaveCount(1);
+  await expect(page.locator("body")).toContainText("host-send-rejected");
   await expect(textarea).toHaveValue("投影失败");
 });
 
-test("hides a healthy-stream internal send failure without masking later errors", async ({ page }) => {
+test("renders the runtime-shaped internal send failure without masking later errors", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => window.__companionFixture?.internalHealthyFail());
   const textarea = page.getByRole("textbox", { name: "写消息" });
   await textarea.fill("健康流内部失败");
   await page.getByRole("button", { name: "发送消息" }).click();
 
-  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(1);
+  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
   await expect(page.locator(".companion-presence")).not.toContainText("正在重新连接");
-  await expect(page.getByText("fixture carrier unavailable", { exact: true })).toHaveCount(0);
-  await expect(page.locator("body")).not.toContainText("可以重试");
+  await expect(page.locator(".companion-timeline .companion-recovery").filter({ hasText: "fixture carrier unavailable" })).toHaveCount(1);
+  await expect(page.locator("body")).toContainText("fixture carrier unavailable");
 
   await page.evaluate(() => window.__companionFixture?.setStatus("reconnecting"));
   await page.evaluate(() => window.__companionFixture?.refreshAuthoritative());
-  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
 
   await page.evaluate(() => window.__companionFixture?.sendError("later-host-error"));
-  await expect(page.getByText("later-host-error", { exact: true })).toHaveCount(1);
+  await expect(page.locator(".companion-timeline .companion-recovery").filter({ hasText: "later-host-error" })).toHaveCount(1);
 });
 
-test("keeps an existing internal send error visible when a batch begins", async ({ page }) => {
+test("keeps an existing internal send error visible when a submission begins", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => window.__companionFixture?.seedInternalPromptError());
-  await expect(page.getByText("fixture existing carrier error", { exact: true })).toHaveCount(1);
+  await expect(page.locator(".companion-timeline .companion-recovery").filter({ hasText: "fixture existing carrier error" })).toHaveCount(1);
 
   await page.evaluate(() => window.__companionFixture?.deferSend());
   const textarea = page.getByRole("textbox", { name: "写消息" });
   await textarea.fill("新消息");
   await page.getByRole("button", { name: "发送消息" }).click();
-  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(1);
-  await expect(page.getByText("fixture existing carrier error", { exact: true })).toHaveCount(1);
+  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(1);
+  await expect(page.locator(".companion-timeline .companion-recovery").filter({ hasText: "fixture existing carrier error" })).toHaveCount(1);
 
   await page.evaluate(() => window.__companionFixture?.confirmSend());
-  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(0);
-  await expect(page.getByText("fixture existing carrier error", { exact: true })).toHaveCount(1);
+  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
+  await expect(page.locator(".companion-timeline .companion-recovery").filter({ hasText: "fixture existing carrier error" })).toHaveCount(1);
 });
 
-test("restores rejected batches, keeps transport ambiguity, and clears old-session sends", async ({ page }) => {
+test("restores failed submissions and clears old-session sends", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => window.__companionFixture?.deferSend());
   const textarea = page.getByRole("textbox", { name: "写消息" });
   await textarea.fill("请恢复我");
   await page.getByRole("button", { name: "发送消息" }).click();
-  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(1);
+  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(1);
   await page.evaluate(() => window.__companionFixture?.rejectSend());
-  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
   await expect(textarea).toHaveValue("请恢复我");
   await expect(textarea).toBeEnabled();
   await expect(page.getByRole("button", { name: "重试消息" })).toHaveCount(0);
@@ -261,26 +268,26 @@ test("restores rejected batches, keeps transport ambiguity, and clears old-sessi
   await textarea.fill("传输不确定");
   await page.getByRole("button", { name: "发送消息" }).click();
   await page.evaluate(() => window.__companionFixture?.transportFail());
-  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(1);
+  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
   await expect(page.locator(".companion-presence")).toContainText("正在重新连接");
   await page.evaluate(() => window.__companionFixture?.refreshAuthoritative());
-  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
   await expect(textarea).toHaveValue("传输不确定");
 
   await textarea.fill("运行时内部");
   await page.evaluate(() => window.__companionFixture?.internalFail());
   await page.getByRole("button", { name: "发送消息" }).click();
-  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(1);
+  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
   await expect(page.locator(".companion-presence")).toContainText("正在重新连接");
   await page.evaluate(() => window.__companionFixture?.refreshAuthoritative());
-  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
   await expect(textarea).toHaveValue("运行时内部");
 
   await textarea.fill("不要跨对话");
   await page.getByRole("button", { name: "发送消息" }).click();
-  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(1);
+  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(1);
   await page.evaluate(() => window.__companionFixture?.switchSession("weekend-plan"));
-  await expect(page.locator('[data-testid^="message-optimistic:"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid^="message-submission:"]')).toHaveCount(0);
   await expect(textarea).toHaveValue("");
   await page.evaluate(() => window.__companionFixture?.rejectSend());
   await expect(textarea).toHaveValue("");

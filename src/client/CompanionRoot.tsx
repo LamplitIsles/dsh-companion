@@ -1,8 +1,10 @@
 import { createElement, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { mount, unmount } from "svelte";
 import { writable, type Writable } from "svelte/store";
-import type { ClientContext, ISession, ConversationSnapshot, SessionListState, WorkspaceListState } from "@deepseek-ai/dsh-client-runtime/client";
-import type { SettingsScope } from "@deepseek-ai/dsh-client-runtime/client";
+import type { Context as ClientContext } from "@deepseek-ai/cordis";
+import type { ISession, SessionListState, SessionSnapshot, PendingSubmissionRetirement } from "@deepseek-ai/dsh-api-session-controller/client";
+import type { WorkspaceSnapshot } from "@deepseek-ai/dsh-api-workspace-controller/client";
+import type { SettingsScope } from "@deepseek-ai/dsh-client-ui-settings/client";
 import type { ClientConnectionRpc, ConnectionHandle } from "@deepseek-ai/dsh-client-connection/client";
 import CompanionBridge from "./CompanionBridge.svelte";
 import type { CompanionBridgeProps } from "./companion-bridge.js";
@@ -15,7 +17,7 @@ import type { ClientSettings } from "./settings.js";
 import { RPC_CHANNEL as TTS_CHANNEL, RPC_ENDPOINT as TTS_ENDPOINT } from "./tts-contract.js";
 import { CONTINUITY_VIEW_TARGET, type CompanionContinuitySnapshot, type ContextPressureProjection } from "../continuity.js";
 import type { ImageAttachmentLimits } from "@deepseek-ai/dsh-attachment";
-import { serializeImageDrafts, type CompanionImageDraft } from "./image-drafts.js";
+import type { CompanionImageDraft } from "./image-drafts.js";
 
 export interface CompanionRootInjected {
   ctx: ClientContext;
@@ -35,11 +37,11 @@ function useSnapshot<T>(source: { getSnapshot(): T; subscribe(listener: () => vo
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-function workspaceFor(settings: ClientSettings | undefined, workspaceState: WorkspaceListState): { id: string; sessionIds: readonly string[] } | undefined {
+function workspaceFor(settings: ClientSettings | undefined, workspaceState: WorkspaceSnapshot): { id: string; sessionIds: readonly string[] } | undefined {
   if (!settings?.workspaceId) return undefined;
-  const item = workspaceState.items.find((candidate) => String((candidate as { workspaceId?: unknown }).workspaceId ?? (candidate as { id?: unknown }).id) === settings.workspaceId);
+  const item = workspaceState.items.find((candidate) => candidate.workspaceId === settings.workspaceId);
   if (!item) return undefined;
-  return { id: settings.workspaceId, sessionIds: (item as { sessionIds?: readonly string[] }).sessionIds ?? [] };
+  return { id: item.workspaceId, sessionIds: item.sessionIds };
 }
 
 function sessionStorageKey(workspaceId: string): string {
@@ -76,9 +78,9 @@ function imageUrl(session: ISession, attachment: unknown): Promise<string> {
 
 export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Element {
   const list = useSnapshot<SessionListState>(ctx.sessions.list, { ids: [], byId: {}, current: undefined, phase: "pending", subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined });
-  const workspaceList = useSnapshot<WorkspaceListState>(ctx.workspaces.list, { items: [], archivedSessionIds: [], state: "loading", phase: "pending", error: null, baselinesReady: false, recentWorkspaceId: undefined });
+  const workspaceList = useSnapshot<WorkspaceSnapshot>(ctx.workspaces.list, { items: [], archivedSessionIds: [], state: "loading", phase: "pending", error: null });
   const connection = (ctx as unknown as { connection: ConnectionHandle }).connection;
-  const hostDescription = useSnapshot(connection.hostDescription, undefined);
+  const connectionState = useSnapshot(connection.state, undefined);
   const settingsSubscribe = useMemo(() => settings.subscribe.bind(settings), [settings]);
   const settingsGetSnapshot = useMemo(() => settings.getSnapshot.bind(settings), [settings]);
   const settingsSnapshot = useSyncExternalStore(settingsSubscribe, settingsGetSnapshot, settingsGetSnapshot);
@@ -102,13 +104,16 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
   const themeRuntime = (ctx as unknown as { theme?: { getTheme?: () => { active?: { colorScheme?: string } } } }).theme;
   const [scheme, setScheme] = useState<"light" | "dark">(() => themeRuntime?.getTheme?.().active?.colorScheme === "dark" ? "dark" : "light");
   const [recoveryKey, setRecoveryKey] = useState(0);
+  const creatingWorkspace = useRef<string>();
   const session = selectedSessionId ? ctx.sessions.binding(selectedSessionId as never)?.session : undefined;
-  const sessionSnapshot = useSnapshot<ConversationSnapshot>(session, session ? session.getSnapshot() : ({ sessionId: "", views: { get: () => undefined }, chat: { order: [], nodes: {}, locations: {}, timeline: {}, legacy: { nodes: [] } }, nodes: [], turnTimings: new Map(), turnEnds: new Map(), partial: null, runningCalls: [], pending: [], queue: [], running: false, subagent: null, composerPhase: "ready", removed: false, openState: "cold", openError: null, hasMore: false, loadingOlder: false, promptError: null, blank: true, lastAgentError: null } as unknown as ConversationSnapshot));
+  const sessionSnapshot = useSnapshot<SessionSnapshot>(session, session ? session.getSnapshot() : ({ sessionId: "", queue: [], pendingSubmissions: [], running: false, subagent: null, removed: false, openState: "cold", openError: null, hasMore: false, loadingOlder: false, promptError: null, blank: true, lastAgentError: null, promptAttempted: false, awaitingFirstTurn: false } as unknown as SessionSnapshot));
+  const conversationBinding = session ? ctx.uiConversation.binding(session.sessionId as never) : undefined;
+  const chatSnapshot = useSnapshot(conversationBinding?.target("chat"), undefined);
   const contextPressureSource = session?.projections?.faceOf("contextPressure") as { getSnapshot(): ContextPressureProjection | undefined; subscribe(listener: () => void): () => void } | undefined;
   const contextPressure = useSnapshot<ContextPressureProjection | undefined>(contextPressureSource, undefined);
   const imageLimitsSource = session?.projections?.faceOf("imageLimits") as { getSnapshot(): ImageAttachmentLimits | undefined; subscribe(listener: () => void): () => void } | undefined;
   const imageLimits = useSnapshot<ImageAttachmentLimits | undefined>(imageLimitsSource, undefined);
-  const continuityLifecycle = sessionSnapshot.views.get(CONTINUITY_VIEW_TARGET) as CompanionContinuitySnapshot | undefined;
+  const continuityLifecycle = useSnapshot<CompanionContinuitySnapshot | undefined>(conversationBinding?.target(CONTINUITY_VIEW_TARGET), undefined);
   const ttsCache = useRef<TtsPreparationCache>();
   if (!ttsCache.current) ttsCache.current = new TtsPreparationCache();
 
@@ -131,7 +136,7 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
     };
     void run();
     return () => controller.abort();
-  }, [connection, configured?.workspaceId, hostDescription, recoveryKey]);
+  }, [connection, configured?.workspaceId, connectionState, recoveryKey]);
 
   useEffect(() => {
     const listener = (snapshot: { active?: { colorScheme?: string } }) => setScheme(snapshot.active?.colorScheme === "dark" ? "dark" : "light");
@@ -145,21 +150,25 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
   }, [workspace?.id, selectedSessionId]);
 
   useEffect(() => {
-    const plan = companionSessionOpenPlan(workspaceList.baselinesReady, workspace?.id, selectedSessionId);
+    const plan = companionSessionOpenPlan(workspaceList.phase === "ready" && list.phase === "ready", workspace?.id, selectedSessionId);
     if (!plan) return;
     if (plan.kind === "open") {
       ctx.sessions.open(plan.sessionId as never);
       return;
     }
+    if (creatingWorkspace.current === plan.workspaceId) return;
+    creatingWorkspace.current = plan.workspaceId;
     let disposed = false;
-    void ctx.workspaces.connectWorkspace(plan.workspaceId as never).then((id) => { if (!disposed) ctx.sessions.open(id); }).catch(() => undefined);
+    void ctx.sessions.create({ workspaceId: plan.workspaceId as never }).then((id) => { if (!disposed) ctx.sessions.open(id); }).catch(() => undefined).finally(() => {
+      if (creatingWorkspace.current === plan.workspaceId) creatingWorkspace.current = undefined;
+    });
     return () => { disposed = true; };
-  }, [ctx, workspace?.id, workspaceList.baselinesReady, selectedSessionId]);
+  }, [ctx, workspace?.id, workspaceList.phase, list.phase, selectedSessionId]);
 
   useEffect(() => () => { ttsCache.current?.dispose(); }, []);
 
   const continuity = useMemo(() => ({ contextPressure, lifecycle: continuityLifecycle }), [contextPressure, continuityLifecycle]);
-  const projection = useMemo(() => projectConversation(sessionSnapshot, Boolean(hostDescription), continuity.lifecycle), [sessionSnapshot, hostDescription, continuity.lifecycle]);
+  const projection = useMemo(() => projectConversation({ ...sessionSnapshot, chat: chatSnapshot }, connectionState === "connected", continuity.lifecycle), [sessionSnapshot, chatSnapshot, connectionState, continuity.lifecycle]);
   const identity = useMemo(() => {
     const state = relationship.state;
     const source = relationship.identity ?? configured;
@@ -181,9 +190,9 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
   const actions = useMemo(() => {
     const rpc: ClientConnectionRpc = connection.rpc;
     return {
-      async send(text: string, images: readonly CompanionImageDraft[]): Promise<void> {
+      async send(text: string, images: readonly CompanionImageDraft[], onRetire?: (retirement: PendingSubmissionRetirement) => void): Promise<void> {
         if (!session) throw new Error("session-unavailable");
-        await submitCompanionInput(session, text, await serializeImageDrafts(images));
+        await submitCompanionInput(session, text, images, onRetire);
       },
       async stop(): Promise<void> {
         if (!session) throw new Error("session-unavailable");

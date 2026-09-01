@@ -1,8 +1,8 @@
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import vm from "node:vm";
 import { chromium } from "playwright";
@@ -17,6 +17,11 @@ function dshEntry() {
   const cli = configured ?? execFileSync("which", ["dsh"], { encoding: "utf8" }).trim();
   if (!cli || !existsSync(cli)) throw new Error("set DSH_CLI to the installed dsh executable");
   return realpathSync(cli);
+}
+
+function linkCliDependencies(temp, entry) {
+  const cliNodeModules = dirname(dirname(dirname(dirname(realpathSync(entry)))));
+  symlinkSync(cliNodeModules, join(temp, "node_modules"), "dir");
 }
 
 function isolatedEnvironment(temp, dshHome) {
@@ -53,7 +58,7 @@ function startRuntime(entry, env, patch) {
     };
     const read = (chunk) => {
       output += String(chunk);
-      const match = output.match(/dsh web:\s+(https?:\/\/127\.0\.0\.1:\d+)/);
+      const match = output.match(/dsh web:\s+(https?:\/\/127\.0\.0\.1:\d+(?:\/\?[^\s(]+)?)/u);
       if (match?.[1]) finish(undefined, match[1]);
     };
     child.stdout.on("data", read); child.stderr.on("data", read);
@@ -83,12 +88,19 @@ function bootFrom(html) {
 }
 
 async function assertAlias(baseUrl) {
-  const rootResponse = await fetch(`${baseUrl}/`);
-  const companionResponse = await fetch(`${baseUrl}/companion/`);
-  const companionBare = await fetch(`${baseUrl}/companion`);
-  const head = await fetch(`${baseUrl}/companion/`, { method: "HEAD" });
-  const missing = await fetch(`${baseUrl}/companion/not-root`);
-  const post = await fetch(`${baseUrl}/companion/`, { method: "POST" });
+  const endpoint = (pathname) => { const url = new URL(baseUrl); url.pathname = pathname; if (pathname !== "/") url.search = ""; return url; };
+  // Alpha Web exchanges the process token for an authority-bound cookie via
+  // a 303 redirect. Node fetch has no cookie jar, so perform that exchange
+  // explicitly before probing the clean root and Companion aliases.
+  const rootProbe = await fetch(endpoint("/"), { redirect: "manual" });
+  const cookie = rootProbe.headers.get("set-cookie")?.split(";", 1)[0];
+  const authorizedFetch = (url, init = {}) => fetch(url, { ...init, headers: { ...(init.headers ?? {}), ...(cookie ? { cookie } : {}) } });
+  const rootResponse = cookie ? await authorizedFetch(endpoint("/")) : rootProbe;
+  const companionResponse = await authorizedFetch(endpoint("/companion/"));
+  const companionBare = await authorizedFetch(endpoint("/companion"));
+  const head = await authorizedFetch(endpoint("/companion/"), { method: "HEAD" });
+  const missing = await authorizedFetch(endpoint("/companion/not-root"));
+  const post = await authorizedFetch(endpoint("/companion/"), { method: "POST" });
   const rootHtml = await rootResponse.text();
   const companionHtml = await companionResponse.text();
   if (!rootResponse.ok || !companionResponse.ok || !companionBare.ok || !head.ok || head.headers.get("content-type") !== companionResponse.headers.get("content-type") || (await head.text()) || missing.status !== 404 || post.status !== 405) {
@@ -98,10 +110,23 @@ async function assertAlias(baseUrl) {
   return bootFrom(rootHtml);
 }
 
+function pageEndpoint(baseUrl, pathname) {
+  const url = new URL(baseUrl);
+  url.pathname = pathname;
+  if (pathname !== "/") url.search = "";
+  return url.href;
+}
+
 function assembledFixturePatch(temp) {
-  const fixture = pathToFileURL(join(root, "scripts", "fixtures", "assembled-browser-host-fixture.mjs")).href;
+  // Keep the fixture outside the repository package root. Alpha's client
+  // module scanner resolves the nearest package.json for every file loader;
+  // loading the source in-place would make the fixture look like a second
+  // @lamplitisles/dsh-companion client bundle.
+  const fixturePath = join(temp, "assembled-browser-host-fixture.mjs");
+  copyFileSync(join(root, "scripts", "fixtures", "assembled-browser-host-fixture.mjs"), fixturePath);
+  const fixture = pathToFileURL(fixturePath).href;
   const patch = join(temp, "assembled-browser.patch.yml");
-  writeFileSync(patch, `- insert:\n    - id: dsh-companion-assembled-browser-fixture\n      name: ${JSON.stringify(fixture)}\n      inject: [workspaceRegistry, sessions, settings, connection, webServer]\n`);
+  writeFileSync(patch, `- insert:\n    - id: dsh-companion-assembled-browser-fixture\n      name: ${JSON.stringify(fixture)}\n      inject: [workspaceRegistry, sessions, sessionController, settings, connection, webServer]\n`);
   return patch;
 }
 
@@ -129,6 +154,7 @@ try {
   mkdirSync(workspacePath, { recursive: true });
   env.DSH_COMPANION_ASSEMBLED_SMOKE_WORKSPACE = workspacePath;
   const entry = dshEntry();
+  linkCliDependencies(temp, entry);
   execFileSync(process.execPath, ["--expose-internals", entry, "plugin", "--profile", "web", "add", tarball, "--ignore-scripts"], { cwd: temp, env, stdio: "pipe" });
   const patch = assembledFixturePatch(temp);
   const config = execFileSync(process.execPath, ["--expose-internals", entry, "--profile", "web", "--dump-config", "--patch", patch], { cwd: temp, env, encoding: "utf8" });
@@ -149,16 +175,18 @@ try {
     throw new Error("packed client lacks a scoped, generated daisyUI bundle");
   }
   const clientRuntime = loaded.factory(createRequire(import.meta.url));
-  for (const service of ["conversationEvents", "conversationViews"]) {
+  for (const service of ["uiConversation", "sessions", "workspaces", "settingsScope"]) {
     if (!clientRuntime.inject?.includes(service)) throw new Error(`packed client lacks required ${service} injection`);
   }
 
   browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ?? "/run/current-system/sw/bin/chromium" });
   const page = await browser.newPage();
   const browserFailures = observeBrowserFailures(page);
-  await page.goto(`${runtime.baseUrl}/`, { waitUntil: "domcontentloaded" });
+  await page.goto(runtime.baseUrl, { waitUntil: "domcontentloaded" });
   if (await page.locator("#dsh-companion").count() !== 0) throw new Error("stock DSH root unexpectedly mounted Companion");
   const settingsStyle = page.locator('style[data-plugin-css="dsh-companion-settings"]');
+  try { await settingsStyle.waitFor({ state: "attached", timeout: 20_000 }); }
+  catch (error) { throw new Error("packed stock root did not inject the Companion settings CSS Module", { cause: error }); }
   if (await settingsStyle.count() !== 1 || !(await settingsStyle.textContent())?.includes("--dsw-alias")) throw new Error("packed stock root did not inject the Companion settings CSS Module");
   const welcomeContinue = page.getByRole("button", { name: /^(Continue|继续)$/ });
   await welcomeContinue.waitFor({ state: "visible", timeout: 20_000 });
@@ -175,13 +203,14 @@ try {
   if (workspaceOptions.length !== 1 || !workspaceOptions[0]?.includes(workspacePath)) throw new Error("Companion settings did not offer exactly the registered Workspace");
   // Avoid aborting the stock root's normal boot transport while switching documents.
   await page.waitForTimeout(500);
-  await page.goto(`${runtime.baseUrl}/companion/`, { waitUntil: "domcontentloaded" });
+  await page.goto(pageEndpoint(runtime.baseUrl, "/companion/"), { waitUntil: "domcontentloaded" });
   const companion = page.locator("#dsh-companion");
   await companion.waitFor({ state: "attached", timeout: 20_000 });
   if (await companion.count() !== 1) throw new Error("Companion alias did not mount exactly one root");
-  await page.getByText("Packed runtime outgoing message", { exact: true }).waitFor({ state: "visible", timeout: 20_000 });
-  await page.getByText("incoming", { exact: true }).waitFor({ state: "visible", timeout: 20_000 });
-  if (await page.locator(".companion-session-item").count() !== 2) throw new Error("Companion did not project both Workspace sessions into its sidebar");
+  await page.locator(".companion-timeline").getByText("Packed runtime outgoing message", { exact: true }).waitFor({ state: "visible", timeout: 20_000 });
+  await page.locator(".companion-timeline").getByText("incoming", { exact: true }).waitFor({ state: "visible", timeout: 20_000 });
+  const sessionCount = await page.locator(".companion-session-item").count();
+  if (sessionCount < 2) throw new Error(`Companion did not project both Workspace sessions into its sidebar (found ${sessionCount})`);
   if (await page.locator(".companion-bubble strong").textContent() !== "incoming" || await page.locator(".companion-bubble li").textContent() !== "Markdown item") throw new Error("packed Companion did not render Markdown");
   const voice = page.locator('[data-testid^="voice-"]');
   if (await voice.count() !== 2) throw new Error("Companion did not project both finalized voice messages");

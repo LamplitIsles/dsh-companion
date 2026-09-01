@@ -1,72 +1,62 @@
-import type { ImagePromptPart } from "./image-drafts.js";
+import type { ISession, PendingSubmissionRetirement } from "@deepseek-ai/dsh-api-session-controller/client";
+import { serializeImageDrafts, type CompanionImageDraft } from "./image-drafts.js";
 
-export type CompanionPromptPart = { type: "text"; text: string } | ImagePromptPart;
+export type CompanionAdmissionPart =
+  | { type: "text"; text: string }
+  | { type: "image"; mediaType: import("@deepseek-ai/dsh-attachment").ImageMediaType; data: string; name?: string };
 
-interface CompanionAdmissionError {
-  code?: string;
-  message?: string;
-}
-
-export interface QueuePromptSession {
-  prompt(content: CompanionPromptPart[], mode: "queue" | "steer"): Promise<{ ok: boolean; error?: CompanionAdmissionError }>;
-}
-
-export interface CompanionInputSession extends QueuePromptSession {
-  command(line: string): Promise<{ ok: boolean; value?: { matched: boolean }; error?: CompanionAdmissionError }>;
-}
-
-/** A Host response that explicitly rejected admission (as opposed to a transport failure). */
-export class CompanionPromptRejectedError extends Error {
+/** A Host-side admission rejection, distinct from a caller-side serialization failure. */
+export class CompanionAdmissionError extends Error {
   readonly code: string;
   readonly admission = "rejected" as const;
 
   constructor(message: string, code = "prompt-rejected") {
     super(message);
     this.code = code;
-    this.name = "CompanionPromptRejectedError";
+    this.name = "CompanionAdmissionError";
   }
 }
 
-export function isCompanionPromptRejectedError(error: unknown): error is CompanionPromptRejectedError {
-  if (error instanceof CompanionPromptRejectedError) return error.code !== "internal";
-  if (typeof error !== "object" || error === null) return false;
-  const candidate = error as { admission?: unknown; code?: unknown };
-  return candidate.code !== "internal" && (candidate.admission === "rejected" || candidate.code === "prompt-rejected");
+function reject(error: { code?: string; message?: string } | undefined, fallback: string): never {
+  const code = typeof error?.code === "string" && error.code ? error.code : "prompt-rejected";
+  throw new CompanionAdmissionError(error?.message || fallback, code);
 }
 
-/** A Session `internal` result means the carrier outcome is unknown, not that admission was refused. */
-export class CompanionTransportAmbiguousError extends Error {
-  readonly code: string;
-  readonly admission = "transport-ambiguous" as const;
-
-  constructor(message: string, code = "internal") {
-    super(message);
-    this.code = code;
-    this.name = "CompanionTransportAmbiguousError";
-  }
-}
-
-function throwAdmissionError(error: CompanionAdmissionError | undefined, fallbackMessage: string): never {
-  const code = typeof error?.code === "string" && error.code ? error.code : undefined;
-  const message = error?.message || fallbackMessage;
-  if (code === "internal") throw new CompanionTransportAmbiguousError(message, code);
-  throw new CompanionPromptRejectedError(message, code);
-}
-
-/** Companion intentionally exposes no interrupt/steer affordance. */
-export async function queueCompanionPrompt(session: QueuePromptSession, content: CompanionPromptPart[]): Promise<void> {
-  const result = await session.prompt(content, "queue");
-  if (!result.ok) throwAdmissionError(result.error, "prompt-rejected");
-}
-
-/** Route the one command exposed by the minimal Companion composer. */
-export async function submitCompanionInput(session: CompanionInputSession, text: string, images: readonly ImagePromptPart[] = []): Promise<void> {
+/**
+ * Register the alpha Session controller's request-id-backed echo before any
+ * browser image serialization, then carry that exact identity into prompt().
+ * The controller owns echo retirement and invokes onRetire at its authoritative
+ * observed/failed boundary.
+ */
+export async function submitCompanionInput(
+  session: Pick<ISession, "beginSubmission" | "prompt" | "command">,
+  text: string,
+  drafts: readonly CompanionImageDraft[] = [],
+  onRetire?: (retirement: PendingSubmissionRetirement) => void,
+): Promise<void> {
   if (text === "/compact") {
-    if (images.length > 0) throw new Error("compact-with-images");
+    if (drafts.length > 0) throw new Error("compact-with-images");
     const result = await session.command(text);
-    if (!result.ok) throwAdmissionError(result.error, "compact-command-rejected");
+    if (!result.ok) reject(result.error, "compact-command-rejected");
     if (!result.value?.matched) throw new Error("compact-command-unavailable");
     return;
   }
-  await queueCompanionPrompt(session, [...images, ...(text ? [{ type: "text" as const, text }] : [])]);
+
+  const handle = session.beginSubmission({
+    mode: "queue",
+    text,
+    images: drafts.map((draft) => ({ previewUrl: draft.previewUrl, ...(draft.file.name ? { name: draft.file.name } : {}) })),
+    onRetire,
+  });
+  try {
+    const images = await serializeImageDrafts(drafts);
+    const content: CompanionAdmissionPart[] = [...images, ...(text ? [{ type: "text" as const, text }] : [])];
+    const result = await session.prompt(content, "queue", undefined, handle.requestId);
+    if (!result.ok) reject(result.error, "prompt-rejected");
+  } catch (error) {
+    // The controller's abandon path is deliberately idempotent; on a thrown
+    // serialization/carrier failure it provides the only pre-prompt cleanup.
+    handle.abandon();
+    throw error;
+  }
 }

@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createComposerState, findComposerCommand, reduceComposer, shouldSubmitEnter } from "../src/client/composer.js";
-import { isCompanionPromptRejectedError, queueCompanionPrompt, submitCompanionInput } from "../src/client/admission.js";
+import { CompanionAdmissionError, submitCompanionInput } from "../src/client/admission.js";
 import { changedSettingsPayload, mergeCleanSettingsDraft, relationshipControlsWritable } from "../src/client/settings.js";
 import { companionSessionOpenPlan } from "../src/client/session-opening.js";
 
@@ -40,38 +40,46 @@ it("retains staged settings while clean fields follow a refreshed Host baseline"
   expect(changedSettingsPayload(draft, before)).toEqual({ companionName: "Mio!" });
 });
 
-describe("Companion admission", () => {
-  it.each([false, true])("queues a text message while session running=%s", async (running) => {
+describe("Companion alpha Session admission", () => {
+  it("registers an echo before prompt and propagates its exact request id", async () => {
+    const begins: unknown[] = [];
     const calls: unknown[][] = [];
-    await queueCompanionPrompt({ prompt: async (...args) => { calls.push(args); return { ok: true }; } }, [{ type: "text", text: `消息-${running}` }]);
-    expect(calls).toEqual([[[{ type: "text", text: `消息-${running}` }], "queue"]]);
+    await submitCompanionInput({
+      beginSubmission: (input) => { begins.push(input); return { requestId: "request-1" as never, abandon: () => undefined }; },
+      prompt: async (...args) => { calls.push(args); return { ok: true, value: { accepted: true } }; },
+      command: async () => ({ ok: true, value: { matched: true } }),
+    }, "消息");
+    expect(begins).toEqual([expect.objectContaining({ mode: "queue", text: "消息", images: [] })]);
+    expect(calls).toEqual([[ [{ type: "text", text: "消息" }], "queue", undefined, "request-1" ]]);
   });
 
-  it("surfaces rejection so the Svelte caller retains the draft", async () => {
-    await expect(queueCompanionPrompt({ prompt: async () => ({ ok: false, error: { message: "rejected" } }) }, [{ type: "text", text: "保留我" }])).rejects.toThrow("rejected");
+  it("surfaces an identified Host rejection while preserving retirement ownership", async () => {
+    let retirement: unknown;
+    const error = await submitCompanionInput({
+      beginSubmission: (input) => { retirement = input.onRetire; return { requestId: "request-2" as never, abandon: () => undefined }; },
+      prompt: async () => ({ ok: false, error: { code: "attachment-error", message: "rejected", details: {} } as never }),
+      command: async () => ({ ok: true, value: { matched: true } }),
+    }, "保留我", [], () => undefined).catch((value: unknown) => value);
+    expect(error).toMatchObject({ name: "CompanionAdmissionError", code: "attachment-error" });
+    expect(typeof retirement).toBe("function");
+    expect(error).toBeInstanceOf(CompanionAdmissionError);
   });
 
-  it("keeps the runtime internal code and treats it as transport-ambiguous", async () => {
-    const error = await queueCompanionPrompt({
-      prompt: async () => ({ ok: false, error: { code: "internal", message: "carrier unavailable", details: {} } }),
-    }, [{ type: "text", text: "等待确认" }]).catch((value: unknown) => value);
-    expect(error).toMatchObject({ name: "CompanionTransportAmbiguousError", code: "internal" });
-    expect(isCompanionPromptRejectedError(error)).toBe(false);
+  it("keeps a runtime-shaped internal result's public code", async () => {
+    const error = await submitCompanionInput({
+      beginSubmission: () => ({ requestId: "request-3" as never, abandon: () => undefined }),
+      prompt: async () => ({ ok: false, error: { code: "internal", message: "carrier unavailable", details: {} } as never }),
+      command: async () => ({ ok: true, value: { matched: true } }),
+    }, "等待确认").catch((value: unknown) => value);
+    expect(error).toMatchObject({ name: "CompanionAdmissionError", code: "internal" });
   });
 
-  it("preserves an explicit Host admission code as an immediate rejection", async () => {
-    const error = await queueCompanionPrompt({
-      prompt: async () => ({ ok: false, error: { code: "attachment-error", message: "bad image" } }),
-    }, [{ type: "text", text: "拒绝我" }]).catch((value: unknown) => value);
-    expect(error).toMatchObject({ name: "CompanionPromptRejectedError", code: "attachment-error" });
-    expect(isCompanionPromptRejectedError(error)).toBe(true);
-  });
-
-  it("routes exact /compact input through the session command channel", async () => {
+  it("routes exact /compact input through the Session command channel", async () => {
     const prompts: unknown[][] = [];
     const commands: string[] = [];
     await submitCompanionInput({
-      prompt: async (...args) => { prompts.push(args); return { ok: true }; },
+      beginSubmission: () => ({ requestId: "unused" as never, abandon: () => undefined }),
+      prompt: async (...args) => { prompts.push(args); return { ok: true, value: { accepted: true } }; },
       command: async (line) => { commands.push(line); return { ok: true, value: { matched: true } }; },
     }, "/compact");
     expect(commands).toEqual(["/compact"]);
@@ -80,49 +88,40 @@ describe("Companion admission", () => {
 
   it("keeps other slash-prefixed text on the ordinary prompt path", async () => {
     const prompts: unknown[][] = [];
-    const commands: string[] = [];
     await submitCompanionInput({
-      prompt: async (...args) => { prompts.push(args); return { ok: true }; },
-      command: async (line) => { commands.push(line); return { ok: true, value: { matched: true } }; },
-    }, "/不是命令");
-    expect(commands).toEqual([]);
-    expect(prompts).toEqual([[[{ type: "text", text: "/不是命令" }], "queue"]]);
-  });
-
-  it("sends image blocks before the accompanying text", async () => {
-    const prompts: unknown[][] = [];
-    await submitCompanionInput({
-      prompt: async (...args) => { prompts.push(args); return { ok: true }; },
+      beginSubmission: () => ({ requestId: "unused" as never, abandon: () => undefined }),
+      prompt: async (...args) => { prompts.push(args); return { ok: true, value: { accepted: true } }; },
       command: async () => ({ ok: true, value: { matched: true } }),
-    }, "看这张", [{ type: "image", mediaType: "image/png", data: "AQ==", name: "sea.png" }]);
-    expect(prompts).toEqual([[[
-      { type: "image", mediaType: "image/png", data: "AQ==", name: "sea.png" },
-      { type: "text", text: "看这张" },
-    ], "queue"]]);
+    }, "/不是命令");
+    expect(prompts).toEqual([[ [{ type: "text", text: "/不是命令" }], "queue", undefined, "unused" ]]);
   });
 
   it("does not let /compact carry images", async () => {
+    const abandon = vi.fn();
     await expect(submitCompanionInput({
-      prompt: async () => ({ ok: true }),
+      beginSubmission: () => ({ requestId: "unused" as never, abandon }),
+      prompt: async () => ({ ok: true, value: { accepted: true } }),
       command: async () => ({ ok: true, value: { matched: true } }),
-    }, "/compact", [{ type: "image", mediaType: "image/png", data: "AQ==" }])).rejects.toThrow("compact-with-images");
+    }, "/compact", [{ id: "image", file: { name: "a.png", type: "image/png" } as File, previewUrl: "blob:image" }])).rejects.toThrow("compact-with-images");
+    expect(abandon).not.toHaveBeenCalled();
   });
 
-  it("surfaces an unavailable compact command so the draft is retained", async () => {
+  it("surfaces an unavailable compact command so the draft can be retained", async () => {
     await expect(submitCompanionInput({
-      prompt: async () => ({ ok: true }),
+      beginSubmission: () => ({ requestId: "unused" as never, abandon: () => undefined }),
+      prompt: async () => ({ ok: true, value: { accepted: true } }),
       command: async () => ({ ok: true, value: { matched: false } }),
     }, "/compact")).rejects.toThrow("compact-command-unavailable");
   });
 });
 
 describe("Companion session opening", () => {
-  it("opens a remembered selected session once baselines are ready", () => {
+  it("opens a remembered selected session once the alpha list is ready", () => {
     expect(companionSessionOpenPlan(true, "workspace-a", "remembered-session")).toEqual({ kind: "open", sessionId: "remembered-session" });
   });
 
-  it("opens a recent selected session and connects only without a selection", () => {
-    expect(companionSessionOpenPlan(true, "workspace-a", "recent-session")).toEqual({ kind: "open", sessionId: "recent-session" });
-    expect(companionSessionOpenPlan(true, "workspace-a", undefined)).toEqual({ kind: "connect", workspaceId: "workspace-a" });
+  it("waits for the workspace list before creating a session", () => {
+    expect(companionSessionOpenPlan(false, "workspace-a", undefined)).toBeUndefined();
+    expect(companionSessionOpenPlan(true, "workspace-a", undefined)).toEqual({ kind: "create", workspaceId: "workspace-a" });
   });
 });

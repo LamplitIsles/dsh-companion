@@ -2,14 +2,14 @@ import type { Context } from "@deepseek-ai/cordis";
 import type {} from "@deepseek-ai/dsh-compaction/types";
 import type { ContextPressureProjection } from "@deepseek-ai/dsh-token-meter/client";
 import type {
-  ChatConversationViewNode,
   ConversationNodeDefinition,
   ConversationTimelineSnapshot,
   ConversationViewBuilder,
   ConversationViewDefinition,
   ConversationViewNode,
-} from "@deepseek-ai/dsh-client-runtime/client";
-import type { SessionEvent } from "@deepseek-ai/dsh-session/types";
+} from "@deepseek-ai/dsh-client-ui-conversation/client";
+import type { ChatConversationViewNode } from "@deepseek-ai/dsh-client-ui-chat/client";
+import type { SessionEventLike } from "@deepseek-ai/dsh-api-session-controller/client";
 
 /** The private session view target used by Companion's continuity surface. */
 export const CONTINUITY_VIEW_TARGET = "dsh-companion:continuity" as const;
@@ -45,7 +45,7 @@ export interface CompanionContinuitySnapshot {
   readonly latest?: CompactionLifecycleState;
 }
 
-declare module "@deepseek-ai/dsh-client-runtime/client" {
+declare module "@deepseek-ai/dsh-client-ui-conversation/client" {
   interface ConversationViewSnapshotMap {
     "dsh-companion:continuity": CompanionContinuitySnapshot;
   }
@@ -95,17 +95,17 @@ export function formatTokenCount(value: unknown): string | undefined {
   return String(rounded);
 }
 
-function eventCompactionId(event: SessionEvent): string | undefined {
+function eventCompactionId(event: SessionEventLike): string | undefined {
   if (event.type !== "compaction/start" && event.type !== "compaction/end") return undefined;
   const value = event.data.compactionId;
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function eventTime(event: SessionEvent): number {
+function eventTime(event: SessionEventLike): number {
   return typeof event.time === "number" && Number.isFinite(event.time) ? event.time : 0;
 }
 
-function eventSeq(event: SessionEvent): number {
+function eventSeq(event: SessionEventLike): number {
   return Number.isSafeInteger(event.seq) && event.seq >= 0 ? event.seq : 0;
 }
 
@@ -189,9 +189,9 @@ export const continuityViewDefinition: ConversationViewDefinition<CompactionLife
 
 /** Register both contributions and return one idempotent composite disposer. */
 export function registerCompanionContinuity(ctx: Context): () => void {
-  const disposeEvents = ctx.conversationEvents.register(compactionLifecycleDefinition);
+  const disposeEvents = ctx.uiConversation.events.register(compactionLifecycleDefinition);
   try {
-    const disposeViews = ctx.conversationViews.register(continuityViewDefinition);
+    const disposeViews = ctx.uiConversation.views.register(continuityViewDefinition);
     let disposed = false;
     return () => {
       if (disposed) return;

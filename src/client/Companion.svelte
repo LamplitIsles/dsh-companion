@@ -12,10 +12,9 @@
   import { COMPACTION_STATUS_DURATION_MS, formatTokenCount, resolveContextCapacity, type CompactionLifecycleState } from "../continuity.js";
   import type { CompanionProjection, TimelineImage, TimelineVoice } from "../projection.js";
   import type { CompanionContinuityView } from "./companion-bridge.js";
-  import { isCompanionPromptRejectedError } from "./admission.js";
+  import type { PendingSubmissionRetirement } from "@deepseek-ai/dsh-api-session-controller/client";
   import { createComposerState, findComposerCommand, reduceComposer, shouldSubmitEnter, type ComposerCommand } from "./composer.js";
   import { createImageDrafts, imageFilesFromClipboard, imageIntakeError, IMAGE_ACCEPT, releaseImageDrafts, type CompanionImageDraft } from "./image-drafts.js";
-  import { createSendingBatch, hasNewPromptError, markSendingBatchAccepted, markSendingBatchTransportAmbiguous, mergeSendingBatch, observeSendingBatch, type SendingBatch } from "./optimistic-sending.js";
   import { INTENSITY_LABELS } from "./relationship.js";
   import Markdown from "./Markdown.svelte";
   import relationshipBackground from "./assets/relationship-night-voyage.webp";
@@ -35,7 +34,7 @@
     affinityStage?: string;
   }
   export interface CompanionActions {
-    send: (text: string, images: readonly CompanionImageDraft[]) => Promise<void>;
+    send: (text: string, images: readonly CompanionImageDraft[], onRetire?: (retirement: PendingSubmissionRetirement) => void) => Promise<void>;
     stop?: () => Promise<void>;
     selectSession?: (sessionId: string) => Promise<void>;
     loadOlder?: () => Promise<void>;
@@ -122,11 +121,7 @@
   let continuityStatusTimer: ReturnType<typeof setTimeout> | undefined;
   let imageDrafts: CompanionImageDraft[] = [];
   let imageDraftSessionId: string | undefined;
-  let submitting = false;
-  let optimisticBatch: SendingBatch | undefined;
   let deferredPreviewReleases: CompanionImageDraft[] = [];
-  let handledSendErrorKey: string | undefined;
-  let suppressNextSendError = false;
   let displayedProjection: CompanionProjection = projection;
   let submissionToken = 0;
   let imagePickerPointer: { id: number; startedAt: number } | undefined;
@@ -141,45 +136,14 @@
   $: syncContinuityStatus(latestContinuityLifecycle);
   $: if (!contextCapacity && contextMeterOpen) closeContextMeter(false);
   $: syncWaitingState(typingVisible, `${sessions.find((session) => session.selected)?.id ?? "none"}:${latestSettledReplyKey(projection)}`);
-  $: if (handledSendErrorKey !== undefined && projection.promptErrorOp !== "send") handledSendErrorKey = undefined;
-  $: if (suppressNextSendError && projection.promptErrorOp === "send") {
-    handledSendErrorKey = promptErrorSignature(projection);
-    suppressNextSendError = false;
-  }
-  $: displayedProjection = mergeSendingBatch(displayProjection(projection), optimisticBatch && optimisticBatch.sessionId === sessionId ? optimisticBatch : undefined);
-  $: if (projection) observeSendingProjection(projection);
+  $: displayedProjection = projection;
   $: if (displayedProjection) void reconcileProjection(displayedProjection);
   $: if (sessionId !== imageDraftSessionId) {
-    if (optimisticBatch && optimisticBatch.sessionId !== sessionId) {
-      releaseBatchImages(optimisticBatch.images);
-      optimisticBatch = undefined;
-      syncDisplayedProjection();
-      submissionToken += 1;
-      submitting = false;
-    }
     releaseImageDrafts(imageDrafts);
     imageDrafts = [];
     imageDraftSessionId = sessionId;
-  }
-
-  $: composerLocked = submitting || Boolean(optimisticBatch && optimisticBatch.sessionId === sessionId);
-
-  function isComposerLocked(): boolean {
-    return submitting || Boolean(optimisticBatch && optimisticBatch.sessionId === sessionId);
-  }
-
-  function promptErrorSignature(value: CompanionProjection): string | undefined {
-    return value.promptErrorKey ?? value.promptError;
-  }
-
-  function displayProjection(value: CompanionProjection): CompanionProjection {
-    if (value.promptErrorOp !== "send" || handledSendErrorKey === undefined || promptErrorSignature(value) !== handledSendErrorKey) return value;
-    const { promptError: _promptError, promptErrorKey: _promptErrorKey, promptErrorOp: _promptErrorOp, promptErrorCode: _promptErrorCode, ...rest } = value;
-    return { ...rest, items: value.items.filter((item) => item.id !== "prompt-error") };
-  }
-
-  function syncDisplayedProjection(): void {
-    displayedProjection = mergeSendingBatch(displayProjection(projection), optimisticBatch && optimisticBatch.sessionId === sessionId ? optimisticBatch : undefined);
+    composer = createComposerState();
+    submissionToken += 1;
   }
 
   function releaseDeferredPreviewReleases(): void {
@@ -189,19 +153,12 @@
     releaseImageDrafts(drafts);
   }
 
-  function releaseBatchImages(images: readonly CompanionImageDraft[]): void {
+  function releaseSubmissionImages(images: readonly CompanionImageDraft[]): void {
     const protectedPreview = lightboxUrl && lightbox?.previewUrl === lightboxUrl ? lightboxUrl : undefined;
     const deferred = protectedPreview ? images.filter((draft) => draft.previewUrl === protectedPreview) : [];
     const releasable = deferred.length ? images.filter((draft) => draft.previewUrl !== protectedPreview) : images;
     if (deferred.length) deferredPreviewReleases = [...deferredPreviewReleases, ...deferred];
     if (releasable.length) void tick().then(() => releaseImageDrafts(releasable));
-  }
-
-  function rememberHandledSendError(value: CompanionProjection): void {
-    if (value.promptErrorOp !== "send") return;
-    const signature = promptErrorSignature(value);
-    if (signature !== undefined) handledSendErrorKey = signature;
-    else suppressNextSendError = true;
   }
 
   function latestSettledReplyKey(value: CompanionProjection): string {
@@ -212,41 +169,20 @@
     return "empty";
   }
 
-  function observeSendingProjection(value: CompanionProjection): void {
-    const batch = optimisticBatch;
-    if (!batch || batch.sessionId !== sessionId) return;
-    // The Session runtime folds a carrier exception into an `internal`
-    // prompt-error projection. Keep the batch transport-ambiguous, but hide
-    // this error's Host failure/retry notice just like an explicit rejection.
-    // The stable projection signature keeps later, unrelated send errors
-    // visible.
-    if (value.promptErrorOp === "send" && value.promptErrorCode === "internal" && hasNewPromptError(value, batch)) rememberHandledSendError(value);
-    const observation = observeSendingBatch(value, batch);
-    if (observation.decision === "keep") {
-      if (observation.batch.sawReconnect !== batch.sawReconnect || observation.batch.lastStatus !== batch.lastStatus) {
-        optimisticBatch = observation.batch;
-        syncDisplayedProjection();
-      }
+  function retireSubmission(images: readonly CompanionImageDraft[], retirement: PendingSubmissionRetirement, restoreText: string, originSessionId: string | undefined): void {
+    if (retirement.reason === "observed") {
+      releaseSubmissionImages(images);
       return;
     }
-    if (observation.decision === "reject" && observation.reason === "prompt-rejection") rememberHandledSendError(value);
-    optimisticBatch = undefined;
-    syncDisplayedProjection();
-    submissionToken += 1;
-    submitting = false;
-    if (observation.decision === "reject") {
-      // A batch can only be rejected while its original Session is active;
-      // never restore its drafts into a different Session's composer.
-      if (batch.sessionId === sessionId) {
-        composer = { ...composer, draft: batch.restoreText, composing: false };
-        imageDrafts = [...batch.images];
-        liveAnnouncement = "消息没有发送成功，内容已恢复。";
-      }
+    if (sessionId === originSessionId && sessionId === imageDraftSessionId) {
+      composer = { ...composer, draft: composer.draft ? `${restoreText}\n${composer.draft}` : restoreText, composing: false };
+      imageDrafts = [...imageDrafts, ...images];
+      liveAnnouncement = "消息没有发送成功，内容已恢复。";
       return;
     }
-    // Keep local preview URLs alive through the render that removes the
-    // overlay. The next tick is the replacement boundary for ownership.
-    releaseBatchImages(batch.images);
+    // A rejection from a Session that is no longer selected cannot be
+    // restored into the current composer; release its page-owned previews.
+    releaseSubmissionImages(images);
   }
 
   function readDesktopSidebarPreference(): boolean {
@@ -549,50 +485,26 @@
   function submit(): void {
     const restoreText = composer.draft;
     const text = restoreText.trim();
-    if ((!text && imageDrafts.length === 0) || composer.composing || isComposerLocked()) return;
-    suppressNextSendError = false;
+    if ((!text && imageDrafts.length === 0) || composer.composing) return;
     const submittedDrafts = [...imageDrafts];
-    const batch = text === "/compact"
-      ? undefined
-      : createSendingBatch({ sessionId, text, restoreText, images: submittedDrafts, projection });
+    const originSessionId = sessionId;
     composer = { ...reduceComposer(composer, { type: "submit" }), draft: "", composing: false };
     imageDrafts = [];
-    if (batch) optimisticBatch = batch;
-    syncDisplayedProjection();
-    submitting = true;
     const token = ++submissionToken;
-    void Promise.resolve().then(() => actions.send(text, submittedDrafts)).then(() => {
-      if (!batch || optimisticBatch?.id !== batch.id) return;
-      optimisticBatch = markSendingBatchAccepted(optimisticBatch);
-      syncDisplayedProjection();
-    }).catch((error: unknown) => {
-      if (!batch) {
-        if (token === submissionToken) composer = { ...composer, draft: restoreText };
-        imageDrafts = [...submittedDrafts];
-        liveAnnouncement = error instanceof Error && error.message === "compact-with-images"
-          ? "整理时请先移除图片。"
-          : "消息发送失败，内容已保留，可以重试。";
-        return;
+    let retired = false;
+    const onRetire = (retirement: PendingSubmissionRetirement): void => {
+      retired = true;
+      retireSubmission(submittedDrafts, retirement, restoreText, originSessionId);
+    };
+    void Promise.resolve().then(() => actions.send(text, submittedDrafts, onRetire)).catch((error: unknown) => {
+      if (!retired && token === submissionToken && sessionId === originSessionId) {
+        composer = { ...composer, draft: composer.draft ? `${restoreText}\n${composer.draft}` : restoreText, composing: false };
+        imageDrafts = [...imageDrafts, ...submittedDrafts];
       }
-      if (optimisticBatch?.id !== batch.id || batch.sessionId !== sessionId) return;
-      const explicitRejection = isCompanionPromptRejectedError(error)
-        || (error instanceof Error && error.message === "compact-with-images");
-      if (explicitRejection) {
-        rememberHandledSendError(projection);
-        if (projection.promptErrorOp !== "send") suppressNextSendError = true;
-        optimisticBatch = undefined;
-        syncDisplayedProjection();
-        submissionToken += 1;
-        submitting = false;
-        composer = { ...composer, draft: batch.restoreText, composing: false };
-        imageDrafts = [...batch.images];
-        liveAnnouncement = "消息没有发送成功，内容已恢复。";
-      } else {
-        optimisticBatch = markSendingBatchTransportAmbiguous(optimisticBatch ?? batch);
-        syncDisplayedProjection();
-        liveAnnouncement = "连接暂时中断，正在确认消息状态。";
-      }
-    }).finally(() => { if (token === submissionToken) submitting = false; });
+      liveAnnouncement = error instanceof Error && error.message === "compact-with-images"
+        ? "整理时请先移除图片。"
+        : "消息没有发送成功，内容已恢复。";
+    });
   }
 
   async function stop(): Promise<void> {
@@ -604,7 +516,6 @@
   }
 
   function onKeydown(event: KeyboardEvent): void {
-    if (isComposerLocked()) return;
     if (commandSuggestion && (event.key === "Tab" || event.key === "Enter") && !event.shiftKey && !event.isComposing && !composer.composing) {
       event.preventDefault();
       acceptCommandSuggestion();
@@ -616,17 +527,16 @@
     }
   }
 
-  function setDraft(value: string): void { if (!isComposerLocked()) composer = reduceComposer(composer, { type: "input", value }); }
+  function setDraft(value: string): void { composer = reduceComposer(composer, { type: "input", value }); }
   function acceptCommandSuggestion(): void {
     if (!commandSuggestion) return;
     setDraft(commandSuggestion.command);
     void tick().then(() => composerInput?.focus());
   }
   function onInput(event: Event): void { setDraft((event.currentTarget as HTMLTextAreaElement).value); }
-  function onCompositionEnd(event: CompositionEvent): void { if (!isComposerLocked()) composer = reduceComposer(composer, { type: "compositionend", value: (event.currentTarget as HTMLTextAreaElement).value }); }
-  function onCompositionStart(): void { if (!isComposerLocked()) composer = reduceComposer(composer, { type: "compositionstart" }); }
+  function onCompositionEnd(event: CompositionEvent): void { composer = reduceComposer(composer, { type: "compositionend", value: (event.currentTarget as HTMLTextAreaElement).value }); }
+  function onCompositionStart(): void { composer = reduceComposer(composer, { type: "compositionstart" }); }
   function addImages(files: readonly File[]): void {
-    if (isComposerLocked()) return;
     const error = imageIntakeError(imageDrafts, files, imageLimits);
     if (error) { liveAnnouncement = error; return; }
     imageDrafts = [...imageDrafts, ...createImageDrafts(files)];
@@ -643,7 +553,6 @@
     addImages(images);
   }
   function removeImage(draft: CompanionImageDraft): void {
-    if (isComposerLocked()) return;
     releaseImageDrafts([draft]);
     imageDrafts = imageDrafts.filter((candidate) => candidate !== draft);
   }
@@ -662,7 +571,6 @@
   }
   function clearImagePickerPointer(): void { imagePickerPointer = undefined; }
   function choosePhoto(): void {
-    if (isComposerLocked()) return;
     if (suppressImagePickerClick) { suppressImagePickerClick = false; return; }
     photoLibraryInput?.click();
   }
@@ -789,7 +697,6 @@
 
   onDestroy(() => {
     if (timelineRevealFrame) cancelAnimationFrame(timelineRevealFrame);
-    if (optimisticBatch) releaseImageDrafts(optimisticBatch.images);
     releaseDeferredPreviewReleases();
     releaseImageDrafts(imageDrafts);
     clearWaitingTimers();
@@ -947,7 +854,7 @@
               {#each imageDrafts as draft (draft.id)}
                 <div class="companion-image-draft">
                   <img src={draft.previewUrl} alt={draft.file.name || "待发送图片"} />
-                  <button class="cmp-btn cmp-btn-circle companion-image-draft-remove" type="button" aria-label="移除图片" disabled={composerLocked} on:click={() => removeImage(draft)}><X size={13} strokeWidth={2.5} aria-hidden="true" /></button>
+                  <button class="cmp-btn cmp-btn-circle companion-image-draft-remove" type="button" aria-label="移除图片" on:click={() => removeImage(draft)}><X size={13} strokeWidth={2.5} aria-hidden="true" /></button>
                 </div>
               {/each}
             </div>
@@ -955,8 +862,8 @@
           <div class="companion-compose-row">
             <input bind:this={photoLibraryInput} id="companion-image-library" class="cmp-file-input companion-image-input" type="file" accept={IMAGE_ACCEPT} multiple tabindex="-1" aria-hidden="true" on:change={onImageInput} />
             <input bind:this={cameraInput} id="companion-image-camera" class="cmp-file-input companion-image-input" type="file" accept={IMAGE_ACCEPT} capture="environment" tabindex="-1" aria-hidden="true" on:change={onImageInput} />
-            <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-attach" type="button" aria-label="选择照片；长按拍照" title="选择照片；长按拍照" disabled={!imageLimits || composerLocked} on:pointerdown={onImagePickerPointerDown} on:pointerup={onImagePickerPointerUp} on:pointercancel={clearImagePickerPointer} on:contextmenu|preventDefault on:click={choosePhoto}><ImagePlus size={19} strokeWidth={2} aria-hidden="true" /></button>
-            <textarea bind:this={composerInput} class="cmp-textarea companion-textarea" aria-label="写消息" aria-autocomplete={commandSuggestion ? "list" : undefined} aria-controls={commandSuggestion ? "companion-command-suggestions" : undefined} placeholder={"写给 " + identity.companionName + "…"} rows="1" value={composer.draft} disabled={composerLocked} on:input={onInput} on:paste={onPaste} on:compositionstart={onCompositionStart} on:compositionend={onCompositionEnd} on:keydown={onKeydown}></textarea>
+            <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-attach" type="button" aria-label="选择照片；长按拍照" title="选择照片；长按拍照" disabled={!imageLimits} on:pointerdown={onImagePickerPointerDown} on:pointerup={onImagePickerPointerUp} on:pointercancel={clearImagePickerPointer} on:contextmenu|preventDefault on:click={choosePhoto}><ImagePlus size={19} strokeWidth={2} aria-hidden="true" /></button>
+            <textarea bind:this={composerInput} class="cmp-textarea companion-textarea" aria-label="写消息" aria-autocomplete={commandSuggestion ? "list" : undefined} aria-controls={commandSuggestion ? "companion-command-suggestions" : undefined} placeholder={"写给 " + identity.companionName + "…"} rows="1" value={composer.draft} on:input={onInput} on:paste={onPaste} on:compositionstart={onCompositionStart} on:compositionend={onCompositionEnd} on:keydown={onKeydown}></textarea>
             {#if contextCapacity}
               <div class="companion-context-meter-wrap">
                 <button bind:this={contextMeterButton} class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-context-meter" class:companion-context-meter-open={contextMeterOpen} data-state={continuityStatus?.status === "running" ? "active" : continuityStatus?.status === "complete" ? "complete" : continuityStatus?.status === "failed" ? "failed" : contextCapacity.percentage >= 80 ? "warning" : "idle"} type="button" aria-label={`对话容量：${contextCapacity.percentage}%`} aria-expanded={contextMeterOpen} aria-controls="companion-context-popover" on:click={toggleContextMeter}>
@@ -974,7 +881,7 @@
             {#if projection.running && !composer.draft.trim() && imageDrafts.length === 0}
               <button class="cmp-btn cmp-btn-primary cmp-btn-circle companion-send" aria-label="停止当前回复" on:click={() => void stop()} disabled={!actions.stop || stopping}><Square size={15} fill="currentColor" aria-hidden="true" /></button>
             {:else}
-              <button class="cmp-btn cmp-btn-primary cmp-btn-circle companion-send" aria-label="发送消息" on:click={submit} disabled={(!composer.draft.trim() && imageDrafts.length === 0) || composerLocked}><span aria-hidden="true">↑</span></button>
+              <button class="cmp-btn cmp-btn-primary cmp-btn-circle companion-send" aria-label="发送消息" on:click={submit} disabled={!composer.draft.trim() && imageDrafts.length === 0}><span aria-hidden="true">↑</span></button>
             {/if}
           </div>
           <div class="companion-compose-hint">Enter 发送 · Shift+Enter 换行{displayedProjection.pendingCount ? ` · ${displayedProjection.pendingCount} 条消息排队中` : ""}</div>

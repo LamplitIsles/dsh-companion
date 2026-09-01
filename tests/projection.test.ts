@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectConversation, reconcilePending, scrollPlan } from "../src/projection.js";
+import { projectConversation, scrollPlan } from "../src/projection.js";
 
 describe("chat projection", () => {
   it("shows human text, assistant text/media/voice and pending rows while hiding tools", () => {
@@ -28,8 +28,22 @@ describe("chat projection", () => {
     expect(scrollPlan({ scrollTop: 0, scrollHeight: 500, clientHeight: 300, prepending: true, previousHeight: 500 })).toMatchObject({ preserveAnchor: true, follow: false });
   });
 
-  it("reconciles a pending identity only after its durable message arrives", () => {
-    expect(reconcilePending([{ id: "pending:m", kind: "text", side: "outgoing", text: "x", pending: true }], new Set(["m"]))).toEqual([]);
+  it("projects alpha pending submissions as normal outgoing rows and atomically swaps by request id", () => {
+    const pending = projectConversation({
+      chat: { order: [], nodes: new Map() },
+      pendingSubmissions: [{ requestId: "req-1", placement: "transcript", time: 10, text: "立即显示", images: [{ previewUrl: "blob:one", name: "one.png" }, { previewUrl: "blob:two", name: "two.png" }] }],
+    });
+    expect(pending.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "submission:req-1:text", side: "outgoing", text: "立即显示" }),
+      expect.objectContaining({ id: "submission:req-1:image:0", side: "outgoing", previewUrl: "blob:one" }),
+      expect.objectContaining({ id: "submission:req-1:image:1", side: "outgoing", previewUrl: "blob:two" }),
+    ]));
+    const durable = projectConversation({
+      chat: { order: ["durable"], nodes: new Map([["durable", { key: "durable", kind: "user", visibility: "visible", data: { seq: 1, source: { kind: "user", rpcId: "req-1" }, content: [{ type: "text", text: "立即显示" }] } }]]) },
+      pendingSubmissions: [{ requestId: "req-1", placement: "transcript", time: 10, text: "立即显示", images: [] }],
+    });
+    expect(durable.items.filter((item) => item.kind === "text" && item.side === "outgoing")).toHaveLength(1);
+    expect(durable.items.some((item) => item.id.startsWith("submission:req-1"))).toBe(false);
   });
 
   it("keeps one keyed ImageGen row while a call settles", () => {

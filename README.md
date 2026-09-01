@@ -1,6 +1,6 @@
 # dsh-companion
 
-`@lamplitisles/dsh-companion` is a small, one-to-one Svelte surface for DeepSeek Harness (DSH). It keeps DSH's durable Workspace/Session/runtime contracts and adds a calm chat presentation at `/companion/`.
+`@lamplitisles/dsh-companion` is a small, one-to-one Svelte surface for DeepSeek Harness (DSH). It keeps DSH's durable Workspace/Session contracts and adds a calm chat presentation at `/companion/`.
 
 ## Install and build
 
@@ -21,7 +21,7 @@ npm pack --pack-destination .
 dsh plugin --profile web add ./lamplitisles-dsh-companion-0.1.0.tgz
 ```
 
-The package is pinned to the deployed DSH `0.1.1-rc.2` contract family (Cordis `4.0.1`). It is intentionally not a compatibility layer for other DSH releases.
+The package is pinned to the published DSH `0.1.2-alpha.3` contract family (Cordis `4.0.2`). It is intentionally not a compatibility layer for other DSH releases.
 
 ## Two surfaces
 

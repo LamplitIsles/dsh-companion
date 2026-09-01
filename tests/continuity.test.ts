@@ -67,7 +67,7 @@ describe("Companion compaction lifecycle", () => {
         };
       },
     };
-    const ctx = { conversationEvents: events, conversationViews: views } as never;
+    const ctx = { uiConversation: { events, views } } as never;
 
     const dispose = registerCompanionContinuity(ctx);
     expect(eventDefinitions.has("dsh-companion:compaction-lifecycle")).toBe(true);
