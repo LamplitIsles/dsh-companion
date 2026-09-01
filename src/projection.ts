@@ -14,6 +14,8 @@ export type MessageSide = "incoming" | "outgoing";
 export interface TimelineText {
   id: string;
   projectionKey?: string;
+  /** Stable source contribution key used to form one 消息单元. */
+  messageKey: string;
   kind: "text";
   side: MessageSide;
   /** Durable source kind used by the Chat target. */
@@ -28,6 +30,8 @@ export interface TimelineImage {
   id: string;
   /** Stable source key used when a durable ImageGen call settles into its attachment. */
   projectionKey?: string;
+  /** Stable source contribution key used to form one 消息单元. */
+  messageKey: string;
   kind: "image";
   side: MessageSide;
   /** Durable source kind used by the Chat target. */
@@ -44,6 +48,8 @@ export interface TimelineImage {
 export interface TimelineVoice {
   id: string;
   projectionKey?: string;
+  /** Stable source contribution key used to form one 消息单元. */
+  messageKey: string;
   kind: "voice";
   side: "incoming";
   text: string;
@@ -54,6 +60,8 @@ export interface TimelineVoice {
 export interface TimelineNotice {
   id: string;
   projectionKey?: string;
+  /** Stable source contribution key; notices normally remain standalone. */
+  messageKey: string;
   kind: "notice";
   side: "incoming";
   tone: "info" | "error";
@@ -66,8 +74,22 @@ export interface TimelineContinuityRecord extends ContinuityRecord {}
 
 export type TimelineItem = TimelineText | TimelineImage | TimelineVoice | TimelineNotice | TimelineContinuityRecord;
 
+/** One speaker contribution as presented in the Companion transcript. */
+export interface TimelineMessageUnit {
+  /** Stable render identity. */
+  id: string;
+  side: MessageSide;
+  /** Source-order content; consecutive images are collapsed by the view. */
+  items: readonly TimelineItem[];
+  pending?: boolean;
+  origin?: "user" | "steering";
+  time?: number;
+}
+
 export interface CompanionProjection {
   items: readonly TimelineItem[];
+  /** Canonical grouped presentation projection for the Companion transcript. */
+  messageUnits: readonly TimelineMessageUnit[];
   pendingCount: number;
   running: boolean;
   status: "ready" | "working" | "reconnecting";
@@ -175,7 +197,80 @@ function assistantText(node: Record<string, unknown>): string {
   return parts.join("");
 }
 
-function nodeMedia(node: Record<string, unknown>, id: string, side: MessageSide, time?: number, origin?: "user" | "steering"): TimelineItem[] {
+function visibleAssistantText(value: string, passage = parseTtsPassage(value, true)): string {
+  return passage ? `${value.slice(0, passage.start)}${value.slice(passage.end)}`.trim() : value;
+}
+
+/** Preserve structured assistant text/image order while keeping one source key. */
+function assistantContentItems(node: Record<string, unknown>, id: string, time?: number): TimelineItem[] {
+  const items: TimelineItem[] = [];
+  const blocks = contentOf(node);
+  if (blocks.length === 0) {
+    const text = assistantText(node);
+    const passage = parseTtsPassage(text, true);
+    const visible = visibleAssistantText(text, passage);
+    if (visible) items.push({ id, messageKey: id, kind: "text", side: "incoming", text: visible, time });
+    if (passage) items.push({ id: ttsProjectionId(id, passage), projectionKey: ttsProjectionId(id, passage), messageKey: id, kind: "voice", side: "incoming", text: passage.text, status: "preparing", time });
+    if (!items.some((item) => item.kind === "image")) items.push(...nodeMedia(node, id, "incoming", time, undefined, id));
+    return items;
+  }
+
+  let voice: TimelineVoice | undefined;
+  let textIndex = 0;
+  const textBlockCount = blocks.filter((value) => {
+    const record = asRecord(value);
+    return record && (record.kind === "text" || record.type === "text");
+  }).length;
+  // Some Chat snapshots carry a direct text field alongside structured image
+  // blocks. Keep that text instead of silently dropping it; the field is the
+  // source contribution's leading text when no structured text block exists.
+  const directText = textFromValue(node.text);
+  if (directText && textBlockCount === 0) {
+    const passage = parseTtsPassage(directText, true);
+    const visible = visibleAssistantText(directText, passage);
+    if (visible) {
+      items.push({ id, messageKey: id, kind: "text", side: "incoming", text: visible, time });
+      textIndex += 1;
+    }
+    if (passage) voice = { id: ttsProjectionId(id, passage), projectionKey: ttsProjectionId(id, passage), messageKey: id, kind: "voice", side: "incoming", text: passage.text, status: "preparing", time };
+  }
+  for (const block of blocks) {
+    const record = asRecord(block);
+    if (!record) continue;
+    const blockKind = typeof record.kind === "string" ? record.kind : record.type;
+    const attachment = imageFromContent([record]);
+    if (attachment) {
+      const imageIndex = items.filter((item): item is TimelineImage => item.kind === "image").length;
+      items.push({
+        id: imageProjectionId(id, imageIndex),
+        messageKey: id,
+        kind: "image",
+        side: "incoming",
+        state: "ready",
+        attachment,
+        alt: attachment.name ?? "Companion 图片",
+        time,
+      });
+      continue;
+    }
+    if (blockKind !== "text") continue;
+    const text = textFromValue(record) ?? "";
+    if (!text) continue;
+    const passage = parseTtsPassage(text, true);
+    const visible = visibleAssistantText(text, passage);
+    if (visible) {
+      const textId = textIndex === 0 && textBlockCount === 1 ? id : `${id}:text:${textIndex}`;
+      items.push({ id: textId, messageKey: id, kind: "text", side: "incoming", text: visible, time });
+      textIndex += 1;
+    }
+    if (passage && !voice) voice = { id: ttsProjectionId(id, passage), projectionKey: ttsProjectionId(id, passage), messageKey: id, kind: "voice", side: "incoming", text: passage.text, status: "preparing", time };
+  }
+  if (voice) items.push(voice);
+  if (!items.some((item) => item.kind === "image")) items.push(...nodeMedia(node, id, "incoming", time, undefined, id));
+  return items;
+}
+
+function nodeMedia(node: Record<string, unknown>, id: string, side: MessageSide, time?: number, origin?: "user" | "steering", messageKey = id): TimelineItem[] {
   const items: TimelineItem[] = [];
   const blocks = contentOf(node);
   let imageIndex = 0;
@@ -186,6 +281,7 @@ function nodeMedia(node: Record<string, unknown>, id: string, side: MessageSide,
     if (attachment) {
       items.push({
         id: imageProjectionId(id, imageIndex++),
+        messageKey,
         kind: "image",
         side,
         ...(origin ? { origin } : {}),
@@ -199,7 +295,7 @@ function nodeMedia(node: Record<string, unknown>, id: string, side: MessageSide,
   // A node may use a single attachment property rather than content[].
   if (items.length === 0 && node.attachment && imageFromContent([{ type: "image", attachment: node.attachment }])) {
     const attachment = imageFromContent([{ type: "image", attachment: node.attachment }])!;
-    items.push({ id: imageProjectionId(id, 0), kind: "image", side, ...(origin ? { origin } : {}), state: "ready", attachment, alt: attachment.name ?? "图片", time });
+    items.push({ id: imageProjectionId(id, 0), messageKey, kind: "image", side, ...(origin ? { origin } : {}), state: "ready", attachment, alt: attachment.name ?? "图片", time });
   }
   return items;
 }
@@ -275,8 +371,8 @@ export function projectConversation(snapshot: unknown, connected = true, continu
     const time = nodeTime(node);
     if (isUserNode(node)) {
       const text = textFromValue(node.text) ?? textFromValue(node.content) ?? "";
-      if (text) items.push({ id, kind: "text", side: "outgoing", origin: "user", text, time });
-      items.push(...nodeMedia(node, id, "outgoing", time, "user"));
+      if (text) items.push({ id, messageKey: id, kind: "text", side: "outgoing", origin: "user", text, time });
+      items.push(...nodeMedia(node, id, "outgoing", time, "user", id));
       if (sequence !== undefined) emitContinuityRecords((anchorSeq) => anchorSeq === sequence);
       continue;
     }
@@ -285,12 +381,7 @@ export function projectConversation(snapshot: unknown, connected = true, continu
         if (sequence !== undefined) emitContinuityRecords((anchorSeq) => anchorSeq === sequence);
         continue;
       }
-      const text = assistantText(node);
-      const passage = parseTtsPassage(text, true);
-      const visibleText = passage ? `${text.slice(0, passage.start)}${text.slice(passage.end)}`.trim() : text;
-      if (visibleText) items.push({ id, kind: "text", side: "incoming", text: visibleText, time });
-      items.push(...nodeMedia(node, id, "incoming", time));
-      if (passage) items.push({ id: ttsProjectionId(id, passage), kind: "voice", side: "incoming", text: passage.text, status: "preparing", time });
+      items.push(...assistantContentItems(node, id, time));
       if (sequence !== undefined) emitContinuityRecords((anchorSeq) => anchorSeq === sequence);
       continue;
     }
@@ -298,7 +389,8 @@ export function projectConversation(snapshot: unknown, connected = true, continu
       const text = textFromValue(node.text) ?? textFromValue(node.content) ?? "";
       const messageId = typeof node.messageId === "string" ? node.messageId : undefined;
       if (messageId) admittedQueueIds.add(messageId);
-      if (text) items.push({ id, projectionKey: id, kind: "text", side: "outgoing", origin: "steering", text, time });
+      if (text) items.push({ id, projectionKey: id, messageKey: id, kind: "text", side: "outgoing", origin: "steering", text, time });
+      items.push(...nodeMedia(node, id, "outgoing", time, "steering", id));
       if (sequence !== undefined) emitContinuityRecords((anchorSeq) => anchorSeq === sequence);
       continue;
     }
@@ -306,7 +398,7 @@ export function projectConversation(snapshot: unknown, connected = true, continu
     const image = recognizeImageGenResult({ ...node, name: node.name ?? node.toolName ?? call?.name, callId: node.callId ?? nodeId(node, id) }, id);
     if (image) {
       const projectionId = image.attachment ? imageGenProjectionId(image.id, image.attachment.attachmentId) : `imagegen:${image.id}`;
-      items.push({ id: projectionId, projectionKey: `imagegen:${image.id}`, kind: "image", side: "incoming", state: image.state, attachment: image.attachment, alt: image.alt, error: image.error, time });
+      items.push({ id: projectionId, projectionKey: `imagegen:${image.id}`, messageKey: `imagegen:${image.id}`, kind: "image", side: "incoming", state: image.state, attachment: image.attachment, alt: image.alt, error: image.error, time });
     }
     if (sequence !== undefined) emitContinuityRecords((anchorSeq) => anchorSeq === sequence);
   }
@@ -323,13 +415,14 @@ export function projectConversation(snapshot: unknown, connected = true, continu
     const text = typeof submission.text === "string" ? submission.text : "";
     const time = typeof submission.time === "number" ? submission.time : undefined;
     const baseId = `submission:${submission.requestId}`;
-    if (text) items.push({ id: `${baseId}:text`, kind: "text", side: "outgoing", origin: "user", text, time });
+    if (text) items.push({ id: `${baseId}:text`, messageKey: baseId, kind: "text", side: "outgoing", origin: "user", text, time });
     const images = Array.isArray(submission.images) ? submission.images : [];
     for (let imageIndex = 0; imageIndex < images.length; imageIndex += 1) {
       const image = asRecord(images[imageIndex]);
       if (!image || typeof image.previewUrl !== "string") continue;
       items.push({
         id: `${baseId}:image:${imageIndex}`,
+        messageKey: baseId,
         kind: "image",
         side: "outgoing",
         origin: "user",
@@ -346,32 +439,32 @@ export function projectConversation(snapshot: unknown, connected = true, continu
     const identity = typeof row.messageId === "string" ? row.messageId : typeof row.id === "string" ? row.id : `pending-${index}`;
     if (admittedQueueIds.has(identity)) continue;
     const text = typeof row.text === "string" ? row.text : textFromValue(row.content) ?? "";
-    if (text) items.push({ id: `pending:${identity}`, kind: "text", side: "outgoing", text, pending: true });
+    const pendingKey = `pending:${identity}`;
+    if (text) items.push({ id: pendingKey, messageKey: pendingKey, kind: "text", side: "outgoing", text, pending: true });
     const content = Array.isArray(row.content) ? row.content : [];
-    items.push(...nodeMedia({ id: identity, content }, identity, "outgoing"));
+    items.push(...nodeMedia({ id: identity, content }, identity, "outgoing", undefined, undefined, pendingKey));
   }
   const promptError = asRecord(root.promptError);
   const promptErrorKey = promptError ? stableValueKey(root.promptError) : undefined;
   const error = asRecord(promptError?.error);
   const promptErrorCode = typeof error?.code === "string" ? error.code : undefined;
   const promptErrorNotice = promptError?.op === "stop"
-    ? "暂时无法停止当前回复，请重试。"
-    : typeof error?.message === "string"
-      ? error.message
-      : "这条消息没有发送成功，可以重试。";
+    ? "暂时停不下来，请再试一次。"
+    : "这条消息没发出去，可以再试一次。";
   const promptErrorAnnouncement = promptError?.op === "stop"
-    ? "暂时无法停止当前回复，请重试。"
-    : promptError ? "这条消息没有发送成功，可以重试。" : undefined;
+    ? "暂时停不下来，请再试一次。"
+    : promptError ? "这条消息没发出去，可以再试一次。" : undefined;
   if (promptError) {
-    items.push({ id: "prompt-error", kind: "notice", side: "incoming", tone: "error", text: promptErrorNotice });
+    items.push({ id: "prompt-error", messageKey: "prompt-error", kind: "notice", side: "incoming", tone: "error", text: promptErrorNotice });
   }
   const lastError = typeof root.lastAgentError === "string" ? root.lastAgentError : undefined;
-  if (lastError) items.push({ id: "agent-error", kind: "notice", side: "incoming", tone: "error", text: lastError });
+  if (lastError) items.push({ id: "agent-error", messageKey: "agent-error", kind: "notice", side: "incoming", tone: "error", text: lastError });
   const openState = root.openState === "error" ? "error" : root.openState === "loading" ? "loading" : root.openState === "cold" ? "cold" : "open";
   const running = root.running === true;
   const timeline = dedupeTimeline(items);
   return {
     items: timeline,
+    messageUnits: groupTimelineItems(timeline),
     pendingCount: timeline.filter((item) => item.kind === "text" && item.pending).length,
     running,
     status: deriveStatus({ connected, running, openState }),
@@ -384,6 +477,37 @@ export function projectConversation(snapshot: unknown, connected = true, continu
     ...(promptErrorCode ? { promptErrorCode } : {}),
     ...(lastError ? { lastAgentError: lastError } : {}),
   };
+}
+
+/** Group a canonical flat projection into stable speaker contributions. */
+export function groupTimelineItems(items: readonly TimelineItem[]): TimelineMessageUnit[] {
+  const groups: TimelineMessageUnit[] = [];
+  const positions = new Map<string, number>();
+  for (const item of items) {
+    const key = item.messageKey;
+    const position = positions.get(key);
+    if (position === undefined) {
+      const unit: TimelineMessageUnit = {
+        id: key,
+        side: item.side,
+        items: [item],
+        ...(item.kind === "text" && item.pending ? { pending: true } : {}),
+        ...(item.kind === "text" && item.origin ? { origin: item.origin } : {}),
+        ...(item.time === undefined ? {} : { time: item.time }),
+      };
+      positions.set(key, groups.length);
+      groups.push(unit);
+      continue;
+    }
+    const current = groups[position]!;
+    const nextItems = [...current.items, item];
+    groups[position] = {
+      ...current,
+      items: nextItems,
+      ...(current.pending || (item.kind === "text" && item.pending) ? { pending: true } : {}),
+    };
+  }
+  return groups;
 }
 
 function stableValueKey(value: unknown): string {

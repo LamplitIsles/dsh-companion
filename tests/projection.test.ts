@@ -22,6 +22,39 @@ describe("chat projection", () => {
     ]));
   });
 
+  it("projects one stable message unit for ordered text and image contributions", () => {
+    const first = { attachmentId: "first", mediaType: "image/png", name: "first.png" };
+    const second = { attachmentId: "second", mediaType: "image/png", name: "second.png" };
+    const result = projectConversation({ nodes: [{ kind: "user", seq: 1, content: [
+      { type: "text", text: "一起看看" },
+      { type: "image", attachment: first },
+      { type: "image", attachment: second },
+    ] }] });
+    expect(result.messageUnits).toHaveLength(1);
+    expect(result.messageUnits[0]).toMatchObject({ id: "1", side: "outgoing" });
+    expect(result.messageUnits[0]?.items.map((item) => item.kind)).toEqual(["text", "image", "image"]);
+    expect(result.messageUnits[0]?.items.filter((item) => item.kind === "image").map((item) => item.attachment)).toEqual([first, second]);
+  });
+
+  it("keeps finalized assistant structured content in source order inside one unit", () => {
+    const result = projectConversation({ nodes: [{ kind: "assistant", seq: 1, blocks: [
+      { kind: "text", text: "先说一句" },
+      { kind: "image", attachment: { attachmentId: "a", mediaType: "image/png" } },
+      { kind: "text", text: "再补一句" },
+      { kind: "image", attachment: { attachmentId: "b", mediaType: "image/png" } },
+    ] }] });
+    expect(result.messageUnits).toHaveLength(1);
+    expect(result.messageUnits[0]?.items.map((item) => item.kind)).toEqual(["text", "image", "text", "image"]);
+  });
+
+  it("keeps direct assistant text when an image block shares the contribution", () => {
+    const result = projectConversation({ nodes: [{ kind: "assistant", seq: 1, text: "先说一句", blocks: [
+      { kind: "image", attachment: { attachmentId: "a", mediaType: "image/png" } },
+    ] }] });
+    expect(result.messageUnits[0]?.items.map((item) => item.kind)).toEqual(["text", "image"]);
+    expect(result.messageUnits[0]?.items[0]).toMatchObject({ kind: "text", text: "先说一句" });
+  });
+
   it("preserves a reader anchor and offers new-message affordance", () => {
     expect(scrollPlan({ scrollTop: 20, scrollHeight: 1000, clientHeight: 600 })).toMatchObject({ follow: false, preserveAnchor: true, showNewMessageAffordance: true });
     expect(scrollPlan({ scrollTop: 395, scrollHeight: 1000, clientHeight: 600 })).toMatchObject({ follow: true });
@@ -144,10 +177,10 @@ describe("chat projection", () => {
       promptError: { op: "stop", error: { message: "cancel-rejected" } },
     });
 
-    expect(result.promptError).toBe("暂时无法停止当前回复，请重试。");
+    expect(result.promptError).toBe("暂时停不下来，请再试一次。");
     expect(result.items).toContainEqual(expect.objectContaining({
       id: "prompt-error",
-      text: "暂时无法停止当前回复，请重试。",
+      text: "暂时停不下来，请再试一次。",
     }));
 
     const rejectedSend = projectConversation({
@@ -155,7 +188,7 @@ describe("chat projection", () => {
     });
     expect(rejectedSend.promptErrorOp).toBe("send");
     expect(rejectedSend.promptErrorCode).toBe("attachment-error");
-    expect(rejectedSend.items).toContainEqual(expect.objectContaining({ text: "host-send-rejected" }));
+    expect(rejectedSend.items).toContainEqual(expect.objectContaining({ text: "这条消息没发出去，可以再试一次。" }));
 
     const carrierFailure = projectConversation({
       promptError: { op: "send", error: { code: "internal", message: "carrier unavailable", details: {} } },

@@ -9,11 +9,15 @@
 export const DSH_VERSION = "0.1.2-alpha.3" as const;
 export const COMPANION_PATH = "/companion/" as const;
 export const STATE_DIRECTORY = ".dsh/dsh-companion" as const;
-export const STATE_FILE = `${STATE_DIRECTORY}/state.json` as const;
-export const MAX_STATE_BYTES = 64 * 1024;
+export const STATE_FILE = `${STATE_DIRECTORY}/state.jsonl` as const;
+export const MAX_STATE_BYTES = 4 * 1024 * 1024;
+export const MAX_STATE_RECORD_BYTES = 4 * 1024;
 export const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 export const MAX_NOTE_CODE_POINTS = 40;
 export const MAX_SIGNATURE_CODE_POINTS = 80;
+export const MAX_CHANGE_REASON_CODE_POINTS = 160;
+export const DEFAULT_HISTORY_LIMIT = 10;
+export const MAX_HISTORY_LIMIT = 20;
 
 export const MOODS = [
   "neutral",
@@ -28,29 +32,58 @@ export const MOODS = [
 export type Mood = (typeof MOODS)[number];
 export const MOOD_LABELS: Readonly<Record<Mood, string>> = Object.freeze({
   neutral: "如常",
-  serene: "安宁",
-  bright: "明朗",
-  playful: "顽皮",
-  tender: "温柔",
-  pensive: "沉思",
-  tired: "疲倦",
+  serene: "平静",
+  bright: "愉快",
+  playful: "俏皮",
+  tender: "柔和",
+  pensive: "若有所思",
+  tired: "疲惫",
   low: "低落",
 });
 
-export const INTENSITIES = [1, 2, 3] as const;
-export type MoodIntensity = (typeof INTENSITIES)[number];
-export const INTENSITY_LABELS: Readonly<Record<MoodIntensity, string>> =
-  Object.freeze({ 1: "轻微", 2: "明显", 3: "强烈" });
-
 export interface MoodRecord {
   mood: Mood;
-  intensity: MoodIntensity;
   note?: string;
 }
 
 export interface CompanionState extends MoodRecord {
   affinity: number;
   signature: string;
+}
+
+export interface CompanionMoodChange {
+  value: Mood;
+  note?: string;
+  reason?: string;
+}
+
+export interface CompanionAffinityChange {
+  delta: number;
+  value: number;
+  reason?: string;
+}
+
+export interface CompanionSignatureChange {
+  value: string;
+  reason?: string;
+}
+
+export interface CompanionStateChanges {
+  seed?: true;
+  mood?: CompanionMoodChange;
+  affinity?: CompanionAffinityChange;
+  signature?: CompanionSignatureChange;
+}
+
+export interface CompanionStateRecord {
+  at: string;
+  changes: CompanionStateChanges;
+  state: CompanionState;
+}
+
+export interface RelationshipUpdate {
+  mood?: { value: Mood; note?: string; reason: string };
+  affinity?: { delta: number; reason: string };
 }
 
 export interface AvatarInput {
@@ -73,7 +106,6 @@ export interface CompanionIdentitySettings {
 
 export const DEFAULT_MOOD: MoodRecord = Object.freeze({
   mood: "neutral",
-  intensity: 1,
 });
 
 export class CompanionValidationError extends TypeError {
@@ -91,40 +123,104 @@ export function isMood(value: unknown): value is Mood {
   return typeof value === "string" && (MOODS as readonly string[]).includes(value);
 }
 
-export function isMoodIntensity(value: unknown): value is MoodIntensity {
-  return value === 1 || value === 2 || value === 3;
-}
-
 /** Trim a note without changing its meaning; notes are descriptive data. */
 export function canonicalizeMoodNote(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "string") {
-    throw new CompanionValidationError("心情短句必须是文字。");
+    throw new CompanionValidationError("状态短句必须是文字。");
   }
   const normalized = value.trim().replace(CONTROL_CHARACTERS, "");
   if (Array.from(normalized).length > MAX_NOTE_CODE_POINTS) {
-    throw new CompanionValidationError("心情短句不能超过 40 个字符。");
+    throw new CompanionValidationError("状态短句不能超过 40 个字符。");
   }
   return normalized || undefined;
 }
 
 export function canonicalizeMood(value: unknown): MoodRecord {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new CompanionValidationError("心情格式无效。");
+    throw new CompanionValidationError("状态格式无效。");
   }
   const record = value as Record<string, unknown>;
-  if (!isMood(record.mood)) throw new CompanionValidationError("心情类型无效。");
-  if (!isMoodIntensity(record.intensity)) {
-    throw new CompanionValidationError("心情强度必须是 1、2 或 3。");
-  }
-  const allowed = new Set(["mood", "intensity", "note"]);
+  if (!isMood(record.mood)) throw new CompanionValidationError("状态类型无效。");
+  const allowed = new Set(["mood", "note"]);
   if (Object.keys(record).some((key) => !allowed.has(key))) {
-    throw new CompanionValidationError("心情包含未知字段。");
+    throw new CompanionValidationError("状态包含未知字段。");
   }
   const note = canonicalizeMoodNote(record.note);
   return note === undefined
-    ? { mood: record.mood, intensity: record.intensity }
-    : { mood: record.mood, intensity: record.intensity, note };
+    ? { mood: record.mood }
+    : { mood: record.mood, note };
+}
+
+export function canonicalizeChangeReason(value: unknown): string {
+  if (typeof value !== "string") throw new CompanionValidationError("变化原因必须是文字。");
+  const normalized = value.trim().replace(CONTROL_CHARACTERS, "");
+  if (!normalized || Array.from(normalized).length > MAX_CHANGE_REASON_CODE_POINTS) {
+    throw new CompanionValidationError("请提供不超过 160 个字符的变化原因。");
+  }
+  return normalized;
+}
+
+export function canonicalizeHistoryLimit(value: unknown): number {
+  if (value === undefined) return DEFAULT_HISTORY_LIMIT;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > MAX_HISTORY_LIMIT) {
+    throw new CompanionValidationError("历史记录数量必须是 1 到 20 的整数。");
+  }
+  return value;
+}
+
+export function canonicalizeHistoryRead(value: unknown): number {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new CompanionValidationError("历史读取格式无效。");
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => key !== "limit")) {
+    throw new CompanionValidationError("历史读取包含未知字段。");
+  }
+  return canonicalizeHistoryLimit(record.limit);
+}
+
+function canonicalizeOptionalChangeReason(value: unknown): string | undefined {
+  return value === undefined ? undefined : canonicalizeChangeReason(value);
+}
+
+export function canonicalizeRelationshipUpdate(value: unknown): RelationshipUpdate {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new CompanionValidationError("关系反应格式无效。");
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => key !== "mood" && key !== "affinity")) {
+    throw new CompanionValidationError("关系反应包含未知字段。");
+  }
+  if (record.mood === undefined && record.affinity === undefined) {
+    throw new CompanionValidationError("请至少更新此刻状态或亲近度。");
+  }
+  const update: RelationshipUpdate = {};
+  if (record.mood !== undefined) {
+    if (typeof record.mood !== "object" || record.mood === null || Array.isArray(record.mood)) {
+      throw new CompanionValidationError("此刻状态变化格式无效。");
+    }
+    const rawMood = record.mood as Record<string, unknown>;
+    if (Object.keys(rawMood).some((key) => !["value", "note", "reason"].includes(key))) {
+      throw new CompanionValidationError("此刻状态变化包含未知字段。");
+    }
+    const mood = canonicalizeMood({ mood: rawMood.value, ...(rawMood.note === undefined ? {} : { note: rawMood.note }) });
+    update.mood = { value: mood.mood, ...(mood.note === undefined ? {} : { note: mood.note }), reason: canonicalizeChangeReason(rawMood.reason) };
+  }
+  if (record.affinity !== undefined) {
+    if (typeof record.affinity !== "object" || record.affinity === null || Array.isArray(record.affinity)) {
+      throw new CompanionValidationError("亲近度变化格式无效。");
+    }
+    const rawAffinity = record.affinity as Record<string, unknown>;
+    if (Object.keys(rawAffinity).some((key) => key !== "delta" && key !== "reason")) {
+      throw new CompanionValidationError("亲近度变化包含未知字段。");
+    }
+    if (typeof rawAffinity.delta !== "number" || !Number.isSafeInteger(rawAffinity.delta) || rawAffinity.delta < -10 || rawAffinity.delta > 10) {
+      throw new CompanionValidationError("亲近度变化必须是 -10 到 10 的整数。");
+    }
+    update.affinity = { delta: rawAffinity.delta, reason: canonicalizeChangeReason(rawAffinity.reason) };
+  }
+  return update;
 }
 
 /**
@@ -255,11 +351,11 @@ export function decodeCompanionState(value: unknown, defaultAffinity = 50): Comp
     throw new CompanionValidationError("Companion 状态不是对象。");
   }
   const record = value as Record<string, unknown>;
-  const allowed = new Set(["mood", "intensity", "note", "affinity", "signature"]);
+  const allowed = new Set(["mood", "note", "affinity", "signature"]);
   if (Object.keys(record).some((key) => !allowed.has(key))) {
     throw new CompanionValidationError("Companion 状态包含未知字段。");
   }
-  const mood = canonicalizeMood({ mood: record.mood, intensity: record.intensity, ...(record.note === undefined ? {} : { note: record.note }) });
+  const mood = canonicalizeMood({ mood: record.mood, ...(record.note === undefined ? {} : { note: record.note }) });
   const affinity = record.affinity === undefined ? clampAffinity(defaultAffinity) : record.affinity;
   if (typeof affinity !== "number" || !Number.isSafeInteger(affinity) || affinity < 0 || affinity > 100) {
     throw new CompanionValidationError("亲近度必须是 0 到 100 的整数。");
@@ -272,13 +368,80 @@ export function defaultCompanionState(defaultAffinity = 50): CompanionState {
   return { ...DEFAULT_MOOD, affinity: clampAffinity(defaultAffinity), signature: "" };
 }
 
-export function encodeCompanionState(state: CompanionState): string {
-  const normalized = decodeCompanionState(state, state.affinity);
-  const encoded = JSON.stringify(normalized);
-  if (new TextEncoder().encode(encoded).byteLength > MAX_STATE_BYTES) {
-    throw new CompanionValidationError("Companion 状态过大。");
+export function decodeCompanionStateRecord(value: unknown, defaultAffinity = 50): CompanionStateRecord {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new CompanionValidationError("状态记录不是对象。");
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !["at", "changes", "state"].includes(key))) throw new CompanionValidationError("状态记录包含未知字段。");
+  if (typeof record.at !== "string" || !Number.isFinite(Date.parse(record.at)) || new Date(record.at).toISOString() !== record.at) {
+    throw new CompanionValidationError("状态记录时间无效。");
   }
-  return encoded;
+  if (typeof record.changes !== "object" || record.changes === null || Array.isArray(record.changes)) throw new CompanionValidationError("状态记录变更无效。");
+  const rawChanges = record.changes as Record<string, unknown>;
+  const changeKeys = Object.keys(rawChanges);
+  if (changeKeys.length === 0 || changeKeys.some((key) => !["seed", "mood", "affinity", "signature"].includes(key))) throw new CompanionValidationError("状态记录变更无效。");
+  if (rawChanges.seed !== undefined && (rawChanges.seed !== true || changeKeys.length !== 1)) throw new CompanionValidationError("初始状态记录变更无效。");
+  const state = decodeCompanionState(record.state, defaultAffinity);
+  const changes: CompanionStateChanges = rawChanges.seed === true ? { seed: true } : {};
+  if (rawChanges.mood !== undefined) {
+    if (typeof rawChanges.mood !== "object" || rawChanges.mood === null || Array.isArray(rawChanges.mood)) throw new CompanionValidationError("状态记录的此刻状态变化无效。");
+    const rawMood = rawChanges.mood as Record<string, unknown>;
+    if (Object.keys(rawMood).some((key) => !["value", "note", "reason"].includes(key))) throw new CompanionValidationError("状态记录的此刻状态变化包含未知字段。");
+    const mood = canonicalizeMood({ mood: rawMood.value, ...(rawMood.note === undefined ? {} : { note: rawMood.note }) });
+    const reason = canonicalizeOptionalChangeReason(rawMood.reason);
+    if (mood.mood !== state.mood || mood.note !== state.note) throw new CompanionValidationError("状态记录的此刻状态与完整状态不一致。");
+    changes.mood = { value: mood.mood, ...(mood.note === undefined ? {} : { note: mood.note }), ...(reason === undefined ? {} : { reason }) };
+  }
+  if (rawChanges.affinity !== undefined) {
+    if (typeof rawChanges.affinity !== "object" || rawChanges.affinity === null || Array.isArray(rawChanges.affinity)) throw new CompanionValidationError("状态记录的亲近度变化无效。");
+    const rawAffinity = rawChanges.affinity as Record<string, unknown>;
+    if (Object.keys(rawAffinity).some((key) => !["delta", "value", "reason"].includes(key))) throw new CompanionValidationError("状态记录的亲近度变化包含未知字段。");
+    if (!Number.isSafeInteger(rawAffinity.delta) || (rawAffinity.delta as number) < -100 || (rawAffinity.delta as number) > 100) throw new CompanionValidationError("状态记录亲近度变化无效。");
+    if (typeof rawAffinity.value !== "number" || !Number.isSafeInteger(rawAffinity.value) || rawAffinity.value !== state.affinity) throw new CompanionValidationError("状态记录的亲近度与完整状态不一致。");
+    const reason = canonicalizeOptionalChangeReason(rawAffinity.reason);
+    changes.affinity = { delta: rawAffinity.delta as number, value: rawAffinity.value, ...(reason === undefined ? {} : { reason }) };
+  }
+  if (rawChanges.signature !== undefined) {
+    if (typeof rawChanges.signature !== "object" || rawChanges.signature === null || Array.isArray(rawChanges.signature)) throw new CompanionValidationError("状态记录的签名变化无效。");
+    const rawSignature = rawChanges.signature as Record<string, unknown>;
+    if (Object.keys(rawSignature).some((key) => key !== "value" && key !== "reason")) throw new CompanionValidationError("状态记录的签名变化包含未知字段。");
+    const signature = canonicalizeSignature(rawSignature.value);
+    if (signature !== state.signature) throw new CompanionValidationError("状态记录的签名与完整状态不一致。");
+    const reason = canonicalizeOptionalChangeReason(rawSignature.reason);
+    changes.signature = { value: signature, ...(reason === undefined ? {} : { reason }) };
+  }
+  return { at: record.at, changes, state };
+}
+
+export function encodeCompanionStateRecord(record: CompanionStateRecord): string {
+  const normalized = decodeCompanionStateRecord(record, record.state.affinity);
+  const encoded = JSON.stringify(normalized);
+  if (new TextEncoder().encode(encoded).byteLength > MAX_STATE_RECORD_BYTES) throw new CompanionValidationError("状态记录过大。");
+  return `${encoded}\n`;
+}
+
+export function decodeCompanionStateHistory(text: string, defaultAffinity = 50): CompanionStateRecord[] {
+  if (new TextEncoder().encode(text).byteLength > MAX_STATE_BYTES) throw new CompanionValidationError("Companion 状态历史过大。");
+  if (!text || !text.endsWith("\n")) throw new CompanionValidationError("Companion 状态历史不完整。");
+  const lines = text.slice(0, -1).split("\n");
+  if (lines.some((line) => !line)) throw new CompanionValidationError("Companion 状态历史包含空记录。");
+  return lines.map((line) => {
+    if (new TextEncoder().encode(line).byteLength > MAX_STATE_RECORD_BYTES) throw new CompanionValidationError("状态记录过大。");
+    try { return decodeCompanionStateRecord(JSON.parse(line), defaultAffinity); }
+    catch (error) { if (error instanceof CompanionValidationError) throw error; throw new CompanionValidationError("Companion 状态历史包含无效 JSON。"); }
+  });
+}
+
+/** Read the authoritative current state without replaying or decoding history. */
+export function decodeLatestCompanionStateRecord(text: string, defaultAffinity = 50): CompanionStateRecord {
+  if (new TextEncoder().encode(text).byteLength > MAX_STATE_BYTES) throw new CompanionValidationError("Companion 状态历史过大。");
+  if (!text || !text.endsWith("\n")) throw new CompanionValidationError("Companion 状态历史不完整。");
+  const end = text.length - 1;
+  const start = text.lastIndexOf("\n", end - 1) + 1;
+  const line = text.slice(start, end);
+  if (!line) throw new CompanionValidationError("Companion 状态历史没有当前记录。");
+  if (new TextEncoder().encode(line).byteLength > MAX_STATE_RECORD_BYTES) throw new CompanionValidationError("状态记录过大。");
+  try { return decodeCompanionStateRecord(JSON.parse(line), defaultAffinity); }
+  catch (error) { if (error instanceof CompanionValidationError) throw error; throw new CompanionValidationError("Companion 当前状态包含无效 JSON。"); }
 }
 
 export interface CompanionFileSystem {
@@ -296,12 +459,13 @@ export interface CompanionStateStoreOptions {
   fs?: CompanionFileSystem;
   /** Native/test-owned fallback; Host always supplies the DSH filesystem seam. */
   filePath?: string;
+  now?: () => Date;
 }
 
 /**
- * Workspace-owned relationship state with a serialized operation tail. The
- * tail gives concurrent tool calls deterministic last-write-wins semantics and
- * prevents a partially written JSON document from becoming visible.
+ * Workspace-owned append-only relationship history with a serialized operation
+ * tail. Concurrent changes observe the last committed record, and a failed
+ * replacement never publishes a partially written logical record.
  */
 export class CompanionStateStore {
   readonly workspacePath: string;
@@ -321,6 +485,8 @@ export class CompanionStateStore {
   private readonly turnTotals = new Map<string, number>();
   private readonly fs?: CompanionFileSystem;
   private readonly filePath?: string;
+  private readonly now: () => Date;
+  private historyText = "";
   private revision = 0;
 
   constructor(options: CompanionStateStoreOptions) {
@@ -329,6 +495,7 @@ export class CompanionStateStore {
     this.state = defaultCompanionState(this.defaultAffinity);
     this.fs = options.fs;
     this.filePath = options.filePath;
+    this.now = options.now ?? (() => new Date());
   }
 
   getSnapshot(): CompanionState {
@@ -341,6 +508,13 @@ export class CompanionStateStore {
   }
 
   getRevision(): number { return this.revision; }
+
+  /** Deliberate bounded slow path; current-state reads never traverse history. */
+  async readHistory(limitInput?: unknown, signal?: AbortSignal): Promise<CompanionStateRecord[]> {
+    const limit = canonicalizeHistoryLimit(limitInput);
+    await this.load(signal);
+    return decodeCompanionStateHistory(this.historyText, this.defaultAffinity).slice(-limit).reverse();
+  }
 
   subscribe(listener: (state: CompanionState) => void): () => void {
     this.listeners.add(listener);
@@ -376,8 +550,14 @@ export class CompanionStateStore {
   }
 
   async load(signal?: AbortSignal): Promise<CompanionState> {
-    if (!this.loadPromise) this.loadPromise = this.loadFromDisk(signal);
-    await this.loadPromise;
+    const attempt = this.loadPromise ?? this.loadFromDisk(signal);
+    this.loadPromise = attempt;
+    try {
+      await attempt;
+    } catch (error) {
+      if (this.loadPromise === attempt) this.loadPromise = undefined;
+      throw error;
+    }
     return this.getSnapshot();
   }
 
@@ -387,28 +567,34 @@ export class CompanionStateStore {
       const info = await this.fs.stat(target, signal);
       if (info === undefined) {
         await this.ensureParentDirectory(signal);
-        await this.fs.writeText(target, encodeCompanionState(this.state), undefined, signal);
+        this.historyText = encodeCompanionStateRecord({ at: this.now().toISOString(), changes: { seed: true }, state: this.state });
+        await this.fs.writeText(target, this.historyText, undefined, signal);
       } else {
         if (info.type !== "file") throw new CompanionValidationError("Companion 状态不是文件。");
         if (typeof info.size === "number" && info.size > MAX_STATE_BYTES) {
-          throw new CompanionValidationError("Companion 状态过大。");
+          throw new CompanionValidationError("Companion 状态历史过大。");
         }
         const text = await this.fs.readText(target, signal);
         if (new TextEncoder().encode(text).byteLength > MAX_STATE_BYTES) {
-          throw new CompanionValidationError("Companion 状态过大。");
+          throw new CompanionValidationError("Companion 状态历史过大。");
         }
-        this.state = decodeCompanionState(JSON.parse(text), this.defaultAffinity);
+        const latest = decodeLatestCompanionStateRecord(text, this.defaultAffinity);
+        this.historyText = text;
+        this.state = latest.state;
       }
     } else if (this.filePath) {
       const nodeFs = await import("node:fs/promises");
       try {
         const text = await nodeFs.readFile(this.filePath, "utf8");
-        if (Buffer.byteLength(text) > MAX_STATE_BYTES) throw new CompanionValidationError("Companion 状态过大。");
-        this.state = decodeCompanionState(JSON.parse(text), this.defaultAffinity);
+        if (Buffer.byteLength(text) > MAX_STATE_BYTES) throw new CompanionValidationError("Companion 状态历史过大。");
+        const latest = decodeLatestCompanionStateRecord(text, this.defaultAffinity);
+        this.historyText = text;
+        this.state = latest.state;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         await nodeFs.mkdir(this.filePath.slice(0, this.filePath.lastIndexOf("/")), { recursive: true });
-        await nodeFs.writeFile(this.filePath, encodeCompanionState(this.state), "utf8");
+        this.historyText = encodeCompanionStateRecord({ at: this.now().toISOString(), changes: { seed: true }, state: this.state });
+        await nodeFs.writeFile(this.filePath, this.historyText, "utf8");
       }
     }
     this.loaded = true;
@@ -420,8 +606,9 @@ export class CompanionStateStore {
     if (this.fs?.mkdir) await this.fs.mkdir(STATE_DIRECTORY, { cwd: this.workspacePath, signal });
   }
 
-  private async persist(next: CompanionState, signal?: AbortSignal): Promise<void> {
-    const encoded = encodeCompanionState(next);
+  private async persist(next: CompanionState, changes: CompanionStateChanges, signal?: AbortSignal): Promise<void> {
+    const encoded = this.historyText + encodeCompanionStateRecord({ at: this.now().toISOString(), changes, state: next });
+    if (new TextEncoder().encode(encoded).byteLength > MAX_STATE_BYTES) throw new CompanionValidationError("Companion 状态历史过大。");
     if (this.fs) {
       const target = await this.fs.resolve(STATE_FILE, { cwd: this.workspacePath, signal });
       await this.ensureParentDirectory(signal);
@@ -433,6 +620,7 @@ export class CompanionStateStore {
       await nodeFs.writeFile(temporary, encoded, "utf8");
       await nodeFs.rename(temporary, this.filePath);
     }
+    this.historyText = encoded;
     this.state = next;
     this.revision += 1;
     this.notify();
@@ -455,40 +643,43 @@ export class CompanionStateStore {
     return run;
   }
 
-  async update(mutator: (current: CompanionState) => CompanionState, signal?: AbortSignal): Promise<CompanionState> {
+  private async updateWithChanges(mutator: (current: CompanionState) => CompanionState, changes: CompanionStateChanges | (() => CompanionStateChanges), signal?: AbortSignal, afterPersist?: () => void): Promise<CompanionState> {
     await this.load(signal);
     await this.enqueue(async () => {
       const next = decodeCompanionState(mutator(this.getSnapshot()), this.defaultAffinity);
-      await this.persist(next, signal);
+      await this.persist(next, typeof changes === "function" ? changes() : changes, signal);
+      afterPersist?.();
     });
     return this.getSnapshot();
   }
 
-  async setMood(input: unknown, signal?: AbortSignal): Promise<CompanionState> {
-    const mood = canonicalizeMood(input);
-    return this.update((current) => ({ ...current, ...mood }), signal);
-  }
-
-  async setSignature(input: unknown, signal?: AbortSignal): Promise<CompanionState> {
+  async setSignature(input: unknown, reasonInput: unknown, signal?: AbortSignal): Promise<CompanionState> {
     const signature = canonicalizeSignature(input);
-    return this.update((current) => ({ ...current, signature }), signal);
+    const reason = canonicalizeChangeReason(reasonInput);
+    return this.updateWithChanges((current) => ({ ...current, signature }), { signature: { value: signature, reason } }, signal);
   }
 
   async clearSignature(signal?: AbortSignal): Promise<CompanionState> {
-    return this.setSignature("", signal);
+    return this.setSignature("", "用户在设置中清除了签名", signal);
   }
 
   async resetAffinity(signal?: AbortSignal): Promise<CompanionState> {
-    this.turnTotals.clear();
-    return this.update((current) => ({ ...current, affinity: this.defaultAffinity }), signal);
+    let delta = 0;
+    return this.updateWithChanges((current) => {
+      delta = this.defaultAffinity - current.affinity;
+      return { ...current, affinity: this.defaultAffinity };
+    }, () => ({ affinity: { delta, value: this.defaultAffinity, reason: "用户在设置中重置了亲近度" } }), signal, () => this.turnTotals.clear());
   }
 
   async setAffinity(value: unknown, signal?: AbortSignal): Promise<CompanionState> {
     if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 100) {
       throw new CompanionValidationError("亲近度必须是 0 到 100 的整数。");
     }
-    this.turnTotals.clear();
-    return this.update((current) => ({ ...current, affinity: value }), signal);
+    let delta = 0;
+    return this.updateWithChanges((current) => {
+      delta = value - current.affinity;
+      return { ...current, affinity: value };
+    }, () => ({ affinity: { delta, value, reason: "用户在设置中校正了亲近度" } }), signal, () => this.turnTotals.clear());
   }
 
   /** Start a fresh per-turn cumulative affinity budget. */
@@ -497,23 +688,29 @@ export class CompanionStateStore {
     if (this.turnTotals.size > 32) this.turnTotals.delete(this.turnTotals.keys().next().value as string);
   }
 
-  async adjustAffinity(delta: unknown, reason: unknown, turnId = "current", signal?: AbortSignal): Promise<{ delta: number; affinity: number; reason: string }> {
-    if (typeof delta !== "number" || !Number.isSafeInteger(delta) || delta < -10 || delta > 10) {
-      throw new CompanionValidationError("亲近度变化必须是 -10 到 10 的整数。");
-    }
-    if (typeof reason !== "string" || !reason.trim() || Array.from(reason.trim()).length > 160) {
-      throw new CompanionValidationError("请提供不超过 160 个字符的变化原因。");
-    }
-    const normalizedReason = reason.trim();
+  async updateRelationship(input: unknown, turnId = "current", signal?: AbortSignal): Promise<{ state: CompanionState; delta?: number }> {
+    const update = canonicalizeRelationshipUpdate(input);
     let applied = 0;
-    const result = await this.update((current) => {
+    let affinity = this.state.affinity;
+    const result = await this.updateWithChanges((current) => {
+      const { note: _oldNote, ...withoutOldNote } = current;
+      const nextMood = update.mood === undefined
+        ? current
+        : { ...withoutOldNote, mood: update.mood.value, ...(update.mood.note === undefined ? {} : { note: update.mood.note }) };
+      if (update.affinity === undefined) return nextMood;
       const used = this.turnTotals.get(turnId) ?? 0;
-      const room = delta < 0 ? -10 - used : 10 - used;
-      applied = delta < 0 ? Math.max(delta, room) : Math.min(delta, room);
+      const room = update.affinity.delta < 0 ? -10 - used : 10 - used;
+      applied = update.affinity.delta < 0 ? Math.max(update.affinity.delta, room) : Math.min(update.affinity.delta, room);
+      affinity = clampAffinity(current.affinity + applied);
+      return { ...nextMood, affinity };
+    }, () => ({
+      ...(update.mood === undefined ? {} : { mood: { value: update.mood.value, ...(update.mood.note === undefined ? {} : { note: update.mood.note }), reason: update.mood.reason } }),
+      ...(update.affinity === undefined ? {} : { affinity: { delta: applied, value: affinity, reason: update.affinity.reason } }),
+    }), signal, update.affinity === undefined ? undefined : () => {
+      const used = this.turnTotals.get(turnId) ?? 0;
       this.turnTotals.set(turnId, used + applied);
-      return { ...current, affinity: clampAffinity(current.affinity + applied) };
-    }, signal);
-    return { delta: applied, affinity: result.affinity, reason: normalizedReason };
+    });
+    return { state: result, ...(update.affinity === undefined ? {} : { delta: applied }) };
   }
 }
 
@@ -537,7 +734,6 @@ export function formatCompanionPrompt(state: CompanionState, identity: PromptIde
     `user_name=${quote(identity.userName)}`,
     `preferred_address=${quote(identity.preferredAddress)}`,
     `mood=${state.mood}`,
-    `mood_intensity=${state.intensity}`,
     `mood_label=${quote(MOOD_LABELS[state.mood])}`,
     ...(note === undefined ? [] : [`mood_note=${note}`]),
     `affinity=${state.affinity}`,
@@ -597,7 +793,7 @@ export function derivePresenceStatus(input: {
 }
 
 export const PRESENCE_LABELS: Readonly<Record<PresenceStatus, string>> = Object.freeze({
-  ready: "已准备好",
-  working: "正在陪你想",
-  reconnecting: "正在重新连接",
+  ready: "在线",
+  working: "正在输入…",
+  reconnecting: "连接中…",
 });

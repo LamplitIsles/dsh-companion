@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { imageGenProjectionId, parseTtsPassage, recognizeImageGenResult, ttsProjectionId } from "../src/media.js";
+import { imageGenProjectionId, parseTtsPassage, recognizeImageGenResult, resolveImageDisplaySize, ttsProjectionId } from "../src/media.js";
 import { TtsPreparationCache, validateTtsPayload } from "../src/client/voice-cache.js";
 
 describe("companion media", () => {
@@ -20,6 +20,14 @@ describe("companion media", () => {
     expect(recognizeImageGenResult({ kind: "tool-call", name: "kepos_image_generate", callId: "c1" }, "n")).toMatchObject({ id: "c1", state: "running" });
     expect(imageGenProjectionId("c1", "a1")).toBe("imagegen:c1:a1");
     expect(ttsProjectionId("n", { start: 1, digest: "abc" })).toBe("tts:n:1:abc");
+  });
+
+  it("bounds ordinary single-image display without upscaling and clamps extreme ratios", () => {
+    expect(resolveImageDisplaySize(120, 80)).toMatchObject({ width: 120, height: 80, cropped: false });
+    expect(resolveImageDisplaySize(640, 320)).toMatchObject({ width: 240, height: 120, cropped: false });
+    expect(resolveImageDisplaySize(20, 200)).toMatchObject({ width: 50, height: 200, cropped: true });
+    expect(resolveImageDisplaySize(200, 20)).toMatchObject({ width: 200, height: 50, cropped: true });
+    expect(resolveImageDisplaySize(20, 20)).toMatchObject({ width: 20, height: 20, cropped: false });
   });
 });
 

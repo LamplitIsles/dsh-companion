@@ -5,6 +5,7 @@ import { defineTool, type ToolDefinition, type ToolRunContext } from "@deepseek-
 import type { RpcResult } from "@deepseek-ai/dsh-client-connection/client";
 import type { FsInfo, FsTarget, FsWriteIntent, FsWriteOutcome } from "@deepseek-ai/dsh-fs";
 import type { GenerateOptions, LlmRuntime, StreamChunk } from "@deepseek-ai/dsh-llm";
+import type { AssembleContext, PromptAssembly } from "@deepseek-ai/dsh-system-prompt";
 import {
   CompanionStateStore,
   type CompanionFileSystem,
@@ -12,11 +13,14 @@ import {
   type CompanionState,
   CompanionValidationError,
   affinityStage,
-  canonicalizeMood,
+  canonicalizeHistoryRead,
+  canonicalizeRelationshipUpdate,
+  canonicalizeChangeReason,
   canonicalizeSignature,
   clampAffinity,
   defaultCompanionState,
   formatCompanionPrompt,
+  MOOD_LABELS,
   validateIdentitySettings,
 } from "./domain.js";
 import { rewriteCompanionCompactionRequest } from "./compaction.js";
@@ -25,6 +29,7 @@ export const SETTINGS_NAMESPACE = "dsh-companion" as const;
 export const RPC_CHANNEL = "/dsh-companion" as const;
 export const SANDBOX_POSTURE = "workspace-write" as const;
 export const ESCALATION_ENABLED = false as const;
+const RELATIONSHIP_CONTEXT_NAME = "dsh-companion:relationship";
 
 export interface CompanionSettings extends Omit<CompanionIdentitySettings, "workspaceId"> {
   workspaceId: string;
@@ -85,6 +90,7 @@ interface HostContextLike {
   /** Required by this web plugin solely for the pinned static-server alias. */
   webServer: WebServerLike;
   on(name: "llm/stream", listener: (options: GenerateOptions, next: () => AsyncIterable<StreamChunk>) => AsyncIterable<StreamChunk>, options: { global: true }): () => void;
+  on(name: "system-prompt/assemble", listener: (assembly: PromptAssembly, context: AssembleContext, next: () => Promise<PromptAssembly>) => Promise<PromptAssembly>): () => void;
 }
 
 export interface RelationshipView {
@@ -155,10 +161,11 @@ export function acceptedTurnKey(exec: ToolRunContext): string {
   return `${agent.id}:turn:${openTurn}`;
 }
 
-export async function adjustAffinityForAcceptedTurn(store: CompanionStateStore, delta: unknown, reason: unknown, exec: ToolRunContext): Promise<{ delta: number; affinity: number; reason: string }> {
-  const turnId = acceptedTurnKey(exec);
-  store.beginTurn(turnId);
-  return store.adjustAffinity(delta, reason, turnId, exec.signal);
+export async function updateRelationshipForAcceptedTurn(store: CompanionStateStore, input: unknown, exec: ToolRunContext): Promise<{ state: CompanionState; delta?: number }> {
+  const update = canonicalizeRelationshipUpdate(input);
+  const turnId = update.affinity === undefined ? "current" : acceptedTurnKey(exec);
+  if (update.affinity !== undefined) store.beginTurn(turnId);
+  return store.updateRelationship(input, turnId, exec.signal);
 }
 
 export const BOOTSTRAP_PATH = "/companion/bootstrap" as const;
@@ -489,18 +496,34 @@ export function companionAliasHandler(webServer: WebServerLike, req: IncomingMes
   return proxyCompanionRoot(webServer, req, res);
 }
 
-const moodTool = (owner: CompanionHostController): ToolDefinition => defineTool({
-  name: "companion_set_mood",
-  description: "Set the Companion's current bounded mood for this Workspace. Use the fixed mood key, intensity 1-3, and an optional short note.",
+const relationshipTool = (owner: CompanionHostController): ToolDefinition => defineTool({
+  name: "companion_update_relationship",
+  description: "Record one Companion relationship reaction for this Workspace. Supply mood, affinity, or both; at least one is required. When both change for the same conversational moment, include both so they persist atomically. Give each change its own concise factual reason, not hidden reasoning.",
   parameters: {
-    mood: { type: "string", required: true, description: "neutral, serene, bright, playful, tender, pensive, tired, or low" },
-    intensity: { type: "integer", required: true, description: "1 (轻微), 2 (明显), or 3 (强烈)" },
-    note: { type: "string", description: "Optional 心情短句, at most 40 Unicode code points" },
+    mood: {
+      type: "object",
+      description: "Optional current-state change",
+      properties: {
+        value: { type: "string", required: true, enum: ["neutral", "serene", "bright", "playful", "tender", "pensive", "tired", "low"], description: "The new bounded current-state key" },
+        note: { type: "string", description: "Optional user-facing 状态短句, at most 40 Unicode code points" },
+        reason: { type: "string", required: true, description: "A concise factual reason for this mood change, at most 160 characters" },
+      },
+      additionalProperties: false,
+    },
+    affinity: {
+      type: "object",
+      description: "Optional affinity change; net movement per accepted user turn is bounded to ±10",
+      properties: {
+        delta: { type: "integer", required: true, description: "An integer from -10 through +10" },
+        reason: { type: "string", required: true, description: "A concise factual reason for this affinity change, at most 160 characters" },
+      },
+      additionalProperties: false,
+    },
   },
   output: {
     schema: {
       type: "object",
-      properties: { mood: { type: "string", required: true }, intensity: { type: "integer", required: true }, note: { type: "string" }, message: { type: "string", required: true } },
+      properties: { mood: { type: "string" }, note: { type: "string" }, delta: { type: "integer" }, affinity: { type: "integer", required: true }, stage: { type: "string", required: true }, message: { type: "string", required: true } },
       additionalProperties: false,
     },
     render: (_args, value) => [{ type: "text", text: String(value.message) }],
@@ -508,35 +531,84 @@ const moodTool = (owner: CompanionHostController): ToolDefinition => defineTool(
   async execute(args, exec) {
     const workspace = owner.configuredWorkspace(undefined, currentCwd(exec))?.workspace;
     if (!workspace) throw new CompanionValidationError("Companion 只能在已配置的 Workspace 中更新。");
-    const mood = canonicalizeMood(args);
-    const state = await owner.storeFor(workspace).setMood(mood, exec.signal);
-    return { mood: state.mood, intensity: state.intensity, ...(state.note === undefined ? {} : { note: state.note }), message: `Companion 心情已更新为 ${state.mood} · ${state.intensity}。` };
+    const requested = canonicalizeRelationshipUpdate(args);
+    const result = await updateRelationshipForAcceptedTurn(owner.storeFor(workspace), args, exec);
+    const state = result.state;
+    const message = requested.mood !== undefined && requested.affinity !== undefined
+      ? `Companion 此刻状态已更新为 ${MOOD_LABELS[state.mood]}，亲近度现在是 ${state.affinity}（${affinityStage(state.affinity)}）。`
+      : requested.mood !== undefined
+        ? `Companion 此刻状态已更新为 ${MOOD_LABELS[state.mood]}。`
+        : `亲近度 ${(result.delta ?? 0) >= 0 ? "增加" : "减少"} ${Math.abs(result.delta ?? 0)}，现在是 ${state.affinity}（${affinityStage(state.affinity)}）。`;
+    return {
+      ...(requested.mood === undefined ? {} : { mood: state.mood, ...(state.note === undefined ? {} : { note: state.note }) }),
+      ...(requested.affinity === undefined ? {} : { delta: result.delta }),
+      affinity: state.affinity,
+      stage: affinityStage(state.affinity),
+      message,
+    };
   },
 });
 
-const affinityTool = (owner: CompanionHostController): ToolDefinition => defineTool({
-  name: "companion_adjust_affinity",
-  description: "Move Companion affinity by -10 to +10 for a concrete conversational reason. Net movement per accepted user turn is bounded to ±10.",
+const historyTool = (owner: CompanionHostController): ToolDefinition => defineTool({
+  name: "companion_read_history",
+  description: "Read a small recent slice of this Workspace's Companion relationship history when an earlier mood, note, affinity reason, or signature change is relevant. Records are newest first. This does not change current state; omit limit for 10 records, with a maximum of 20.",
   parameters: {
-    delta: { type: "integer", required: true, description: "An integer from -10 through +10" },
-    reason: { type: "string", required: true, description: "A concise reason, at most 160 characters" },
+    limit: { type: "integer", description: "Optional number of newest records to return, from 1 through 20; defaults to 10" },
   },
   output: {
-    schema: { type: "object", properties: { delta: { type: "integer", required: true }, affinity: { type: "integer", required: true }, stage: { type: "string", required: true }, message: { type: "string", required: true } }, additionalProperties: false },
-    render: (_args, value) => [{ type: "text", text: String(value.message) }],
+    schema: {
+      type: "object",
+      properties: {
+        records: {
+          type: "array",
+          required: true,
+          items: {
+            type: "object",
+            properties: {
+              at: { type: "string", required: true },
+              changes: {
+                type: "object",
+                required: true,
+                properties: {
+                  seed: { type: "boolean" },
+                  mood: { type: "object", properties: { value: { type: "string", required: true }, note: { type: "string" }, reason: { type: "string" } }, additionalProperties: false },
+                  affinity: { type: "object", properties: { delta: { type: "integer", required: true }, value: { type: "integer", required: true }, reason: { type: "string" } }, additionalProperties: false },
+                  signature: { type: "object", properties: { value: { type: "string", required: true }, reason: { type: "string" } }, additionalProperties: false },
+                },
+                additionalProperties: false,
+              },
+              state: {
+                type: "object",
+                required: true,
+                properties: { mood: { type: "string", required: true }, note: { type: "string" }, affinity: { type: "integer", required: true }, signature: { type: "string", required: true } },
+                additionalProperties: false,
+              },
+            },
+            additionalProperties: false,
+          },
+        },
+        message: { type: "string", required: true },
+      },
+      additionalProperties: false,
+    },
+    render: (_args, value) => [{ type: "text", text: `${String(value.message)}\n${JSON.stringify(value.records, null, 2)}` }],
   },
   async execute(args, exec) {
     const workspace = owner.configuredWorkspace(undefined, currentCwd(exec))?.workspace;
-    if (!workspace) throw new CompanionValidationError("Companion 只能在已配置的 Workspace 中更新。");
-    const result = await adjustAffinityForAcceptedTurn(owner.storeFor(workspace), (args as { delta?: unknown }).delta, (args as { reason?: unknown }).reason, exec);
-    return { delta: result.delta, affinity: result.affinity, stage: affinityStage(result.affinity), message: `亲近度 ${result.delta >= 0 ? "增加" : "减少"} ${Math.abs(result.delta)}，现在是 ${result.affinity}（${affinityStage(result.affinity)}）。` };
+    if (!workspace) throw new CompanionValidationError("Companion 只能在已配置的 Workspace 中读取关系历史。");
+    const limit = canonicalizeHistoryRead(args);
+    const records = await owner.storeFor(workspace).readHistory(limit, exec.signal);
+    return { records, message: `读取了最近 ${records.length} 条关系记录（由新到旧）。` };
   },
 });
 
 const signatureTool = (owner: CompanionHostController): ToolDefinition => defineTool({
   name: "companion_set_signature",
-  description: "Replace or clear the Companion's short plain-text personal signature for this Workspace.",
-  parameters: { signature: { type: "string", required: true, description: "One plain Unicode line, at most 80 characters; an empty string clears it" } },
+  description: "Replace or clear the Companion's relatively durable personal signature for this Workspace, with a concise factual reason for the change.",
+  parameters: {
+    signature: { type: "string", required: true, description: "One plain Unicode line, at most 80 characters; an empty string clears it" },
+    reason: { type: "string", required: true, description: "A concise factual reason for this signature change, at most 160 characters" },
+  },
   output: {
     schema: { type: "object", properties: { signature: { type: "string", required: true }, message: { type: "string", required: true } }, additionalProperties: false },
     render: (_args, value) => [{ type: "text", text: String(value.message) }],
@@ -545,7 +617,8 @@ const signatureTool = (owner: CompanionHostController): ToolDefinition => define
     const workspace = owner.configuredWorkspace(undefined, currentCwd(exec))?.workspace;
     if (!workspace) throw new CompanionValidationError("Companion 只能在已配置的 Workspace 中更新。");
     const signature = canonicalizeSignature((args as { signature?: unknown }).signature);
-    const state = await owner.storeFor(workspace).setSignature(signature, exec.signal);
+    const reason = canonicalizeChangeReason((args as { reason?: unknown }).reason);
+    const state = await owner.storeFor(workspace).setSignature(signature, reason, exec.signal);
     return { signature: state.signature, message: state.signature ? "Companion 签名已更新。" : "Companion 签名已清除。" };
   },
 });
@@ -607,8 +680,8 @@ export class CompanionHostController {
   }
 
   register(): void {
-    this.ctx.tools.register(moodTool(this));
-    this.ctx.tools.register(affinityTool(this));
+    this.ctx.tools.register(historyTool(this));
+    this.ctx.tools.register(relationshipTool(this));
     this.ctx.tools.register(signatureTool(this));
     this.disposers.push(this.ctx.on("llm/stream", (options, next) => {
       const rewritten = rewriteCompanionCompactionRequest(options, this.configuredWorkspace()?.workspace.sessionIds);
@@ -633,7 +706,7 @@ export class CompanionHostController {
       return fail("未知的 Companion 请求。", "bad-request");
     }));
     this.disposers.push(this.ctx.systemPrompt.context({
-      name: "dsh-companion:relationship",
+      name: RELATIONSHIP_CONTEXT_NAME,
       order: 140,
       text: (context) => {
         const configured = this.configuredWorkspace(undefined, context.agent?.session?.header?.cwd);
@@ -641,6 +714,19 @@ export class CompanionHostController {
         const state = this.storeFor(configured.workspace).getLoadedSnapshot();
         return state ? formatCompanionPrompt(state, checkedSettings(configured.settings)) : "";
       },
+    }));
+    this.disposers.push(this.ctx.on("system-prompt/assemble", async (assembly, context, next) => {
+      const contribution = assembly.contexts.find((entry) => entry.name === RELATIONSHIP_CONTEXT_NAME);
+      if (!contribution) return next();
+      const configured = this.configuredWorkspace(undefined, context.agent?.session?.header?.cwd);
+      if (!configured) {
+        contribution.text = "";
+        return next();
+      }
+      const store = this.storeFor(configured.workspace);
+      const state = store.getLoadedSnapshot() ?? await store.load(context.signal);
+      contribution.text = formatCompanionPrompt(state, checkedSettings(configured.settings));
+      return next();
     }));
     const webServer = this.ctx.webServer;
     this.disposers.push(webServer.register({ kind: "prefix", path: "/companion", handler: (req, res) => companionAliasHandler(webServer, req, res) }));

@@ -261,6 +261,8 @@ function completionText(): string { return "已整理对话"; }
 
 export interface ContinuityRecord {
   readonly id: string;
+  /** Stable source contribution key used by the canonical message-unit projection. */
+  readonly messageKey: string;
   readonly kind: "continuity";
   readonly side: "incoming";
   readonly tone: "success";
@@ -276,6 +278,7 @@ export function completionRecordForLifecycle(lifecycle: CompactionLifecycleState
   const anchorSeq = evidence?.seq ?? lifecycle.endSeq ?? lifecycle.startSeq;
   return {
     id: `continuity:${lifecycle.compactionId}`,
+    messageKey: `continuity:${lifecycle.compactionId}`,
     kind: "continuity",
     side: "incoming",
     tone: "success",
