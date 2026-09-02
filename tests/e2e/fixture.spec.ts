@@ -425,6 +425,15 @@ test("keeps a pure-text send row and bubble connected across durable confirmatio
   await expect(page.getByText(text, { exact: true })).toHaveCount(1);
 });
 
+test("keeps the queued-send explanation tied to admission rather than the current reply state", async ({ page }) => {
+  await page.goto("/");
+  const queuedRow = page.getByTestId("message-queued");
+  await expect(queuedRow.getByText("等当前回复结束后发送", { exact: true })).toBeVisible();
+
+  await page.evaluate(() => window.__companionFixture?.setRunning(false));
+  await expect(queuedRow.getByText("等当前回复结束后发送", { exact: true })).toBeVisible();
+});
+
 test("renders a deferred text-and-two-image send immediately and replaces it atomically", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => window.__companionFixture?.deferSend());

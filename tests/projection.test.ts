@@ -89,7 +89,7 @@ describe("chat projection", () => {
     });
 
     expect(result.items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "pending:queue-1", messageKey: "submission:req-queued", kind: "text", side: "outgoing", text: "稍后发送", pending: true }),
+      expect.objectContaining({ id: "pending:queue-1", messageKey: "submission:req-queued", kind: "text", side: "outgoing", text: "稍后发送", pending: true, waitsForCurrentReply: true }),
       expect.objectContaining({ id: "image:queue-1:0", messageKey: "submission:req-queued", kind: "image", side: "outgoing", attachment: image }),
     ]));
     expect(result.messageUnits).toContainEqual(expect.objectContaining({ id: "submission:req-queued", pending: true }));

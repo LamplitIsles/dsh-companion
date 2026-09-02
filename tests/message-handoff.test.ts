@@ -50,6 +50,31 @@ describe("SubmissionHandoff", () => {
       ["submission:req-1"],
       ["submission:req-1"],
     ]);
+    expect(projected.map((snapshot) => {
+      const item = projectConversation(snapshot).items.find((candidate) => candidate.kind === "text" && candidate.messageKey === "submission:req-1");
+      return item?.kind === "text" ? item.waitsForCurrentReply : undefined;
+    })).toEqual([
+      false,
+      false,
+      false,
+      false,
+      undefined,
+    ]);
+  });
+
+  it("retains queued admission through queue handoff after the local echo retires", () => {
+    const handoff = new SubmissionHandoff();
+    const pending = [{ requestId: "req-active", placement: "queued", time: 10, text: "等我说完", images: [] }];
+    const queued = [{ id: "queue-active", messageId: "queue-active", placement: "queued", rpcId: "req-active", content: [{ type: "text", text: "等我说完" }], preview: "等我说完", text: "等我说完" }];
+
+    const beforeRetirement = handoff.merge({ sessionId: "session-1", pendingSubmissions: pending, queue: queued }, chat());
+    handoff.retire("req-active", "observed");
+    const afterRetirement = handoff.merge({ sessionId: "session-1", pendingSubmissions: [], queue: queued }, chat());
+
+    for (const snapshot of [beforeRetirement, afterRetirement]) {
+      const item = projectConversation(snapshot).items.find((candidate) => candidate.kind === "text" && candidate.messageKey === "submission:req-active");
+      expect(item?.kind === "text" ? item.waitsForCurrentReply : undefined).toBe(true);
+    }
   });
 
   it("drops a failed echo instead of retaining it as an unobserved handoff", () => {

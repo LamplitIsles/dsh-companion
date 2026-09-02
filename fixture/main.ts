@@ -48,7 +48,7 @@ const projection: CompanionProjection = {
     { id: "voice:demo:1:abc", messageKey: "voice:demo:1:abc", kind: "voice", side: "incoming", text: "如果累了，就先把肩膀放松下来。", status: "preparing", time: now - 120000 },
     { id: "voice:demo:failed", messageKey: "voice:demo:failed", kind: "voice", side: "incoming", text: "这段语音暂时失败，但文字稿还在。", status: "preparing", time: now - 105000 },
     { id: "notice:reconnect", messageKey: "notice:reconnect", kind: "notice", side: "incoming", tone: "info", text: "连接有一点不稳，正在重新连接……", time: now - 90000 },
-    { id: "queued", messageKey: "queued", kind: "text", side: "outgoing", text: "还有一件小事想告诉你", pending: true },
+    { id: "queued", messageKey: "queued", kind: "text", side: "outgoing", text: "还有一件小事想告诉你", pending: true, waitsForCurrentReply: true },
   ], messageUnits: [], pendingCount: 1, running: true, status: "working", openState: "open", hasMore: true, loadingOlder: false,
 };
 projection.messageUnits = groupTimelineItems(projection.items);

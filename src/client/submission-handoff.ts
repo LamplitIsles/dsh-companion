@@ -1,9 +1,13 @@
 interface PendingSubmissionLike {
   readonly requestId: string;
+  readonly placement?: string;
 }
 
 interface QueuedMessageLike {
   readonly rpcId?: string;
+  readonly placement?: string;
+  /** Client-carried admission classification, retained through queue handoff. */
+  readonly waitsForCurrentReply?: boolean;
 }
 
 interface SubmissionSources {
@@ -34,12 +38,14 @@ export class SubmissionHandoff {
   private sessionId?: string;
   private readonly pending = new Map<string, PendingSubmissionLike>();
   private readonly queued = new Map<string, QueuedMessageLike>();
+  private readonly waitsForCurrentReply = new Map<string, boolean>();
   private readonly failed = new Set<string>();
 
   retire(requestId: string, reason: "observed" | "failed"): void {
     if (reason !== "failed") return;
     this.pending.delete(requestId);
     this.queued.delete(requestId);
+    this.waitsForCurrentReply.delete(requestId);
     this.failed.add(requestId);
   }
 
@@ -48,6 +54,7 @@ export class SubmissionHandoff {
       this.sessionId = session.sessionId;
       this.pending.clear();
       this.queued.clear();
+      this.waitsForCurrentReply.clear();
       this.failed.clear();
     }
 
@@ -55,13 +62,17 @@ export class SubmissionHandoff {
     for (const requestId of durable) {
       this.pending.delete(requestId);
       this.queued.delete(requestId);
+      this.waitsForCurrentReply.delete(requestId);
       this.failed.delete(requestId);
     }
 
     const currentPending = new Set<string>();
     for (const submission of session.pendingSubmissions) {
       currentPending.add(submission.requestId);
-      if (!durable.has(submission.requestId) && !this.failed.has(submission.requestId)) this.pending.set(submission.requestId, submission);
+      if (!durable.has(submission.requestId) && !this.failed.has(submission.requestId)) {
+        this.pending.set(submission.requestId, submission);
+        this.waitsForCurrentReply.set(submission.requestId, submission.placement === "queued");
+      }
     }
 
     const currentQueued = new Set<string>();
@@ -69,7 +80,9 @@ export class SubmissionHandoff {
       if (!row.rpcId) continue;
       currentQueued.add(row.rpcId);
       if (!durable.has(row.rpcId) && !this.failed.has(row.rpcId)) {
-        this.queued.set(row.rpcId, row);
+        const waitsForReply = this.waitsForCurrentReply.get(row.rpcId) ?? row.placement === "queued";
+        this.waitsForCurrentReply.set(row.rpcId, waitsForReply);
+        this.queued.set(row.rpcId, { ...row, waitsForCurrentReply: waitsForReply });
         this.pending.delete(row.rpcId);
       }
     }
@@ -83,7 +96,7 @@ export class SubmissionHandoff {
       ...[...this.pending].flatMap(([requestId, submission]) => currentPending.has(requestId) || durable.has(requestId) || this.failed.has(requestId) ? [] : [submission]),
     ];
     const queue = [
-      ...session.queue,
+      ...session.queue.map((row) => row.rpcId ? this.queued.get(row.rpcId) ?? row : row),
       ...[...this.queued].flatMap(([requestId, row]) => currentQueued.has(requestId) || durable.has(requestId) || this.failed.has(requestId) ? [] : [row]),
     ];
 

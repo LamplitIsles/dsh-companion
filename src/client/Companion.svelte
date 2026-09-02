@@ -984,7 +984,7 @@
                       </div>
                     {:else if part.item.kind === "text"}
                       <div class="cmp-chat-bubble companion-bubble" class:cmp-skeleton={part.item.pending && !part.item.text}><Markdown text={part.item.text} /></div>
-                      {#if part.item.pending}<div class="companion-meta">等当前回复结束后发送</div>{/if}
+                      {#if part.item.pending && part.item.waitsForCurrentReply}<div class="companion-meta">等当前回复结束后发送</div>{/if}
                     {:else}
                       {@const item = part.item}
                       {@const playback = voicePlayback[item.id] ?? EMPTY_VOICE_PLAYBACK}

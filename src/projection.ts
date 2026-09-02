@@ -22,6 +22,8 @@ export interface TimelineText {
   origin?: "user" | "steering";
   text: string;
   pending?: boolean;
+  /** Whether this submission was admitted while an earlier reply was active. */
+  waitsForCurrentReply?: boolean;
   time?: number;
   replyTo?: string;
 }
@@ -420,13 +422,18 @@ export function projectConversation(snapshot: unknown, connected = true, continu
     if (typeof row?.rpcId === "string") observedRpcIds.add(row.rpcId);
   }
   const pendingSubmissions = Array.isArray(root.pendingSubmissions) ? root.pendingSubmissions : [];
+  const submissionWaitsForCurrentReply = new Map<string, boolean>();
+  for (const value of pendingSubmissions) {
+    const submission = asRecord(value);
+    if (typeof submission?.requestId === "string") submissionWaitsForCurrentReply.set(submission.requestId, submission.placement === "queued");
+  }
   for (const value of pendingSubmissions) {
     const submission = asRecord(value);
     if (!submission || typeof submission.requestId !== "string" || observedRpcIds.has(submission.requestId)) continue;
     const text = typeof submission.text === "string" ? submission.text : "";
     const time = typeof submission.time === "number" ? submission.time : undefined;
     const baseId = `submission:${submission.requestId}`;
-    if (text) items.push({ id: `${baseId}:text`, messageKey: baseId, kind: "text", side: "outgoing", origin: "user", text, time });
+    if (text) items.push({ id: `${baseId}:text`, messageKey: baseId, kind: "text", side: "outgoing", origin: "user", text, waitsForCurrentReply: submission.placement === "queued", time });
     const images = Array.isArray(submission.images) ? submission.images : [];
     for (let imageIndex = 0; imageIndex < images.length; imageIndex += 1) {
       const image = asRecord(images[imageIndex]);
@@ -454,7 +461,9 @@ export function projectConversation(snapshot: unknown, connected = true, continu
     const text = typeof row.text === "string" ? row.text : textFromValue(row.content) ?? "";
     const pendingKey = `pending:${identity}`;
     const messageKey = messageKeyFor(pendingKey, rpcId);
-    if (text) items.push({ id: pendingKey, messageKey, kind: "text", side: "outgoing", text, pending: true });
+    const waitsForCurrentReply = row.waitsForCurrentReply === true
+      || (row.waitsForCurrentReply === undefined && (submissionWaitsForCurrentReply.get(rpcId ?? "") ?? row.placement === "queued"));
+    if (text) items.push({ id: pendingKey, messageKey, kind: "text", side: "outgoing", text, pending: true, waitsForCurrentReply });
     const content = Array.isArray(row.content) ? row.content : [];
     items.push(...nodeMedia({ id: identity, content }, identity, "outgoing", undefined, undefined, messageKey));
   }
