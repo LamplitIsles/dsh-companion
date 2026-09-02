@@ -851,6 +851,31 @@ test("chat shell has rendered Markdown, viewport scrolling, sessions, rounded fo
   expect(detailBox!.x).toBeLessThan(avatarBox!.x + 120);
 });
 
+test("Markdown renders GFM safely with aligned list levels", async ({ page }) => {
+  await page.goto("/?markdown=edge");
+
+  const gfm = page.getByTestId("message-markdown-gfm");
+  await expect(gfm.getByRole("heading", { name: "今天的小清单" })).toBeVisible();
+  await expect(gfm.getByText("写完信")).toBeVisible();
+  const table = gfm.locator("table");
+  await expect(table).toContainText("此刻");
+  await expect(gfm.locator(".markdown img")).toHaveCount(0);
+  await expect(gfm.locator("ul").first()).toHaveCSS("list-style-type", "disc");
+  await expect(gfm.locator("ul ul")).toHaveCSS("list-style-type", "circle");
+  await expect(gfm.locator("ul ul")).toHaveCSS("list-style-position", "outside");
+  await expect(table).toHaveCSS("overflow-x", "auto");
+  await expect.poll(() => page.locator(".companion-timeline").evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+  await expect.poll(() => table.evaluate((node) => node.scrollWidth > node.clientWidth)).toBe(true);
+});
+
+test("Markdown keeps spaced ordered items as siblings", async ({ page }) => {
+  await page.goto("/?markdown=ordered");
+
+  const list = page.getByTestId("message-markdown-ordered").locator("ol");
+  await expect(list.locator(":scope > li")).toHaveCount(3);
+  await expect(list.locator("ol")).toHaveCount(0);
+});
+
 test("initial chat presentation is already at the bottom with circular avatars and a stable profile popover", async ({ page }) => {
   await page.addInitScript(() => {
     const state = window as unknown as { __companionScrollSamples: Array<{ distanceFromBottom: number; visible: boolean }> };

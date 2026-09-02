@@ -121,7 +121,6 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.4.1",
     "daisyui": "^5.7.5",
-    "esbuild": "^0.25.12",
     "playwright": "^1.51.1",
     "svelte": "^5.57.0",
     "tailwindcss": "^4.1.12",
@@ -145,8 +144,7 @@
   "dependencies": {
     "@capacitor/camera": "^8.2.3",
     "@capacitor/core": "^8.5.1",
-    "dompurify": "^3.4.14",
-    "lucide-svelte": "^1.0.1",
-    "marked": "^18.0.11"
+    "@humanspeak/svelte-markdown": "1.8.5",
+    "lucide-svelte": "^1.0.1"
   }
 }
