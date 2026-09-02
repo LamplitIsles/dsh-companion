@@ -40,8 +40,9 @@ export const companionStyles = `
 #dsh-companion .companion-full-dsh{flex:none;color:inherit;opacity:.64;text-decoration:none}
 #dsh-companion .companion-full-dsh-label{display:inline}
 #dsh-companion .companion-full-dsh:hover{opacity:1}
-#dsh-companion .companion-timeline{min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:28px clamp(16px,4vw,48px) 16px}
+#dsh-companion .companion-timeline{min-width:0;min-height:0;overflow-x:clip;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:28px clamp(16px,4vw,48px) 16px}
 #dsh-companion .companion-timeline:not(.timeline-ready){visibility:hidden}
+#dsh-companion .companion-timeline-content,#dsh-companion .companion-row,#dsh-companion .companion-message-stack{min-width:0;max-width:100%}
 #dsh-companion .companion-row{display:grid;grid-template-columns:34px minmax(0,auto);align-items:start;justify-content:start;gap:9px;width:100%;margin:9px 0}
 #dsh-companion .companion-row.outgoing{grid-template-columns:minmax(0,auto) 34px;justify-content:end}
 #dsh-companion .companion-row.outgoing .message-avatar{grid-column:2}
@@ -50,7 +51,7 @@ export const companionStyles = `
 #dsh-companion .companion-avatar-crop{display:grid;width:100%;height:100%;place-items:center;overflow:hidden}
 #dsh-companion .companion-avatar-crop img{display:block;width:100%;height:100%;object-fit:cover}
 #dsh-companion .companion-message-stack{max-width:min(76vw,680px)}
-#dsh-companion .companion-bubble{max-width:min(76vw,680px);padding:11px 15px;border-radius:22px;background:var(--color-base-200);box-shadow:0 5px 18px color-mix(in srgb,var(--color-base-content) 7%,transparent);line-height:1.55;overflow-wrap:anywhere}
+#dsh-companion .companion-bubble{min-width:0;max-width:min(76vw,680px);overflow:hidden;padding:11px 15px;border-radius:22px;background:var(--color-base-200);box-shadow:0 5px 18px color-mix(in srgb,var(--color-base-content) 7%,transparent);line-height:1.55;overflow-wrap:anywhere}
 #dsh-companion .outgoing .companion-bubble{background:color-mix(in srgb,var(--color-primary) 22%,var(--color-base-100))}
 #dsh-companion .companion-bubble::before{display:none}
 #dsh-companion .companion-meta{margin-top:4px;opacity:.55;font-size:.68rem}

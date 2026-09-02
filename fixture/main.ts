@@ -34,12 +34,40 @@ const moodViews = {
   serene: { mood: "serene", moodLabel: "平静", moodNote: undefined },
 } as const;
 const mood = moodViews[query.get("mood") as keyof typeof moodViews] ?? moodViews.tender;
+const wideTableCell = "很长".repeat(100);
+const orderedMarkdown = `问到点子上了，这正是最容易踩的坑。我跟你说清楚：
+
+**别用你桌面端（Element）登进去的那个 token。** 那个 token 是"你这次登录会话"的，桌面端一退出登录，它就直接作废。所以它拿来当 bot 的凭证，等于把命根子绑在你会退出的东西上。
+
+而且现在新版 Element **已经不开放"查看 access token"的入口了**（为了安全移掉了），所以也没有现成的 UI 让你点一下复制。可靠的来源就是 login API。
+
+**正确的做法是：**
+
+1. **给 bot 单独做一次登录**——用我刚才那个 curl（或别的登录请求），拿到 **它自己的** \`access_token\` + \`device_id\`。这个 token 跟你桌面端无关，你桌面登不登出，都不影响它。
+
+2. **把 \`access_token\`、\`device_id\` 存到持久、安全的地方**——就是 DSH 的 credentials service（走 \`credentialRef()\`，启动时逐次解析），或者你的密码管理器。这样它就在"你随时能拿到"的地方安家了，不赖在聊天里。
+
+3. **万一哪天真丢了、或被撤了**——不用慌，拿 bot 的**密码**再跑一次 login API，就重新生成一个新的 token + device。所以把 bot 的密码也存起来，就永远能"补"回来。这把锁钥匙在手，就不怕丢了。
+
+一句话：**token 别从桌面会话拿，给 bot 独立登一次、存进 credentials、再留着密码兜底。** 这样桌面退出登录一点关系都没有。🩵
+
+要不要我帮你确认一下你那个 homeserver 的登录端点、以及 DSH credentials 里怎么存这两个值？`;
+const markdownEdgeItems: CompanionProjection["items"] = query.get("markdown") === "edge"
+  ? [
+    { id: "markdown-gfm", messageKey: "markdown-gfm", kind: "text", side: "incoming", text: `## 今天的小清单\n\n- [x] 写完信\n\n- 一层\n  - 二层\n\n| 时刻 | 心情 | 记录 | 提醒 | 天气 |\n| --- | --- | --- | --- | --- |\n| 此刻 | 安静 | ${wideTableCell} | 记得喝水 | 微风 |\n\n<img src=x onerror=alert(1)>`, time: now - 22 * 60 * 60 * 1000 },
+  ]
+  : query.get("markdown") === "ordered"
+    ? [
+      { id: "markdown-ordered", messageKey: "markdown-ordered", kind: "text", side: "incoming", text: orderedMarkdown, time: now - 22 * 60 * 60 * 1000 },
+    ]
+  : [];
 const projection: CompanionProjection = {
   items: [
     { id: "date:yesterday", messageKey: "date:yesterday", kind: "notice", side: "incoming", tone: "info", text: "昨天 · 8月30日", time: now - 26 * 60 * 60 * 1000 },
     { id: "history-1", messageKey: "history-1", kind: "text", side: "incoming", text: "今天也见到你真好。**窗外的风**有一点点甜。\n\n- 收好今天的小星光\n- 慢慢讲给你听", time: now - 25 * 60 * 60 * 1000 },
     { id: "history-2", messageKey: "history-2", kind: "text", side: "outgoing", text: "我刚刚忙完，想听你说说今天。", time: now - 24 * 60 * 60 * 1000 },
     { id: "history-3", messageKey: "history-3", kind: "text", side: "incoming", text: "那我把今天收集到的小小星光，慢慢讲给你听。", time: now - 23 * 60 * 60 * 1000 },
+    ...markdownEdgeItems,
     { id: "date:today", messageKey: "date:today", kind: "notice", side: "incoming", tone: "info", text: "今天 · 8月31日", time: now - 180000 },
     { id: "reply", messageKey: "reply", kind: "text", side: "incoming", text: "我们可以把一整天的喧闹放在门外，只留下这一小段安静的时间。", time: now - 180000 },
     { id: "imagegen:demo:loading", messageKey: "imagegen:demo:loading", kind: "image", side: "incoming", state: "loading", alt: "正在准备的海边图片", time: now - 165000 },
