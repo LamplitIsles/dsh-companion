@@ -112,12 +112,12 @@ describe("Companion voice admission", () => {
     expect(errors[0]).toMatchObject({ code: "duration-limit" });
   });
 
-  it("keeps only the transcript and raw bracketed expression label", async () => {
+  it("marks transcribed turns and keeps a raw bracketed expression label", async () => {
     const blob = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
     expect(isCanonicalBase64(await voiceBlobToBase64(blob))).toBe(true);
     expect(normalizeVoiceTranscription({ text: "  你好 ", sentences: [{ expression: "sad", startMs: 0, endMs: 2, text: "你好" }] })).toEqual({ text: "你好", expression: "sad" });
-    expect(formatVoiceTurn({ text: "你好", expression: "sad" })).toBe("你好 [sad]");
-    expect(formatVoiceTurn({ text: "你好" })).toBe("你好");
+    expect(formatVoiceTurn({ text: "你好", expression: "sad" })).toBe("🎙️ 你好 [sad]");
+    expect(formatVoiceTurn({ text: "你好" })).toBe("🎙️ 你好");
     expect(() => normalizeVoiceTranscription({ text: "" })).toThrowError(VoiceRecordingError);
     expect(normalizeVoiceTranscription({ text: "你好", expression: "unknown" })).toEqual({ text: "你好" });
   });
