@@ -13,9 +13,9 @@ if (!existsSync(join(root, "dist", "index.js"))) throw new Error("compaction Loa
 
 function dshEntry() {
   const configured = process.env.DSH_CLI;
-  const cli = configured ?? execFileSync("which", ["dsh"], { encoding: "utf8" }).trim();
-  if (!cli || !existsSync(cli)) throw new Error("set DSH_CLI to the installed dsh executable");
-  return cli;
+  if (!configured) throw new Error(`DSH_CLI is required: set it to the official DSH ${DSH_RC_VERSION} executable (for example /absolute/path/to/node_modules/.bin/dsh)`);
+  if (!existsSync(configured)) throw new Error(`DSH_CLI does not exist: ${configured}`);
+  return configured;
 }
 
 /**
