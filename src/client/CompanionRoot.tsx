@@ -119,6 +119,8 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
   const [recoveryKey, setRecoveryKey] = useState(0);
   const creatingWorkspace = useRef<string>();
   const session = selectedSessionId ? ctx.sessions.binding(selectedSessionId as never)?.session : undefined;
+  const workspaceId = workspace?.id;
+  const hasActiveSession = Boolean(session);
   const sessionSnapshot = useSnapshot<SessionSnapshot>(session, session ? session.getSnapshot() : ({ sessionId: "", queue: [], pendingSubmissions: [], running: false, subagent: null, removed: false, openState: "cold", openError: null, hasMore: false, loadingOlder: false, promptError: null, blank: true, lastAgentError: null, promptAttempted: false, awaitingFirstTurn: false } as unknown as SessionSnapshot));
   const conversationBinding = session ? ctx.uiConversation.binding(session.sessionId as never) : undefined;
   const chatSnapshot = useSnapshot(conversationBinding?.target("chat"), undefined);
@@ -168,19 +170,23 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
 
   useEffect(() => {
     const controller = new AbortController();
-    if (!workspace || !selectedSessionId || !session) {
+    if (!workspaceId || !selectedSessionId || !hasActiveSession) {
       setVoiceCapability("unavailable");
       return () => controller.abort();
     }
     setVoiceCapability("loading");
-    void connection.rpc.call("/dsh-companion", VOICE_CAPABILITY_ENDPOINT, { workspaceId: workspace.id }, controller.signal)
+    void connection.rpc.call("/dsh-companion", VOICE_CAPABILITY_ENDPOINT, { workspaceId }, controller.signal)
       .then((result) => {
         if (controller.signal.aborted) return;
-        setVoiceCapability(result.ok && (result.value as { available?: unknown } | undefined)?.available === true ? "available" : "unavailable");
+        const available = result.ok && (result.value as { available?: unknown } | undefined)?.available === true;
+        setVoiceCapability(available ? "available" : "unavailable");
       })
-      .catch(() => { if (!controller.signal.aborted) setVoiceCapability("unavailable"); });
+      .catch(() => {
+        if (controller.signal.aborted) return;
+        setVoiceCapability("unavailable");
+      });
     return () => controller.abort();
-  }, [connection, connectionState, recoveryKey, selectedSessionId, session, workspace]);
+  }, [connection, connectionState, hasActiveSession, recoveryKey, selectedSessionId, workspaceId]);
 
   useEffect(() => {
     const listener = (snapshot: { active?: { colorScheme?: string } }) => setScheme(snapshot.active?.colorScheme === "dark" ? "dark" : "light");
