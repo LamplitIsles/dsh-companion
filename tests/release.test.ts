@@ -1,9 +1,10 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { releaseCheck } from "../scripts/release-check.js";
 import { npmDistTag, versionFromTag } from "../scripts/release-shared.js";
+import { synchronizeReleaseVersion } from "../scripts/sync-release-version.js";
 
 const fixtures: string[] = [];
 
@@ -53,6 +54,15 @@ describe("release preflight", () => {
     expect(releaseCheck(root, "v0.1.0", false)).toContain(
       "@lamplitisles/dsh-companion version does not match v0.1.0.",
     );
+  });
+
+  it("synchronizes the manifest from a release tag before preflight", async () => {
+    const root = await fixture("0.1.0-beta.0");
+
+    await synchronizeReleaseVersion(root, "v0.2.0");
+
+    expect(JSON.parse(await readFile(join(root, "package.json"), "utf8")).version).toBe("0.2.0");
+    expect(releaseCheck(root, "v0.2.0", false)).toEqual([]);
   });
 
   it("rejects metadata that would publish the wrong package or channel", async () => {
