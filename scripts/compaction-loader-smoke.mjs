@@ -1,12 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const require = createRequire(import.meta.url);
+const DSH_ALPHA_VERSION = "0.1.2-alpha.5";
 
 if (!existsSync(join(root, "dist", "index.js"))) throw new Error("compaction Loader smoke requires a fresh `bun run build`");
 
@@ -19,13 +20,76 @@ function dshEntry() {
 
 /**
  * The profile manager extracts a plugin without installing its peer graph.
- * Link the real alpha CLI's dependency tree into this disposable profile so
- * Node resolves the packed plugin exactly as it would inside the DSH install,
- * without touching the repository or a user's profile.
+ * Link this checkout's installed alpha.5 dependency tree into the disposable
+ * profile so Node resolves the packed plugin against the exact lock graph,
+ * without installing into the repository or a user's profile.
  */
-function linkCliDependencies(temp, entry) {
-  const cliNodeModules = dirname(dirname(dirname(dirname(realpathSync(entry)))));
-  symlinkSync(cliNodeModules, join(temp, "node_modules"), "dir");
+function linkDshDependencies(temp) {
+  symlinkSync(join(root, "node_modules"), join(temp, "node_modules"), "dir");
+}
+
+function resolvedDshPackages(roots) {
+  const packages = [];
+  const visited = new Set();
+
+  function visit(candidate) {
+    let real;
+    try {
+      real = realpathSync(candidate);
+    } catch {
+      return;
+    }
+    if (visited.has(real)) return;
+    visited.add(real);
+
+    let stat;
+    try {
+      stat = statSync(real);
+    } catch {
+      return;
+    }
+    if (!stat.isDirectory()) return;
+
+    let entries;
+    try {
+      entries = readdirSync(real, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const child = join(real, entry.name);
+      if (entry.name === "package.json") {
+        try {
+          const manifest = JSON.parse(readFileSync(child, "utf8"));
+          if (typeof manifest.name === "string" && manifest.name.startsWith("@deepseek-ai/dsh-")) {
+            packages.push({ name: manifest.name, version: manifest.version, path: child });
+          }
+        } catch {
+          // Ignore non-package JSON while walking the disposable installation.
+        }
+        continue;
+      }
+      if (entry.isDirectory() || entry.isSymbolicLink()) visit(child);
+    }
+  }
+
+  for (const root of roots) visit(root);
+  return packages;
+}
+
+function lockedDshPackageNames() {
+  return new Set([...readFileSync(join(root, "bun.lock"), "utf8").matchAll(/^\s+"(@deepseek-ai\/dsh-[^"]+)": \["/gmu)].map(([, name]) => name));
+}
+
+function assertResolvedDshGraph(roots) {
+  const packages = resolvedDshPackages(roots);
+  if (!packages.length) throw new Error("installed graph resolved no first-party DSH packages");
+  const missing = [...lockedDshPackageNames()].filter((name) => !packages.some((pkg) => pkg.name === name));
+  if (missing.length) throw new Error(`installed graph is missing locked first-party DSH packages: ${missing.join(", ")}`);
+  const mismatches = packages.filter(({ version }) => version !== DSH_ALPHA_VERSION);
+  if (mismatches.length) {
+    throw new Error(`installed graph resolved non-alpha.5 DSH packages: ${mismatches.map(({ name, version }) => `${name}@${version}`).join(", ")}`);
+  }
 }
 
 function isolatedEnvironment(temp, dshHome) {
@@ -172,7 +236,7 @@ try {
   const dshHome = join(temp, "dsh-home");
   const env = isolatedEnvironment(temp, dshHome);
   const entry = dshEntry();
-  linkCliDependencies(temp, entry);
+  linkDshDependencies(temp);
   execFileSync(process.execPath, ["--expose-internals", entry, "plugin", "--profile", "web", "add", tarball, "--ignore-scripts"], { cwd: temp, env, stdio: "pipe" });
 
   const config = execFileSync(process.execPath, ["--expose-internals", entry, "--profile", "web", "--dump-config"], { cwd: temp, env, encoding: "utf8" });
@@ -180,16 +244,17 @@ try {
 
   const packageDir = join(dshHome, "profiles", "web", "node_modules", "@lamplitisles", "dsh-companion");
   const manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
+  assertResolvedDshGraph([join(temp, "node_modules"), join(dshHome, "profiles", "web", "node_modules")]);
   if (manifest.name !== "@lamplitisles/dsh-companion" || manifest.dsh?.bundle?.patch !== "./cordis.patch.yml") throw new Error("packed manifest lost the existing single DSH bundle identity");
   for (const dependencySection of ["peerDependencies", "devDependencies"]) {
     for (const [name, version] of Object.entries(manifest[dependencySection] ?? {})) {
-      if (name.startsWith("@deepseek-ai/dsh-") && version !== "0.1.2-alpha.5") throw new Error(`packed manifest mixes DSH contract versions in ${dependencySection}: ${name}@${version}`);
+      if (name.startsWith("@deepseek-ai/dsh-") && version !== DSH_ALPHA_VERSION) throw new Error(`packed manifest mixes DSH contract versions in ${dependencySection}: ${name}@${version}`);
     }
   }
   const bundledDshDependencies = Object.keys(manifest.dependencies ?? {}).filter((name) => name.startsWith("@deepseek-ai/dsh-"));
   if (bundledDshDependencies.length) throw new Error(`packed manifest bundles DSH runtime dependencies: ${bundledDshDependencies.join(", ")}`);
   for (const dependencySection of ["peerDependencies", "devDependencies"]) {
-    if (manifest[dependencySection]?.["@deepseek-ai/dsh-llm"] !== "0.1.2-alpha.5") throw new Error(`packed manifest lacks the exact alpha.5 LLM ${dependencySection} pin`);
+    if (manifest[dependencySection]?.["@deepseek-ai/dsh-llm"] !== DSH_ALPHA_VERSION) throw new Error(`packed manifest lacks the exact alpha.5 LLM ${dependencySection} pin`);
   }
   const patch = readFileSync(join(packageDir, "cordis.patch.yml"), "utf8");
   if (!/inject:\s*\[[^\]]*\bllm\b[^\]]*\]/u.test(patch)) throw new Error("packed Cordis patch lacks hard llm injection");
