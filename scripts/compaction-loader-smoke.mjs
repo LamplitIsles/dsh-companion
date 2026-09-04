@@ -124,7 +124,7 @@ const relationshipResult = await relationshipTool.execute({
   affinity: { delta: 2, reason: "The user valued the shared result" },
 }, {
   signal: new AbortController().signal,
-  agent: { id: "agent-a", session: { header: { cwd: workspace.path }, events: [{ type: "turn/start", data: { turn: 1 } }] } },
+  agent: { id: "agent-a", session: { header: { cwd: workspace.path }, snapshotEvents: () => [{ type: "turn/start", data: { turn: 1 } }] } },
 });
 assert.equal(relationshipResult.mood, "bright");
 assert.equal(relationshipResult.affinity, 52);
@@ -136,7 +136,7 @@ assert.equal(relationshipRecord.changes.affinity.reason, "The user valued the sh
 assert.equal(relationshipRecord.state.affinity, 52);
 const historyResult = await historyTool.execute({ limit: 1 }, {
   signal: new AbortController().signal,
-  agent: { id: "agent-a", session: { header: { cwd: workspace.path }, events: [{ type: "turn/start", data: { turn: 1 } }] } },
+  agent: { id: "agent-a", session: { header: { cwd: workspace.path }, snapshotEvents: () => [{ type: "turn/start", data: { turn: 1 } }] } },
 });
 assert.equal(historyResult.records.length, 1);
 assert.equal(historyResult.records[0].state.affinity, 52);
@@ -183,13 +183,13 @@ try {
   if (manifest.name !== "@lamplitisles/dsh-companion" || manifest.dsh?.bundle?.patch !== "./cordis.patch.yml") throw new Error("packed manifest lost the existing single DSH bundle identity");
   for (const dependencySection of ["peerDependencies", "devDependencies"]) {
     for (const [name, version] of Object.entries(manifest[dependencySection] ?? {})) {
-      if (name.startsWith("@deepseek-ai/dsh-") && version !== "0.1.2-alpha.3") throw new Error(`packed manifest mixes DSH contract versions in ${dependencySection}: ${name}@${version}`);
+      if (name.startsWith("@deepseek-ai/dsh-") && version !== "0.1.2-alpha.5") throw new Error(`packed manifest mixes DSH contract versions in ${dependencySection}: ${name}@${version}`);
     }
   }
   const bundledDshDependencies = Object.keys(manifest.dependencies ?? {}).filter((name) => name.startsWith("@deepseek-ai/dsh-"));
   if (bundledDshDependencies.length) throw new Error(`packed manifest bundles DSH runtime dependencies: ${bundledDshDependencies.join(", ")}`);
   for (const dependencySection of ["peerDependencies", "devDependencies"]) {
-    if (manifest[dependencySection]?.["@deepseek-ai/dsh-llm"] !== "0.1.2-alpha.3") throw new Error(`packed manifest lacks the exact alpha.3 LLM ${dependencySection} pin`);
+    if (manifest[dependencySection]?.["@deepseek-ai/dsh-llm"] !== "0.1.2-alpha.5") throw new Error(`packed manifest lacks the exact alpha.5 LLM ${dependencySection} pin`);
   }
   const patch = readFileSync(join(packageDir, "cordis.patch.yml"), "utf8");
   if (!/inject:\s*\[[^\]]*\bllm\b[^\]]*\]/u.test(patch)) throw new Error("packed Cordis patch lacks hard llm injection");

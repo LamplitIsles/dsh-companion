@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import vm from "node:vm";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
-const DSH_ALPHA_VERSION = "0.1.2-alpha.3";
+const DSH_ALPHA_VERSION = "0.1.2-alpha.5";
 
 if (!existsSync(join(root, "dist", "index.js")) || !existsSync(join(root, "dist", "client.js"))) {
   throw new Error("DSH link smoke requires a fresh `bun run build`");

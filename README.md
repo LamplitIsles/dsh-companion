@@ -25,7 +25,7 @@ npm pack --pack-destination .
 dsh plugin --profile web add ./lamplitisles-dsh-companion-0.1.0.tgz
 ```
 
-The package is pinned to the published DSH `0.1.2-alpha.3` contract family (Cordis `4.0.2`). It is intentionally not a compatibility layer for other DSH releases.
+The package is pinned to the published DSH `0.1.2-alpha.5` contract family (Cordis `4.0.2`). It is intentionally not a compatibility layer for other DSH releases. Session-derived behavior reads the alpha.5 snapshot API; older eager event-array contracts are not supported.
 
 ## Two surfaces
 
@@ -88,7 +88,7 @@ bun run pack:check
 DSH_CLI=/absolute/path/to/dsh bun run test:dsh-link
 ```
 
-`pack:check` builds and inspects the publishable tarball. `test:dsh-link` uses the explicitly supplied alpha.3 CLI to add this source tree through `file:` in a test-owned `DSH_HOME`, then verifies the composed bundle and client registration. It does not start DSH Web, a browser, or touch a live profile. Update the host-local linked web profile with `just deploy-local`; packaged or Kosmos deployment and production cutover remain outside local acceptance.
+`pack:check` builds and inspects the publishable tarball. `test:dsh-link` uses the explicitly supplied alpha.5 CLI to add this source tree through `file:` in a test-owned `DSH_HOME`, then verifies the composed bundle and client registration. It does not start DSH Web, a browser, or touch a live profile. Update the host-local linked web profile with `just deploy-local`; packaged or Kosmos deployment and production cutover remain outside local acceptance.
 
 ## Publishing releases
 
