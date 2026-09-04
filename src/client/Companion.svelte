@@ -665,7 +665,7 @@
       if (error.code === "unsupported" || error.code === "media-type") return "当前浏览器不支持录音。";
       if (error.code === "permission-denied") return "麦克风权限被拒绝，请允许后重试。";
       if (error.code === "duration-limit") return "录音最长 5 分钟，已停止；请说短一点再试。";
-      if (error.code === "size-limit") return "录音超过 10 MB 限制，请说短一点再试。";
+      if (error.code === "size-limit") return "录音超过语音大小限制，请说短一点再试。";
       if (error.code === "empty") return "没有录到声音，请再试一次。";
       if (error.code === "transcript-empty") return "没有听清内容，请再试一次。";
     }
@@ -968,6 +968,8 @@
     clearWaitingTimers();
     clearContinuityStatusTimer();
     clearVoiceClock();
+    voiceTranscriptionAbort?.abort();
+    voiceTranscriptionAbort = undefined;
     voiceController.dispose();
     for (const audio of document.querySelectorAll<HTMLAudioElement>("#dsh-companion .companion-voice audio")) audio.pause();
     for (const url of Object.values(imageUrls)) releaseImageUrl(url);

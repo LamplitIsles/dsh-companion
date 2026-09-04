@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CompanionHostController, VOICE_CAPABILITY_ENDPOINT, VOICE_TRANSCRIBE_ENDPOINT } from "../src/host.js";
+import { maxVoiceAudioBytesForMediaType } from "../src/voice-contract.js";
 
 const signal = new AbortController().signal;
 const workspace = { id: "workspace-a", path: "/tmp/companion", sessionIds: ["session-a"] };
@@ -53,6 +54,19 @@ describe("Companion voice Host RPC", () => {
       await expect(handler()(VOICE_TRANSCRIBE_ENDPOINT, payload, signal)).resolves.toMatchObject({ ok: false });
     }
     expect(transcribe).not.toHaveBeenCalled();
+    await host.dispose();
+  });
+
+  it("uses the complete parameterized Data URL boundary for decoded RPC audio", async () => {
+    const transcribe = vi.fn(async () => ({ text: "边界" }));
+    const { host, handler } = hostWith({ transcribe });
+    const mediaType = "audio/webm;codecs=opus";
+    const maxRawBytes = maxVoiceAudioBytesForMediaType(mediaType)!;
+    const exact = Buffer.alloc(maxRawBytes).toString("base64");
+    const next = Buffer.alloc(maxRawBytes + 1).toString("base64");
+    await expect(handler()(VOICE_TRANSCRIBE_ENDPOINT, { workspaceId: workspace.id, sessionId: "session-a", mediaType, data: exact }, signal)).resolves.toMatchObject({ ok: true, value: { text: "边界" } });
+    await expect(handler()(VOICE_TRANSCRIBE_ENDPOINT, { workspaceId: workspace.id, sessionId: "session-a", mediaType, data: next }, signal)).resolves.toMatchObject({ ok: false });
+    expect(transcribe).toHaveBeenCalledOnce();
     await host.dispose();
   });
 

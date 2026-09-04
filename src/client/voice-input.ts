@@ -1,13 +1,15 @@
 import {
-  MAX_VOICE_AUDIO_BYTES,
+  MAX_VOICE_DATA_URL_BYTES,
   MAX_VOICE_DURATION_MS,
   VOICE_AUDIO_MEDIA_TYPES,
+  isVoiceAudioWithinDataUrlLimit,
+  maxVoiceAudioBytesForMediaType,
   normalizeVoiceExpression,
   normalizeVoiceMediaType,
   type VoiceExpression,
 } from "../voice-contract.js";
 
-export { MAX_VOICE_AUDIO_BYTES, MAX_VOICE_DURATION_MS, VOICE_AUDIO_MEDIA_TYPES, isCanonicalBase64 } from "../voice-contract.js";
+export { MAX_VOICE_DATA_URL_BYTES, MAX_VOICE_DURATION_MS, VOICE_AUDIO_MEDIA_TYPES, isCanonicalBase64 } from "../voice-contract.js";
 export type { VoiceAudioMediaType, VoiceExpression } from "../voice-contract.js";
 
 export const VOICE_TRANSCRIPT_MAX_CHARS = 20_000;
@@ -155,20 +157,33 @@ export function selectVoiceMimeType(recorder: MediaRecorderConstructorLike | und
   return undefined;
 }
 
-/** Validate the emitted Blob's actual media type and byte bound. */
-export function validateVoiceRecording(blob: Blob, declaredMediaType?: string, maxBytes = MAX_VOICE_AUDIO_BYTES): VoiceRecording {
+/** Validate the emitted Blob's actual media type and complete Data URL bound. */
+export function validateVoiceRecording(blob: Blob, declaredMediaType?: string, maxBytes?: number): VoiceRecording {
   if (!(blob instanceof Blob)) throw new VoiceRecordingError("empty", "录音内容无效。");
   const mediaType = normalizeVoiceMediaType(blob.type || declaredMediaType);
   if (!mediaType) throw new VoiceRecordingError("media-type", "浏览器生成了不支持的录音格式。");
   if (!Number.isSafeInteger(blob.size) || blob.size <= 0) throw new VoiceRecordingError("empty", "没有录到声音，请再试一次。");
-  if (blob.size > maxBytes) throw new VoiceRecordingError("size-limit", "录音超过 10 MB 限制。");
+  const dataUrlMaxBytes = maxVoiceAudioBytesForMediaType(mediaType);
+  const effectiveMaxBytes = dataUrlMaxBytes === undefined
+    ? 0
+    : maxBytes === undefined
+      ? dataUrlMaxBytes
+      : Math.min(dataUrlMaxBytes, maxBytes);
+  if (blob.size > effectiveMaxBytes || !isVoiceAudioWithinDataUrlLimit(mediaType, blob.size)) {
+    throw new VoiceRecordingError("size-limit", "录音超过语音大小限制。");
+  }
   return { blob, mediaType, bytes: blob.size, durationMs: 0 };
 }
 
 /** Convert an admitted Blob to canonical Base64 without persisting it. */
-export async function voiceBlobToBase64(blob: Blob): Promise<string> {
+export async function voiceBlobToBase64(blob: Blob, declaredMediaType?: string): Promise<string> {
+  const mediaType = normalizeVoiceMediaType(blob.type || declaredMediaType);
+  if (!mediaType) throw new VoiceRecordingError("media-type", "浏览器生成了不支持的录音格式。");
+  if (!Number.isSafeInteger(blob.size) || blob.size <= 0) throw new VoiceRecordingError("empty", "没有录到声音，请再试一次。");
+  if (!isVoiceAudioWithinDataUrlLimit(mediaType, blob.size)) throw new VoiceRecordingError("size-limit", "录音超过语音大小限制。");
   const bytes = new Uint8Array(await blob.arrayBuffer());
-  if (bytes.byteLength === 0 || bytes.byteLength > MAX_VOICE_AUDIO_BYTES) throw new VoiceRecordingError("size-limit", "录音超过 10 MB 限制。");
+  if (bytes.byteLength === 0) throw new VoiceRecordingError("empty", "没有录到声音，请再试一次。");
+  if (!isVoiceAudioWithinDataUrlLimit(mediaType, bytes.byteLength)) throw new VoiceRecordingError("size-limit", "录音超过语音大小限制。");
   const maybeBuffer = (globalThis as { Buffer?: { from(value: Uint8Array): { toString(encoding: string): string } } }).Buffer;
   if (maybeBuffer) return maybeBuffer.from(bytes).toString("base64");
   let output = "";
@@ -221,6 +236,8 @@ export function formatVoiceTurn(transcription: CompanionVoiceTranscription): str
 
 interface ActiveRecording {
   generation: number;
+  mediaType: string;
+  maxBytes: number;
   stream?: MediaStreamLike;
   recorder?: MediaRecorderLike;
   chunks: Blob[];
@@ -240,7 +257,7 @@ interface ActiveRecording {
 export class VoiceRecordingController {
   private readonly options: VoiceRecordingControllerOptions;
   private readonly maxDurationMs: number;
-  private readonly maxBytes: number;
+  private readonly configuredMaxBytes: number;
   private statusValue: VoiceRecordingStatus = "idle";
   private operation?: ActiveRecording;
   private generation = 0;
@@ -249,7 +266,7 @@ export class VoiceRecordingController {
   constructor(options: VoiceRecordingControllerOptions = {}) {
     this.options = { ...browserEnvironment(), ...options };
     this.maxDurationMs = Number.isFinite(options.maxDurationMs) && (options.maxDurationMs ?? 0) > 0 ? options.maxDurationMs! : MAX_VOICE_DURATION_MS;
-    this.maxBytes = Number.isSafeInteger(options.maxBytes) && (options.maxBytes ?? 0) > 0 ? options.maxBytes! : MAX_VOICE_AUDIO_BYTES;
+    this.configuredMaxBytes = Number.isSafeInteger(options.maxBytes) && (options.maxBytes ?? 0) > 0 ? options.maxBytes! : MAX_VOICE_DATA_URL_BYTES;
   }
 
   get status(): VoiceRecordingStatus { return this.statusValue; }
@@ -277,6 +294,13 @@ export class VoiceRecordingController {
       this.setStatus("unavailable");
       throw new VoiceRecordingError("unsupported", "当前浏览器没有可用的录音格式。");
     }
+    const declaredMediaType = normalizeVoiceMediaType(mimeType);
+    const dataUrlMaxBytes = declaredMediaType === undefined ? undefined : maxVoiceAudioBytesForMediaType(declaredMediaType);
+    const maxBytes = dataUrlMaxBytes === undefined ? 0 : Math.min(this.configuredMaxBytes, dataUrlMaxBytes);
+    if (maxBytes <= 0) {
+      this.setStatus("unavailable");
+      throw new VoiceRecordingError("unsupported", "当前浏览器没有可用的录音格式。");
+    }
     const generation = ++this.generation;
     let resolve!: (recording: VoiceRecording) => void;
     let reject!: (error: unknown) => void;
@@ -285,7 +309,7 @@ export class VoiceRecordingController {
     // for the stop result, so prevent an expected capture failure from being
     // reported as an unhandled rejection.
     void completion.catch(() => undefined);
-    const active: ActiveRecording = { generation, chunks: [], bytes: 0, startedAt: 0, completion, resolve, reject };
+    const active: ActiveRecording = { generation, mediaType: declaredMediaType!, maxBytes, chunks: [], bytes: 0, startedAt: 0, completion, resolve, reject };
     this.operation = active;
     this.setStatus("recording");
     try {
@@ -381,9 +405,12 @@ export class VoiceRecordingController {
 
   private onData(active: ActiveRecording, chunk: Blob | undefined): void {
     if (this.operation !== active || !chunk || chunk.size <= 0) return;
+    const emittedMediaType = normalizeVoiceMediaType(chunk.type);
+    const emittedMaxBytes = emittedMediaType === undefined ? undefined : maxVoiceAudioBytesForMediaType(emittedMediaType);
+    if (emittedMaxBytes !== undefined) active.maxBytes = Math.min(active.maxBytes, emittedMaxBytes);
     active.bytes += chunk.size;
     active.chunks.push(chunk);
-    if (active.bytes > this.maxBytes) this.requestStop(active, "size-limit");
+    if (active.bytes > active.maxBytes) this.requestStop(active, "size-limit");
   }
 
   private finish(active: ActiveRecording): void {
@@ -397,14 +424,14 @@ export class VoiceRecordingController {
       this.fail(active, new VoiceRecordingError("duration-limit", "录音最长 5 分钟，已停止。"));
       return;
     }
-    if (reason === "size-limit" || active.bytes > this.maxBytes) {
-      this.fail(active, new VoiceRecordingError("size-limit", "录音超过 10 MB 限制，已停止。"));
+    if (reason === "size-limit" || active.bytes > active.maxBytes) {
+      this.fail(active, new VoiceRecordingError("size-limit", "录音超过语音大小限制，已停止。"));
       return;
     }
     try {
-      const emittedMediaType = active.chunks.find((chunk) => chunk.type)?.type || active.recorder?.mimeType;
+      const emittedMediaType = active.chunks.find((chunk) => chunk.type)?.type || active.recorder?.mimeType || active.mediaType;
       const blob = new Blob(active.chunks, { type: emittedMediaType ?? "" });
-      const admitted = validateVoiceRecording(blob, emittedMediaType, this.maxBytes);
+      const admitted = validateVoiceRecording(blob, emittedMediaType, active.maxBytes);
       this.complete(active, { ...admitted, durationMs: Math.max(0, (this.options.now ?? Date.now)() - active.startedAt) });
     } catch (error) {
       this.fail(active, error);

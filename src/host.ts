@@ -25,7 +25,8 @@ import {
 } from "./domain.js";
 import { rewriteCompanionCompactionRequest } from "./compaction.js";
 import {
-  MAX_VOICE_AUDIO_BYTES,
+  isVoiceAudioWithinDataUrlLimit,
+  maxVoiceBase64CharsForMediaType,
   normalizeVoiceExpression,
   normalizeVoiceMediaType,
   isCanonicalBase64,
@@ -169,11 +170,12 @@ function workspaceOwnsSession(workspace: WorkspaceRecord, sessionId: string): bo
   return Array.isArray(workspace.sessionIds) && workspace.sessionIds.includes(sessionId);
 }
 
-function decodeVoiceBase64(value: unknown): Uint8Array | undefined {
-  if (!isCanonicalBase64(value)) return undefined;
+function decodeVoiceBase64(value: unknown, mediaType: string): Uint8Array | undefined {
+  const maxBase64Chars = maxVoiceBase64CharsForMediaType(mediaType);
+  if (maxBase64Chars === undefined || !isCanonicalBase64(value, maxBase64Chars)) return undefined;
   try {
     const data = Buffer.from(value, "base64");
-    if (data.byteLength === 0 || data.byteLength > MAX_VOICE_AUDIO_BYTES || data.toString("base64") !== value) return undefined;
+    if (data.byteLength === 0 || !isVoiceAudioWithinDataUrlLimit(mediaType, data.byteLength) || data.toString("base64") !== value) return undefined;
     return new Uint8Array(data);
   } catch {
     return undefined;
@@ -188,8 +190,9 @@ function parseCompanionVoiceRequest(payload: unknown): CompanionVoiceRequest | u
   if (typeof record.workspaceId !== "string" || !record.workspaceId.trim()) return undefined;
   if (typeof record.sessionId !== "string" || !record.sessionId.trim()) return undefined;
   const mediaType = normalizeVoiceMediaType(record.mediaType);
-  const data = decodeVoiceBase64(record.data);
-  if (!mediaType || !data) return undefined;
+  if (!mediaType) return undefined;
+  const data = decodeVoiceBase64(record.data, mediaType);
+  if (!data) return undefined;
   return { workspaceId: record.workspaceId.trim(), sessionId: record.sessionId, mediaType, data };
 }
 

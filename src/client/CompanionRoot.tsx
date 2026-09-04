@@ -262,7 +262,7 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
       async attachmentUrl(attachment: unknown): Promise<string> { if (!session) throw new Error("session-unavailable"); return imageUrl(session, attachment); },
       async transcribeVoice(recording: VoiceRecording, signal?: AbortSignal): Promise<CompanionVoiceTranscription> {
         if (!session || !workspace || !selectedSessionId) throw new Error("session-unavailable");
-        const data = await voiceBlobToBase64(recording.blob);
+        const data = await voiceBlobToBase64(recording.blob, recording.mediaType);
         const result = await rpc.call("/dsh-companion", VOICE_TRANSCRIBE_ENDPOINT, {
           workspaceId: workspace.id,
           sessionId: String(selectedSessionId),

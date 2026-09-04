@@ -6,8 +6,15 @@ import {
   isCanonicalBase64,
   normalizeVoiceTranscription,
   selectVoiceMimeType,
+  validateVoiceRecording,
   voiceBlobToBase64,
 } from "../src/client/voice-input.js";
+import {
+  MAX_VOICE_DATA_URL_BYTES,
+  isVoiceAudioWithinDataUrlLimit,
+  maxVoiceAudioBytesForMediaType,
+  voiceDataUrlByteLength,
+} from "../src/voice-contract.js";
 
 class FakeTrack {
   stopped = 0;
@@ -35,6 +42,25 @@ class FakeRecorder {
 }
 
 describe("Companion voice admission", () => {
+  it("derives exact raw boundaries from a parameterized Data URL prefix", () => {
+    const mediaType = "audio/webm;codecs=opus";
+    const maxRawBytes = maxVoiceAudioBytesForMediaType(mediaType);
+    expect(maxRawBytes).toBeDefined();
+    expect(voiceDataUrlByteLength(mediaType, maxRawBytes!)).toBeLessThanOrEqual(MAX_VOICE_DATA_URL_BYTES);
+    expect(isVoiceAudioWithinDataUrlLimit(mediaType, maxRawBytes!)).toBe(true);
+    expect(voiceDataUrlByteLength(mediaType, maxRawBytes! + 1)).toBeGreaterThan(MAX_VOICE_DATA_URL_BYTES);
+    expect(isVoiceAudioWithinDataUrlLimit(mediaType, maxRawBytes! + 1)).toBe(false);
+  });
+
+  it("applies the same boundary to a browser Blob", () => {
+    const mediaType = "audio/webm;codecs=opus";
+    const maxRawBytes = maxVoiceAudioBytesForMediaType(mediaType)!;
+    const exact = new Blob([new Uint8Array(maxRawBytes)], { type: mediaType });
+    expect(validateVoiceRecording(exact)).toMatchObject({ mediaType, bytes: maxRawBytes });
+    const next = new Blob([new Uint8Array(maxRawBytes + 1)], { type: mediaType });
+    expect(() => validateVoiceRecording(next)).toThrowError(VoiceRecordingError);
+  });
+
   it("chooses only a provider-compatible advertised MIME type", () => {
     expect(selectVoiceMimeType(FakeRecorder as never)).toBe("audio/webm;codecs=opus");
     expect(selectVoiceMimeType(undefined)).toBeUndefined();
