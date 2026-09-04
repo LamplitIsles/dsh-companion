@@ -77,4 +77,4 @@ jobs:
           else
             npm_tag=latest
           fi
-          npm publish "${tarballs[0]}" --access public --provenance --tag "$npm_tag"
+          npm publish "./${tarballs[0]}" --access public --provenance --tag "$npm_tag"
