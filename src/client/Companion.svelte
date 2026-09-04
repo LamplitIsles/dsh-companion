@@ -1,7 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
   import { Camera, CameraErrorCode } from "@capacitor/camera";
-  import LoaderCircle from "lucide-svelte/icons/loader-circle";
   import ImagePlus from "lucide-svelte/icons/image-plus";
   import MessageSquareText from "lucide-svelte/icons/message-square-text";
   import PanelsTopLeft from "lucide-svelte/icons/panels-top-left";
@@ -987,16 +986,16 @@
       <header class="companion-header">
         <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-session-toggle" aria-label={sidebarOpen ? "收起对话列表" : "展开对话列表"} aria-controls="companion-session-list" aria-expanded={sidebarOpen} on:click={toggleSidebar}><span aria-hidden="true">☰</span></button>
         <div bind:this={detailAnchor} class="companion-avatar-anchor">
-          <button class="cmp-avatar cmp-avatar-placeholder cmp:rounded-full companion-avatar" aria-label="查看 Companion 关系资料" aria-expanded={detailOpen} on:click={toggleDetail}>
-            <div class="companion-avatar-crop cmp:rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div>
+          <button class="cmp-avatar cmp-avatar-placeholder companion-avatar" aria-label="查看 Companion 关系资料" aria-expanded={detailOpen} on:click={toggleDetail}>
+            <div class="companion-avatar-crop cmp-mask cmp-mask-circle">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div>
           </button>
           {#if detailOpen}
             <div bind:this={detailPopover} id="companion-detail-popover" popover="auto" class="cmp-card companion-detail-card" role="dialog" aria-label={`${identity.companionName}的关系资料`} style={`--relationship-art: url("${relationshipBackground}")`} on:toggle={onDetailToggle}>
               <div class="companion-detail-art" aria-hidden="true"></div>
               <div class="cmp-card-body">
                 <div class="companion-detail-head">
-                  <div class="cmp-avatar cmp-avatar-placeholder cmp:rounded-full companion-detail-avatar"><div class="companion-avatar-crop cmp:rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt={identity.companionName} />{:else}<span aria-hidden="true">✦</span>{/if}</div></div>
-                  <div><h2 id="companion-detail-title">{identity.companionName}</h2><span class="cmp-badge cmp-badge-soft cmp-badge-secondary companion-mood-chip">{identity.moodLabel}</span></div>
+                  <div class="cmp-avatar cmp-avatar-placeholder companion-detail-avatar"><div class="companion-avatar-crop cmp-mask cmp-mask-circle">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt={identity.companionName} />{:else}<span aria-hidden="true">✦</span>{/if}</div></div>
+                  <div><h2 id="companion-detail-title">{identity.companionName}</h2><span class="cmp-badge cmp-badge-sm cmp-badge-soft cmp-badge-secondary">{identity.moodLabel}</span></div>
                   <button class="cmp-btn cmp-btn-ghost cmp-btn-circle cmp-btn-sm companion-detail-close" aria-label="关闭关系资料" on:click={() => closeDetail()}>×</button>
                 </div>
                 <p class="companion-signature">{identity.signature || "还没有签名"}</p>
@@ -1014,47 +1013,47 @@
 
       {#if effectiveWorkspaceReadiness === "loading"}
         <section class="companion-loading-shell" role="status" aria-label="正在加载">
-          <LoaderCircle class="companion-spin" size={22} aria-hidden="true" /><span>正在加载…</span>
+          <span class="cmp-loading cmp-loading-spinner cmp-loading-sm" aria-hidden="true"></span><span>正在加载…</span>
         </section>
       {:else if effectiveWorkspaceReadiness === "missing"}
         <section class="companion-recovery" role="alert">
-          <div class="companion-mood-orb" aria-hidden="true"></div>
+          <div class="companion-mood-orb cmp-mask cmp-mask-circle" aria-hidden="true"></div>
           <h1>还没有设置聊天空间</h1>
           <p>请在 DSH 设置中选择一个 Workspace。我们不会替你自动切换。</p>
           <a class="cmp-btn cmp-btn-primary" href="/" aria-label="去 DSH 设置选择聊天空间" on:click={() => dispatch("recovery")}>去设置</a>
         </section>
       {:else if effectiveWorkspaceReadiness === "error"}
         <section class="companion-recovery" role="alert">
-          <div class="companion-mood-orb" aria-hidden="true"></div>
+          <div class="companion-mood-orb cmp-mask cmp-mask-circle" aria-hidden="true"></div>
           <h1>聊天空间暂时打不开</h1>
           <p>请回到 DSH 设置检查连接，然后再试一次。</p>
           <button class="cmp-btn cmp-btn-primary" on:click={() => dispatch("recovery")}>重新连接</button>
         </section>
       {:else if effectiveRelationshipReadiness === "loading"}
         <section class="companion-loading-shell" role="status" aria-label="正在加载">
-          <LoaderCircle class="companion-spin" size={22} aria-hidden="true" /><span>正在加载…</span>
+          <span class="cmp-loading cmp-loading-spinner cmp-loading-sm" aria-hidden="true"></span><span>正在加载…</span>
         </section>
       {:else if effectiveRelationshipReadiness === "missing"}
         <section class="companion-recovery" role="alert">
-          <div class="companion-mood-orb" aria-hidden="true"></div>
+          <div class="companion-mood-orb cmp-mask cmp-mask-circle" aria-hidden="true"></div>
           <h1>还没有设置聊天空间</h1>
           <p>请在 DSH 设置中选择一个 Workspace。我们不会替你自动切换。</p>
           <a class="cmp-btn cmp-btn-primary" href="/" aria-label="去 DSH 设置选择聊天空间" on:click={() => dispatch("recovery")}>去设置</a>
         </section>
       {:else if effectiveRelationshipReadiness === "error"}
         <section class="companion-recovery" role="alert">
-          <div class="companion-mood-orb" aria-hidden="true"></div>
+          <div class="companion-mood-orb cmp-mask cmp-mask-circle" aria-hidden="true"></div>
           <h1>关系资料暂时打不开</h1>
           <p>聊天空间还在，连接恢复后可以继续。</p>
           <button class="cmp-btn cmp-btn-primary" on:click={() => dispatch("recovery")}>重新连接</button>
         </section>
       {:else if effectiveSessionReadiness === "loading"}
         <section class="companion-loading-shell" role="status" aria-label="正在加载">
-          <LoaderCircle class="companion-spin" size={22} aria-hidden="true" /><span>正在加载…</span>
+          <span class="cmp-loading cmp-loading-spinner cmp-loading-sm" aria-hidden="true"></span><span>正在加载…</span>
         </section>
       {:else if effectiveSessionReadiness === "error" || projection.openState === "error"}
         <section class="companion-recovery" role="alert">
-          <div class="companion-mood-orb" aria-hidden="true"></div>
+          <div class="companion-mood-orb cmp-mask cmp-mask-circle" aria-hidden="true"></div>
           <h1>这段对话暂时打不开</h1>
           <p>你的消息不会被悄悄丢掉。连接恢复后可以继续，或回到 DSH 检查状态。</p>
           <button class="cmp-btn cmp-btn-primary" on:click={() => dispatch("recovery")}>重新连接</button>
@@ -1066,7 +1065,7 @@
             <button class="cmp-btn cmp-btn-ghost cmp-btn-sm" style="display:block;margin:0 auto 18px" on:click={loadOlder} disabled={displayedProjection.loadingOlder}>{displayedProjection.loadingOlder ? "正在加载…" : "查看更早的消息"}</button>
           {/if}
           {#if displayedProjection.items.length === 0}
-            <div class="companion-recovery"><div class="companion-mood-orb" aria-hidden="true"></div><h1>嗨，{identity.preferredAddress}</h1><p>今天想聊点什么？</p></div>
+            <div class="companion-recovery"><div class="companion-mood-orb cmp-mask cmp-mask-circle" aria-hidden="true"></div><h1>嗨，{identity.preferredAddress}</h1><p>今天想聊点什么？</p></div>
           {/if}
           {#each displayedProjection.messageUnits as unit (unit.id)}
             {@const first = unit.items[0]}
@@ -1077,8 +1076,8 @@
             {:else}
               {@const parts = messageContentParts(unit)}
               <article class="cmp-chat companion-row" class:cmp-chat-start={unit.side === "incoming"} class:cmp-chat-end={unit.side === "outgoing"} class:outgoing={unit.side === "outgoing"} class:incoming={unit.side === "incoming"} data-testid={unitTestId(unit)}>
-                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder cmp:rounded-full message-avatar">
-                  <div class="companion-avatar-crop cmp:rounded-full">{#if unit.side === "incoming" && identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else if unit.side === "outgoing" && identity.userAvatar}<img src={identity.userAvatar} alt="" />{:else}<span aria-hidden="true">{unit.side === "incoming" ? "✦" : "你"}</span>{/if}</div>
+                <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder message-avatar">
+                  <div class="companion-avatar-crop cmp-mask cmp-mask-circle">{#if unit.side === "incoming" && identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else if unit.side === "outgoing" && identity.userAvatar}<img src={identity.userAvatar} alt="" />{:else}<span aria-hidden="true">{unit.side === "incoming" ? "✦" : "你"}</span>{/if}</div>
                 </div>
                 <div class="companion-message-stack">
                   {#each parts as part}
@@ -1123,7 +1122,7 @@
                           </div>
                         {:else}
                           <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-voice-control" aria-label={voicePreparing[item.id] ? "正在准备语音" : voiceErrors[item.id] ? "重试语音" : "播放语音"} on:click={(event) => void toggleVoice(item, event.currentTarget)} disabled={!actions.prepareVoice || voicePreparing[item.id]}>
-                            {#if voicePreparing[item.id]}<LoaderCircle class="companion-spin" size={18} aria-hidden="true" />{:else if voiceErrors[item.id]}<RotateCcw size={18} aria-hidden="true" />{:else}<Play size={18} fill="currentColor" aria-hidden="true" />{/if}
+                            {#if voicePreparing[item.id]}<span class="cmp-loading cmp-loading-spinner cmp-loading-sm" aria-hidden="true"></span>{:else if voiceErrors[item.id]}<RotateCcw size={18} aria-hidden="true" />{:else}<Play size={18} fill="currentColor" aria-hidden="true" />{/if}
                           </button>
                           <div class="companion-voice-player">
                             <div class="companion-voice-waveform">{#each voiceWaveform(item.id) as height}<span style={`--voice-bar:${height}%`} aria-hidden="true"></span>{/each}</div>
@@ -1143,8 +1142,8 @@
           {/each}
           {#if typingVisible}
             <article class="cmp-chat cmp-chat-start companion-row incoming" data-testid="companion-typing-indicator" role="status" aria-label={`${identity.companionName}正在输入`}>
-              <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder cmp:rounded-full message-avatar">
-                <div class="companion-avatar-crop cmp:rounded-full">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div>
+              <div class="cmp-chat-image cmp-avatar cmp-avatar-placeholder message-avatar">
+                <div class="companion-avatar-crop cmp-mask cmp-mask-circle">{#if identity.companionAvatar}<img src={identity.companionAvatar} alt="" />{:else}<span aria-hidden="true">✦</span>{/if}</div>
               </div>
               <div class="cmp-chat-bubble companion-bubble companion-typing-bubble"><span class="cmp-loading cmp-loading-dots cmp-loading-sm" aria-hidden="true"></span>{#if waitingCopy}<span class="companion-waiting-copy">{waitingCopy}</span>{/if}</div>
             </article>
@@ -1172,17 +1171,17 @@
               {#each imageDrafts as draft (draft.id)}
                 <div class="companion-image-draft">
                   <button class="companion-image-draft-preview" type="button" aria-label={"查看大图：" + (draft.file.name || "待发送图片")} on:click={() => showDraftLightbox(draft)}><img src={draft.previewUrl} alt={draft.file.name || "待发送图片"} /></button>
-                  <button class="cmp-btn cmp-btn-circle companion-image-draft-remove" type="button" aria-label="移除图片" on:click={() => removeImage(draft)}><X size={13} strokeWidth={2.5} aria-hidden="true" /></button>
+                  <button class="cmp-btn cmp-btn-neutral cmp-btn-circle cmp-btn-xs companion-image-draft-remove" type="button" aria-label="移除图片" on:click={() => removeImage(draft)}><X size={13} strokeWidth={2.5} aria-hidden="true" /></button>
                 </div>
               {/each}
             </div>
           {/if}
           <div class="companion-compose-row">
-            <input bind:this={photoLibraryInput} id="companion-image-library" class="cmp-file-input companion-image-input" type="file" accept={IMAGE_ACCEPT} multiple tabindex="-1" aria-hidden="true" on:change={onImageInput} />
+            <input bind:this={photoLibraryInput} id="companion-image-library" class="companion-image-input" type="file" accept={IMAGE_ACCEPT} multiple tabindex="-1" aria-hidden="true" on:change={onImageInput} />
             <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-attach" type="button" aria-label="选择照片；长按拍照" title="选择照片；长按拍照" disabled={!imageLimits} on:pointerdown={onImagePickerPointerDown} on:pointerup={onImagePickerPointerUp} on:pointercancel={clearImagePickerPointer} on:contextmenu|preventDefault on:click={choosePhoto}><ImagePlus size={19} strokeWidth={2} aria-hidden="true" /></button>
-            <textarea bind:this={composerInput} class="cmp-textarea companion-textarea" aria-label="写消息" aria-autocomplete={commandSuggestion ? "list" : undefined} aria-controls={commandSuggestion ? "companion-command-suggestions" : undefined} placeholder={"写给 " + identity.companionName + "…"} rows="1" value={composer.draft} on:input={onInput} on:paste={onPaste} on:compositionstart={onCompositionStart} on:compositionend={onCompositionEnd} on:keydown={onKeydown}></textarea>
+            <textarea bind:this={composerInput} class="companion-textarea" aria-label="写消息" aria-autocomplete={commandSuggestion ? "list" : undefined} aria-controls={commandSuggestion ? "companion-command-suggestions" : undefined} placeholder={"写给 " + identity.companionName + "…"} rows="1" value={composer.draft} on:input={onInput} on:paste={onPaste} on:compositionstart={onCompositionStart} on:compositionend={onCompositionEnd} on:keydown={onKeydown}></textarea>
             <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-microphone" class:companion-microphone-recording={voiceStatus === "recording"} class:companion-microphone-stopping={voiceStatus === "stopping"} type="button" data-state={voiceStatus} aria-label={voiceStatus === "recording" ? "结束录音" : voiceStatus === "transcribing" ? "正在转写语音" : voiceCapability === "loading" ? "正在准备语音" : voiceCapability === "available" && voiceCaptureAvailable ? "开始录音" : "麦克风录音不可用"} title={voiceStatus === "recording" ? "结束录音" : voiceCapability === "available" && voiceCaptureAvailable ? "开始录音" : voiceUnavailableText()} disabled={voiceStatus === "stopping" || voiceStatus === "transcribing" || voiceCapability !== "available" || !actions.transcribeVoice || !voiceCaptureAvailable} on:click={() => void toggleVoiceInput()}>
-              {#if voiceStatus === "transcribing" || voiceStatus === "stopping"}<LoaderCircle class="companion-spin" size={18} aria-hidden="true" />{:else}<Mic size={19} strokeWidth={voiceStatus === "recording" ? 2.6 : 2} aria-hidden="true" />{/if}
+              {#if voiceStatus === "transcribing" || voiceStatus === "stopping"}<span class="cmp-loading cmp-loading-spinner cmp-loading-sm" aria-hidden="true"></span>{:else}<Mic size={19} strokeWidth={voiceStatus === "recording" ? 2.6 : 2} aria-hidden="true" />{/if}
             </button>
             {#if contextCapacity}
               <div class="companion-context-meter-wrap">
@@ -1226,7 +1225,7 @@
           {#each sessions as session (session.id)}
             <button class="companion-session-item" class:selected={session.selected} aria-label={`切换到对话：${session.title}`} aria-current={session.selected ? "true" : undefined} on:click={() => void selectSession(session.id)}>
               <span class="companion-session-copy"><strong>{session.title}</strong><small>{formatSessionDate(session.updatedAt)}</small></span>
-              {#if session.running}<span class="companion-session-running" aria-label="正在回复"></span>{/if}
+              {#if session.running}<span class="cmp-status cmp-status-secondary" aria-label="正在回复"></span>{/if}
             </button>
           {/each}
           {#if sessions.length === 0}<p class="companion-session-empty">还没有可以继续的对话</p>{/if}
@@ -1246,9 +1245,3 @@
   {/if}
 </div>
 <div class="companion-sr-only" aria-live="assertive">{liveAnnouncement}</div>
-
-<style>
-  .companion-sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
-  .companion-avatar-crop { background:color-mix(in srgb, var(--color-primary) 20%, var(--color-base-200)); color:var(--color-primary); font-weight:700; }
-  @media (max-width: 520px) { .companion-timeline { padding-bottom:8px; } .companion-composer { padding-inline:9px; } .companion-voice { min-width:0; } }
-</style>
