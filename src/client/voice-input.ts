@@ -231,7 +231,7 @@ export function normalizeVoiceTranscription(raw: unknown): CompanionVoiceTranscr
 /** The one ordinary text turn emitted for a successful voice transcription. */
 export function formatVoiceTurn(transcription: CompanionVoiceTranscription): string {
   const normalized = normalizeVoiceTranscription(transcription);
-  return normalized.expression ? `${normalized.text} [${normalized.expression}]` : normalized.text;
+  return normalized.expression ? `🎙️ ${normalized.text} [${normalized.expression}]` : `🎙️ ${normalized.text}`;
 }
 
 interface ActiveRecording {
