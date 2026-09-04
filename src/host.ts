@@ -24,9 +24,20 @@ import {
   validateIdentitySettings,
 } from "./domain.js";
 import { rewriteCompanionCompactionRequest } from "./compaction.js";
+import {
+  isVoiceAudioWithinDataUrlLimit,
+  maxVoiceBase64CharsForMediaType,
+  normalizeVoiceExpression,
+  normalizeVoiceMediaType,
+  isCanonicalBase64,
+  VOICE_CAPABILITY_ENDPOINT,
+  VOICE_TRANSCRIBE_ENDPOINT,
+  type VoiceExpression,
+} from "./voice-contract.js";
 
 export const SETTINGS_NAMESPACE = "dsh-companion" as const;
 export const RPC_CHANNEL = "/dsh-companion" as const;
+export { VOICE_CAPABILITY_ENDPOINT, VOICE_TRANSCRIBE_ENDPOINT } from "./voice-contract.js";
 export const SANDBOX_POSTURE = "workspace-write" as const;
 export const ESCALATION_ENABLED = false as const;
 const RELATIONSHIP_CONTEXT_NAME = "dsh-companion:relationship";
@@ -89,9 +100,29 @@ interface HostContextLike {
   llm: LlmRuntime;
   /** Required by this web plugin solely for the pinned static-server alias. */
   webServer: WebServerLike;
+  /** Optional Host services are resolved at call time so Companion stays loadable without Kepos. */
+  get?: (name: string) => unknown;
   on(name: "llm/stream", listener: (options: GenerateOptions, next: () => AsyncIterable<StreamChunk>) => AsyncIterable<StreamChunk>, options: { global: true }): () => void;
   on(name: "system-prompt/assemble", listener: (assembly: PromptAssembly, context: AssembleContext, next: () => Promise<PromptAssembly>) => Promise<PromptAssembly>): () => void;
 }
+
+interface KeposTtsTranscriptionServiceLike {
+  transcribe(request: { sessionId: string; mediaType: string; data: Uint8Array }, signal?: AbortSignal): Promise<unknown>;
+}
+
+export interface CompanionVoiceTranscription {
+  text: string;
+  expression?: VoiceExpression;
+}
+
+interface CompanionVoiceRequest {
+  workspaceId: string;
+  sessionId: string;
+  mediaType: string;
+  data: Uint8Array;
+}
+
+const VOICE_TRANSCRIPT_MAX_CHARS = 20_000;
 
 export interface RelationshipView {
   identity: CompanionIdentitySettings | undefined;
@@ -133,6 +164,71 @@ function workspaceFor(registry: WorkspaceRegistryLike, settings: CompanionSettin
   if (!workspace) return undefined;
   if (cwd === undefined) return workspace;
   return resolvePath(normalize(cwd)) === resolvePath(normalize(workspace.path)) ? workspace : undefined;
+}
+
+function workspaceOwnsSession(workspace: WorkspaceRecord, sessionId: string): boolean {
+  return Array.isArray(workspace.sessionIds) && workspace.sessionIds.includes(sessionId);
+}
+
+function decodeVoiceBase64(value: unknown, mediaType: string): Uint8Array | undefined {
+  const maxBase64Chars = maxVoiceBase64CharsForMediaType(mediaType);
+  if (maxBase64Chars === undefined || !isCanonicalBase64(value, maxBase64Chars)) return undefined;
+  try {
+    const data = Buffer.from(value, "base64");
+    if (data.byteLength === 0 || !isVoiceAudioWithinDataUrlLimit(mediaType, data.byteLength) || data.toString("base64") !== value) return undefined;
+    return new Uint8Array(data);
+  } catch {
+    return undefined;
+  }
+}
+
+function parseCompanionVoiceRequest(payload: unknown): CompanionVoiceRequest | undefined {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return undefined;
+  const record = payload as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.length !== 4 || keys.some((key) => !["workspaceId", "sessionId", "mediaType", "data"].includes(key))) return undefined;
+  if (typeof record.workspaceId !== "string" || !record.workspaceId.trim()) return undefined;
+  if (typeof record.sessionId !== "string" || !record.sessionId.trim()) return undefined;
+  const mediaType = normalizeVoiceMediaType(record.mediaType);
+  if (!mediaType) return undefined;
+  const data = decodeVoiceBase64(record.data, mediaType);
+  if (!data) return undefined;
+  return { workspaceId: record.workspaceId.trim(), sessionId: record.sessionId, mediaType, data };
+}
+
+function normalizeCompanionVoiceTranscription(raw: unknown): CompanionVoiceTranscription | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  const text = typeof record.text === "string" ? record.text.trim() : "";
+  if (!text || Array.from(text).length > VOICE_TRANSCRIPT_MAX_CHARS) return undefined;
+  const expressionCandidates: unknown[] = [record.expression, record.speechExpression, record.speech_expression, record.expressions];
+  if (Array.isArray(record.sentences)) expressionCandidates.push(...record.sentences);
+  let expression: VoiceExpression | undefined;
+  for (const candidate of expressionCandidates) {
+    if (Array.isArray(candidate)) {
+      for (const item of candidate) {
+        const normalized = normalizeVoiceExpression(typeof item === "object" && item !== null
+          ? (item as Record<string, unknown>).expression ?? (item as Record<string, unknown>).speechExpression ?? (item as Record<string, unknown>).speech_expression ?? (item as Record<string, unknown>).emotion
+          : item);
+        if (normalized) { expression = normalized; break; }
+      }
+    } else {
+      const normalized = normalizeVoiceExpression(typeof candidate === "object" && candidate !== null
+        ? (candidate as Record<string, unknown>).expression ?? (candidate as Record<string, unknown>).speechExpression ?? (candidate as Record<string, unknown>).speech_expression ?? (candidate as Record<string, unknown>).emotion
+        : candidate);
+      if (normalized) expression = normalized;
+    }
+    if (expression) break;
+  }
+  return expression ? { text, expression } : { text };
+}
+
+function optionalKeposTts(ctx: HostContextLike): KeposTtsTranscriptionServiceLike | undefined {
+  let service: unknown;
+  try { service = ctx.get?.("keposTts"); }
+  catch { return undefined; }
+  if (typeof service !== "object" || service === null || typeof (service as { transcribe?: unknown }).transcribe !== "function") return undefined;
+  return service as KeposTtsTranscriptionServiceLike;
 }
 
 function currentCwd(exec: ToolRunContext): string | undefined {
@@ -679,6 +775,28 @@ export class CompanionHostController {
     };
   }
 
+  private voiceCapability(): boolean {
+    return optionalKeposTts(this.ctx) !== undefined;
+  }
+
+  private async transcribeVoice(request: CompanionVoiceRequest, signal: AbortSignal): Promise<RpcResult<CompanionVoiceTranscription>> {
+    const configured = this.configuredWorkspace(request.workspaceId);
+    if (!configured) return fail("找不到已配置的 Companion Workspace。", "workspace-not-found");
+    if (!workspaceOwnsSession(configured.workspace, request.sessionId)) return fail("所选对话不属于 Companion Workspace。", "session-not-found");
+    const service = optionalKeposTts(this.ctx);
+    if (!service) return fail("语音转写尚未配置，请安装并配置 Kepos。", "transcription-unavailable");
+    if (signal.aborted) return fail("语音转写已取消。", "cancelled");
+    try {
+      const raw = await service.transcribe({ sessionId: request.sessionId, mediaType: request.mediaType, data: request.data }, signal);
+      if (signal.aborted) return fail("语音转写已取消。", "cancelled");
+      const normalized = normalizeCompanionVoiceTranscription(raw);
+      return normalized ? ok(normalized) : fail("语音转写结果无效，请再试一次。", "transcription-failed");
+    } catch {
+      if (signal.aborted) return fail("语音转写已取消。", "cancelled");
+      return fail("语音转写暂时不可用，请稍后重试。", "transcription-failed");
+    }
+  }
+
   register(): void {
     this.ctx.tools.register(historyTool(this));
     this.ctx.tools.register(relationshipTool(this));
@@ -691,8 +809,14 @@ export class CompanionHostController {
     this.disposers.push(this.ctx.connection.rpc.handle(RPC_CHANNEL, async (endpoint, payload, signal) => {
       const record = typeof payload === "object" && payload !== null ? payload as { workspaceId?: unknown; affinity?: unknown; revision?: unknown } : {};
       const requested = typeof record.workspaceId === "string" ? record.workspaceId : undefined;
+      if (endpoint === VOICE_TRANSCRIBE_ENDPOINT) {
+        const request = parseCompanionVoiceRequest(payload);
+        if (!request) return fail("语音请求格式无效。", "invalid-input");
+        return this.transcribeVoice(request, signal);
+      }
       const configured = this.configuredWorkspace(requested);
       if (!configured) return fail("找不到已配置的 Companion Workspace。", "workspace-not-found");
+      if (endpoint === VOICE_CAPABILITY_ENDPOINT) return ok({ available: this.voiceCapability() });
       const store = this.storeFor(configured.workspace);
       if (endpoint === "relationship/reset") return ok({ state: await store.resetAffinity(signal) });
       if (endpoint === "relationship/set-affinity") return ok({ state: await store.setAffinity(record.affinity, signal) });

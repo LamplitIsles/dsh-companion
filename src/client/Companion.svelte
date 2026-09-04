@@ -9,6 +9,7 @@
   import Play from "lucide-svelte/icons/play";
   import RotateCcw from "lucide-svelte/icons/rotate-ccw";
   import Square from "lucide-svelte/icons/square";
+  import Mic from "lucide-svelte/icons/mic";
   import X from "lucide-svelte/icons/x";
   import { COMPACTION_STATUS_DURATION_MS, formatTokenCount, resolveContextCapacity, type CompactionLifecycleState } from "../continuity.js";
   import type { CompanionProjection, TimelineImage, TimelineItem, TimelineMessageUnit, TimelineNotice, TimelineText, TimelineVoice } from "../projection.js";
@@ -21,6 +22,7 @@
   import Markdown from "./Markdown.svelte";
   import relationshipBackground from "./assets/relationship-night-voyage.webp";
   import { resolveImageDisplaySize } from "../media.js";
+  import { canCaptureVoice, formatVoiceTurn, VoiceRecordingController, VoiceRecordingError, type CompanionVoiceTranscription, type VoiceRecording, type VoiceRecordingStatus } from "./voice-input.js";
 
   export interface CompanionIdentityView {
     companionName: string;
@@ -42,6 +44,7 @@
     loadOlder?: () => Promise<void>;
     attachmentUrl?: (attachment: unknown) => Promise<string>;
     prepareVoice?: (text: string) => Promise<string>;
+    transcribeVoice?: (recording: VoiceRecording, signal?: AbortSignal) => Promise<CompanionVoiceTranscription>;
   }
   export interface CompanionSessionView {
     id: string;
@@ -61,6 +64,7 @@
   export let relationshipReadiness: CompanionReadiness = "loading";
   export let sessionId: string | undefined;
   export let imageLimits: import("@deepseek-ai/dsh-attachment").ImageAttachmentLimits | undefined;
+  export let voiceCapability: "loading" | "available" | "unavailable" = "unavailable";
   export let continuity: CompanionContinuityView = {};
 
   const dispatch = createEventDispatcher<{ advanced: void; recovery: void }>();
@@ -141,6 +145,14 @@
   let imagePickerPointer: { id: number; startedAt: number } | undefined;
   let suppressImagePickerClick = false;
   let composerResizeToken = 0;
+  let voiceStatus: VoiceRecordingStatus = "idle";
+  const voiceCaptureAvailable = canCaptureVoice();
+  let voiceElapsedMs = 0;
+  let voiceClock: ReturnType<typeof setInterval> | undefined;
+  let voiceFailure = "";
+  let voiceController = new VoiceRecordingController({ onStatus: (status) => { voiceStatus = status; }, onError: (error) => { clearVoiceClock(); voiceElapsedMs = 0; if (error.code !== "cancelled") { voiceFailure = voiceErrorText(error); liveAnnouncement = voiceFailure; } } });
+  let voiceSessionId: string | undefined;
+  let voiceTranscriptionAbort: AbortController | undefined;
 
   $: effectiveWorkspaceReadiness = workspaceReadiness;
   $: effectiveSessionReadiness = sessionReadiness;
@@ -163,6 +175,10 @@
     composer = createComposerState();
     submissionToken += 1;
     void scheduleComposerResize();
+  }
+  $: if (sessionId !== voiceSessionId) {
+    voiceSessionId = sessionId;
+    void cancelVoiceInput();
   }
 
   async function scheduleComposerResize(): Promise<void> {
@@ -637,6 +653,106 @@
     });
   }
 
+  function formatVoiceElapsed(value: number): string {
+    const seconds = Math.max(0, Math.floor(value / 1000));
+    const minutes = Math.floor(seconds / 60).toString().padStart(2, "0");
+    return `${minutes}:${(seconds % 60).toString().padStart(2, "0")}`;
+  }
+
+  function voiceErrorText(error: unknown): string {
+    if (error instanceof VoiceRecordingError) {
+      if (error.code === "insecure-context") return "请在安全连接中使用麦克风。";
+      if (error.code === "unsupported" || error.code === "media-type") return "当前浏览器不支持录音。";
+      if (error.code === "permission-denied") return "麦克风权限被拒绝，请允许后重试。";
+      if (error.code === "duration-limit") return "录音最长 5 分钟，已停止；请说短一点再试。";
+      if (error.code === "size-limit") return "录音超过语音大小限制，请说短一点再试。";
+      if (error.code === "empty") return "没有录到声音，请再试一次。";
+      if (error.code === "transcript-empty") return "没有听清内容，请再试一次。";
+    }
+    return "语音暂时无法使用，请再试一次。";
+  }
+
+  function voiceUnavailableText(): string {
+    return voiceCaptureAvailable ? "语音功能不可用，请安装并配置 Kepos。" : "当前环境不支持麦克风录音。";
+  }
+
+  function clearVoiceClock(): void {
+    if (voiceClock !== undefined) clearInterval(voiceClock);
+    voiceClock = undefined;
+  }
+
+  async function cancelVoiceInput(): Promise<void> {
+    clearVoiceClock();
+    voiceTranscriptionAbort?.abort();
+    voiceTranscriptionAbort = undefined;
+    try { await voiceController.cancel(); }
+    catch { /* cleanup is best effort; the controller stops every known track */ }
+    voiceElapsedMs = 0;
+    voiceFailure = "";
+  }
+
+  async function stopVoiceAndTranscribe(): Promise<void> {
+    clearVoiceClock();
+    let recording: VoiceRecording | undefined;
+    try { recording = await voiceController.stopAndGet(); }
+    catch (error) {
+      voiceFailure = voiceErrorText(error);
+      liveAnnouncement = voiceFailure;
+      voiceElapsedMs = 0;
+      return;
+    }
+    voiceElapsedMs = 0;
+    voiceFailure = "";
+    if (!recording || !actions.transcribeVoice || !voiceController.markTranscribing()) return;
+    const abort = new AbortController();
+    const originSessionId = sessionId;
+    voiceTranscriptionAbort = abort;
+    try {
+      const transcription = await actions.transcribeVoice(recording, abort.signal);
+      if (abort.signal.aborted || sessionId !== originSessionId) return;
+      const text = formatVoiceTurn(transcription);
+      await actions.send(text, []);
+      if (abort.signal.aborted || sessionId !== originSessionId) return;
+      liveAnnouncement = "语音已发送。";
+    }
+    catch (error) {
+      voiceFailure = voiceErrorText(error);
+      liveAnnouncement = voiceFailure;
+    }
+    finally {
+      if (voiceTranscriptionAbort === abort) voiceTranscriptionAbort = undefined;
+      voiceController.finishTranscribing();
+    }
+  }
+
+  async function toggleVoiceInput(): Promise<void> {
+    if (voiceStatus === "recording" || voiceStatus === "stopping") {
+      if (voiceStatus === "recording") await stopVoiceAndTranscribe();
+      return;
+    }
+    if (voiceStatus === "transcribing") return;
+    if (voiceCapability === "loading") {
+      liveAnnouncement = "语音功能正在准备，请稍候。";
+      return;
+    }
+    if (voiceCapability !== "available" || !actions.transcribeVoice || !voiceCaptureAvailable) {
+      liveAnnouncement = voiceUnavailableText();
+      return;
+    }
+    voiceElapsedMs = 0;
+    voiceFailure = "";
+    clearVoiceClock();
+    try {
+      await voiceController.start();
+      voiceClock = setInterval(() => { voiceElapsedMs = voiceController.elapsedMs; }, 250);
+    }
+    catch (error) {
+      clearVoiceClock();
+      voiceFailure = voiceErrorText(error);
+      liveAnnouncement = voiceFailure;
+    }
+  }
+
   async function stop(): Promise<void> {
     if (!actions.stop || stopping) return;
     stopping = true;
@@ -851,6 +967,10 @@
     releaseSubmissionImages(imageDrafts);
     clearWaitingTimers();
     clearContinuityStatusTimer();
+    clearVoiceClock();
+    voiceTranscriptionAbort?.abort();
+    voiceTranscriptionAbort = undefined;
+    voiceController.dispose();
     for (const audio of document.querySelectorAll<HTMLAudioElement>("#dsh-companion .companion-voice audio")) audio.pause();
     for (const url of Object.values(imageUrls)) releaseImageUrl(url);
     releaseDeferredPreviewReleases();
@@ -1061,6 +1181,9 @@
             <input bind:this={photoLibraryInput} id="companion-image-library" class="cmp-file-input companion-image-input" type="file" accept={IMAGE_ACCEPT} multiple tabindex="-1" aria-hidden="true" on:change={onImageInput} />
             <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-attach" type="button" aria-label="选择照片；长按拍照" title="选择照片；长按拍照" disabled={!imageLimits} on:pointerdown={onImagePickerPointerDown} on:pointerup={onImagePickerPointerUp} on:pointercancel={clearImagePickerPointer} on:contextmenu|preventDefault on:click={choosePhoto}><ImagePlus size={19} strokeWidth={2} aria-hidden="true" /></button>
             <textarea bind:this={composerInput} class="cmp-textarea companion-textarea" aria-label="写消息" aria-autocomplete={commandSuggestion ? "list" : undefined} aria-controls={commandSuggestion ? "companion-command-suggestions" : undefined} placeholder={"写给 " + identity.companionName + "…"} rows="1" value={composer.draft} on:input={onInput} on:paste={onPaste} on:compositionstart={onCompositionStart} on:compositionend={onCompositionEnd} on:keydown={onKeydown}></textarea>
+            <button class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-microphone" class:companion-microphone-recording={voiceStatus === "recording"} class:companion-microphone-stopping={voiceStatus === "stopping"} type="button" data-state={voiceStatus} aria-label={voiceStatus === "recording" ? "结束录音" : voiceStatus === "transcribing" ? "正在转写语音" : voiceCapability === "loading" ? "正在准备语音" : voiceCapability === "available" && voiceCaptureAvailable ? "开始录音" : "麦克风录音不可用"} title={voiceStatus === "recording" ? "结束录音" : voiceCapability === "available" && voiceCaptureAvailable ? "开始录音" : voiceUnavailableText()} disabled={voiceStatus === "stopping" || voiceStatus === "transcribing" || voiceCapability !== "available" || !actions.transcribeVoice || !voiceCaptureAvailable} on:click={() => void toggleVoiceInput()}>
+              {#if voiceStatus === "transcribing" || voiceStatus === "stopping"}<LoaderCircle class="companion-spin" size={18} aria-hidden="true" />{:else}<Mic size={19} strokeWidth={voiceStatus === "recording" ? 2.6 : 2} aria-hidden="true" />{/if}
+            </button>
             {#if contextCapacity}
               <div class="companion-context-meter-wrap">
                 <button bind:this={contextMeterButton} class="cmp-btn cmp-btn-ghost cmp-btn-circle companion-context-meter" class:companion-context-meter-open={contextMeterOpen} data-state={continuityStatus?.status === "running" ? "active" : continuityStatus?.status === "complete" ? "complete" : continuityStatus?.status === "failed" ? "failed" : contextCapacity.percentage >= 80 ? "warning" : "idle"} type="button" aria-label={`对话容量：${contextCapacity.percentage}%`} aria-expanded={contextMeterOpen} aria-controls="companion-context-popover" on:click={toggleContextMeter}>
@@ -1081,6 +1204,15 @@
               <button class="cmp-btn cmp-btn-primary cmp-btn-circle companion-send" aria-label="发送消息" on:click={submit} disabled={!composer.draft.trim() && imageDrafts.length === 0}><span aria-hidden="true">↑</span></button>
             {/if}
           </div>
+          {#if voiceStatus === "recording" || voiceStatus === "stopping"}
+            <div class="companion-voice-input-status" data-testid="companion-voice-recording-status" role="status" aria-live="polite">{voiceStatus === "stopping" ? "正在结束录音…" : `正在录音 · ${formatVoiceElapsed(voiceElapsedMs)} / 05:00`}</div>
+          {:else if voiceStatus === "transcribing"}
+            <div class="companion-voice-input-status" data-testid="companion-voice-transcribing-status" role="status" aria-live="polite">正在转写语音…</div>
+          {:else if voiceCapability === "unavailable" || !voiceCaptureAvailable}
+            <div class="companion-voice-input-status companion-voice-input-unavailable" data-testid="companion-voice-unavailable-status" role="status">{voiceUnavailableText()}</div>
+          {:else if voiceFailure || voiceStatus === "unavailable"}
+            <div class="companion-voice-input-status companion-voice-input-error" data-testid="companion-voice-error-status" role="status">{voiceFailure || "语音暂时无法使用，请再试一次。"}</div>
+          {/if}
           <div class="companion-compose-hint">Enter 发送 · Shift+Enter 换行{displayedProjection.pendingCount ? ` · ${displayedProjection.pendingCount} 条待发送` : ""}</div>
         </div>
       {/if}

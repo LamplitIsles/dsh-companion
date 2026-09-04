@@ -4,6 +4,7 @@ import type { ImageAttachmentLimits } from "@deepseek-ai/dsh-attachment";
 import type { CompanionImageDraft } from "./image-drafts.js";
 import type { PendingSubmissionRetirement } from "@deepseek-ai/dsh-api-session-controller/client";
 import type { CompanionReadiness } from "./readiness.js";
+import type { CompanionVoiceTranscription, VoiceRecording } from "./voice-input.js";
 
 export interface CompanionIdentityView {
   companionName: string;
@@ -25,6 +26,8 @@ export interface CompanionActions {
   loadOlder?: () => Promise<void>;
   attachmentUrl?: (attachment: unknown) => Promise<string>;
   prepareVoice?: (text: string) => Promise<string>;
+  /** Authenticated Companion Host transcription; recording bytes never enter Session attachments. */
+  transcribeVoice?: (recording: VoiceRecording, signal?: AbortSignal) => Promise<CompanionVoiceTranscription>;
 }
 export interface CompanionSessionView {
   id: string;
@@ -55,6 +58,8 @@ export interface CompanionBridgeProps {
   sessionId?: string;
   /** Host-advertised image capability and intake limits; absent means unavailable. */
   imageLimits?: ImageAttachmentLimits;
+  /** Optional Kepos capability observed by the Host RPC. */
+  voiceCapability?: "loading" | "available" | "unavailable";
   continuity?: CompanionContinuityView;
   onAdvanced?: () => void;
   onRecovery?: () => void;

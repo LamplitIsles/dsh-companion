@@ -7,6 +7,7 @@ import type { WorkspaceSnapshot, WorkspaceView } from "@deepseek-ai/dsh-api-work
 import type { SettingsScope, SettingsScopeSnapshot } from "@deepseek-ai/dsh-client-ui-settings/client";
 import type { ClientSettings } from "../src/client/settings.js";
 import { CompanionRoot } from "../src/client/CompanionRoot.js";
+import { VOICE_CAPABILITY_ENDPOINT, VOICE_TRANSCRIBE_ENDPOINT } from "../src/voice-contract.js";
 
 type Listener = () => void;
 
@@ -141,6 +142,8 @@ export function mountBridgeFixture(target: HTMLElement): void {
 
   const rpc: ClientConnectionRpc = {
     call(_channel, endpoint, _payload, signal) {
+      if (endpoint === VOICE_CAPABILITY_ENDPOINT) return Promise.resolve(ok({ available: true }));
+      if (endpoint === VOICE_TRANSCRIBE_ENDPOINT) return Promise.resolve(ok({ text: "来自桥接夹具的语音消息", expression: "sad" }));
       if (endpoint !== "relationship/get" && endpoint !== "relationship/watch") return Promise.resolve(ok({}));
       if (relationshipMode !== "pending" && endpoint === "relationship/get") {
         if (relationshipMode === "error") return Promise.reject(new Error("fixture relationship unavailable"));

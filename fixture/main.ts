@@ -10,6 +10,7 @@ import { groupTimelineItems, type CompanionProjection } from "../src/projection.
 import type { TimelineItem } from "../src/projection.js";
 import type { CompanionContinuityView } from "../src/client/companion-bridge.js";
 import type { CompanionImageDraft } from "../src/client/image-drafts.js";
+import type { VoiceRecording } from "../src/client/voice-input.js";
 import type { PendingSubmissionRetirement } from "@deepseek-ai/dsh-api-session-controller/client";
 import type { CompactionLifecycleState, ContextPressureProjection } from "../src/continuity.js";
 import type { ImageAttachmentLimits } from "@deepseek-ai/dsh-attachment";
@@ -93,6 +94,10 @@ let submissionSequence = 0;
 let promptErrorSequence = 0;
 let failedAttachmentLoads = 0;
 let deferredSends = false;
+let releaseVoiceTranscription: (() => void) | undefined;
+const voiceTranscriptionGate = query.get("voice") === "1"
+  ? new Promise<void>((resolve) => { releaseVoiceTranscription = resolve; })
+  : undefined;
 let pendingSends: Array<{
   text: string;
   images: readonly CompanionImageDraft[];
@@ -123,7 +128,7 @@ const fixtureProps: CompanionBridgeProps = {
       return;
     }
     await new Promise<void>((resolve, reject) => { pendingSends.push({ text, images, echoId, onRetire, resolve, reject }); });
-  }, stop: async () => { stopCalls += 1; }, selectSession: async (sessionId: string) => { switchFixtureSession(sessionId); }, loadOlder: async () => undefined, attachmentUrl: async () => { if (failedAttachmentLoads > 0) { failedAttachmentLoads -= 1; throw new Error("fixture attachment failure"); } return URL.createObjectURL(new Blob([svgDocument], { type: "image/svg+xml" })); }, prepareVoice: async (text: string) => { if (text.includes("失败")) throw new Error("fixture voice failure"); return "/kepos-tts/audio/fixture.mp3"; } },
+  }, stop: async () => { stopCalls += 1; }, selectSession: async (sessionId: string) => { switchFixtureSession(sessionId); }, loadOlder: async () => undefined, attachmentUrl: async () => { if (failedAttachmentLoads > 0) { failedAttachmentLoads -= 1; throw new Error("fixture attachment failure"); } return URL.createObjectURL(new Blob([svgDocument], { type: "image/svg+xml" })); }, prepareVoice: async (text: string) => { if (text.includes("失败")) throw new Error("fixture voice failure"); return "/kepos-tts/audio/fixture.mp3"; }, transcribeVoice: async (_recording: VoiceRecording) => { if (query.get("voice") === "fail") throw new Error("语音转写暂时不可用，请稍后重试。"); if (voiceTranscriptionGate) await voiceTranscriptionGate; return { text: "来自麦克风的测试消息", expression: "sad" }; } },
   workspaceReadiness: readiness("workspace"),
   relationshipReadiness: readiness("relationship"),
   sessionReadiness: readiness("session"),
@@ -136,6 +141,7 @@ const fixtureProps: CompanionBridgeProps = {
     maxImageDimension: 2_000,
     mediaTypes: ["image/png", "image/jpeg", "image/webp", "image/gif"],
   } satisfies ImageAttachmentLimits,
+  voiceCapability: "available",
 };
 const propsStore = writable(fixtureProps);
 
@@ -266,6 +272,7 @@ declare global {
       unmountCalls(): number;
       setReadiness(next: { workspace?: CompanionReadiness; relationship?: CompanionReadiness; session?: CompanionReadiness }): void;
       failNextImageLoad(): void;
+      resolveVoice(): void;
     };
   }
 }
@@ -295,6 +302,7 @@ window.__companionFixture = {
     }));
   },
   failNextImageLoad() { failedAttachmentLoads += 1; },
+  resolveVoice() { releaseVoiceTranscription?.(); releaseVoiceTranscription = undefined; },
   setStatus(status) { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, status } })); },
   setRunning(running) { propsStore.update((current) => ({ ...current, projection: { ...current.projection!, running } })); },
   finishImageGeneration() { propsStore.update((current) => replaceProjectionItems(current, current.projection!.items.filter((item) => item.id !== "imagegen:demo:loading"))); },

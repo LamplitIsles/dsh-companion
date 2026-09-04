@@ -198,6 +198,79 @@ test("composer grows, caps, and shrinks without document overflow", async ({ pag
   expect((await metrics()).height).toBe(initial.height);
 });
 
+test("microphone records once beside context capacity and submits a minimal expression label", async ({ page }) => {
+  await page.addInitScript(() => {
+    class FakeRecorder {
+      static isTypeSupported(type: string): boolean { return type === "audio/webm;codecs=opus"; }
+      readonly mimeType: string;
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      onerror: ((event: { error?: unknown }) => void) | null = null;
+      constructor(_stream: unknown, options?: { mimeType?: string }) { this.mimeType = options?.mimeType ?? "audio/webm;codecs=opus"; }
+      start(): void {}
+      stop(): void {
+        this.ondataavailable?.({ data: new Blob(["fixture voice"], { type: this.mimeType }) });
+        this.onstop?.();
+      }
+    }
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) } });
+    Object.defineProperty(window, "MediaRecorder", { configurable: true, value: FakeRecorder });
+  });
+  await page.goto("/?voice=1");
+  await page.evaluate(() => window.__companionFixture?.setCapacity({ projectedTokens: 100, contextWindow: 1_000 }));
+  const row = page.locator(".companion-compose-row");
+  const mic = row.locator(".companion-microphone");
+  await expect(mic).toHaveAccessibleName("开始录音");
+  await expect(page.getByRole("button", { name: /对话容量/ })).toBeVisible();
+  const children = await row.evaluate((node) => Array.from(node.children, (child) => child.className));
+  expect(children.findIndex((name) => name.includes("companion-microphone"))).toBeLessThan(children.findIndex((name) => name.includes("companion-context-meter-wrap")));
+
+  await mic.click();
+  await expect(mic).toHaveAccessibleName("结束录音");
+  await expect(page.getByTestId("companion-voice-recording-status")).toContainText("正在录音");
+  await mic.click();
+  await expect(page.getByTestId("companion-voice-transcribing-status")).toBeVisible();
+  const textarea = page.getByRole("textbox", { name: "写消息" });
+  await textarea.fill("键入草稿");
+  await expect(page.getByRole("button", { name: "发送消息" })).toBeEnabled();
+  await page.evaluate(() => window.__companionFixture?.resolveVoice());
+  await expect(page.getByText("来自麦克风的测试消息 [sad]", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("companion-voice-transcribing-status")).toHaveCount(0);
+  await expect(textarea).toHaveValue("键入草稿");
+});
+
+test("failed microphone transcription preserves text and image drafts without sending", async ({ page }) => {
+  await page.addInitScript(() => {
+    class FakeRecorder {
+      static isTypeSupported(type: string): boolean { return type === "audio/webm;codecs=opus"; }
+      readonly mimeType: string;
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      onerror: ((event: { error?: unknown }) => void) | null = null;
+      constructor(_stream: unknown, options?: { mimeType?: string }) { this.mimeType = options?.mimeType ?? "audio/webm;codecs=opus"; }
+      start(): void {}
+      stop(): void {
+        this.ondataavailable?.({ data: new Blob(["fixture voice"], { type: this.mimeType }) });
+        this.onstop?.();
+      }
+    }
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) } });
+    Object.defineProperty(window, "MediaRecorder", { configurable: true, value: FakeRecorder });
+  });
+  await page.goto("/?voice=fail");
+  const textarea = page.getByRole("textbox", { name: "写消息" });
+  await textarea.fill("保留这段草稿");
+  await page.locator("#companion-image-library").setInputFiles({ name: "draft.png", mimeType: "image/png", buffer: Buffer.from("fixture image") });
+  const mic = page.locator(".companion-microphone");
+  await mic.click();
+  await expect(mic).toHaveAccessibleName("结束录音");
+  await mic.click();
+  await expect(page.getByTestId("companion-voice-error-status")).toContainText("语音暂时无法使用");
+  await expect(textarea).toHaveValue("保留这段草稿");
+  await expect(page.locator(".companion-image-draft")).toHaveCount(1);
+  await expect.poll(() => page.evaluate(() => window.__companionFixture?.sendCalls() ?? -1)).toBe(0);
+});
+
 test("keeps startup neutral until each readiness authority settles", async ({ page }) => {
   await page.goto("/?workspace=loading&relationship=loading&session=loading");
   await expect(page.getByRole("status", { name: "正在加载" })).toBeVisible();
