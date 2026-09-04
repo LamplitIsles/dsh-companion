@@ -38,7 +38,7 @@ function overlapsFence(start: number, end: number, ranges: Array<[number, number
   return ranges.some(([from, to]) => start < to && end > from);
 }
 
-/** Normalize the installed Kepos grammar's text payload without mutating chat text. */
+/** Normalize the installed Kepos Speech grammar's text payload without mutating chat text. */
 export function normalizeTtsText(value: string): string {
   return value.replace(/\s+/gu, " ").trim();
 }

@@ -1,5 +1,5 @@
 /**
- * The browser/Companion boundary for the optional Kepos short-audio service.
+ * The browser/Companion boundary for the optional Kepos Speech short-audio service.
  * Keep this module free of browser and Node-only APIs so both bundles can use
  * the same admission rules.
  */

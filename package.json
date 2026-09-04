@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "A calm, one-to-one Svelte companion surface for DeepSeek Harness",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LamplitIsles/dsh-companion.git"
+  },
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -29,6 +33,7 @@
     "LICENSE"
   ],
   "publishConfig": {
+    "registry": "https://registry.npmjs.org",
     "access": "public"
   },
   "engines": {
@@ -137,6 +142,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "pack:check": "bun run build && npm pack --dry-run",
+    "release:check": "bun scripts/release-check.ts",
+    "release:pack": "bun scripts/release-pack.ts",
     "test:compaction-loader": "bun run build && node scripts/compaction-loader-smoke.mjs",
     "test:dsh-link": "bun run build && node scripts/dsh-link-smoke.mjs",
     "fixture": "vite --config fixture/vite.config.ts"
