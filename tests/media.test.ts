@@ -3,7 +3,7 @@ import { imageGenProjectionId, parseTtsPassage, recognizeImageGenResult, resolve
 import { TtsPreparationCache, validateTtsPayload } from "../src/client/voice-cache.js";
 
 describe("companion media", () => {
-  it("matches the installed Kepos tag grammar for finalized passages", () => {
+  it("matches the installed Kepos Speech tag grammar for finalized passages", () => {
     const parsed = parseTtsPassage("正文 [[tts:text]] 你好，世界  [[/tts:text]]", true)!;
     expect(parsed.text).toBe("你好，世界");
     expect(parseTtsPassage("```[[tts:text]]假的[[/tts:text]]```", true)).toBeUndefined();
@@ -31,9 +31,9 @@ describe("companion media", () => {
   });
 });
 
-describe("Kepos TTS browser contract", () => {
+describe("Kepos Speech browser contract", () => {
   it("accepts the real bounded same-origin route payload and caches it once", async () => {
-    const payload = { mediaType: "audio/mpeg", url: "/kepos-tts/audio/abc", bytes: 2401 };
+    const payload = { mediaType: "audio/mpeg", url: "/kepos-speech/audio/abc", bytes: 2401 };
     expect(validateTtsPayload(payload)).toEqual(payload);
     let calls = 0;
     const cache = new TtsPreparationCache();
@@ -42,18 +42,20 @@ describe("Kepos TTS browser contract", () => {
       cache.prepare("s1", "你好", { synthesize: async () => { calls += 1; return payload; } }),
     ]);
     expect(prepared).toEqual([prepared[0], prepared[0]]);
-    expect(prepared[0]?.url).toBe("/kepos-tts/audio/abc");
+    expect(prepared[0]?.url).toBe("/kepos-speech/audio/abc");
     expect(calls).toBe(1);
   });
 
   it("rejects cross-origin, wrong media type, and unbounded route payloads", () => {
     expect(() => validateTtsPayload({ mediaType: "audio/mpeg", url: "https://elsewhere.invalid/audio", bytes: 1 }, "http://localhost")).toThrow("audio-invalid");
-    expect(() => validateTtsPayload({ mediaType: "audio/ogg", url: "/kepos-tts/audio/a", bytes: 1 })).toThrow("audio-invalid");
-    expect(() => validateTtsPayload({ mediaType: "audio/mpeg", url: "/kepos-tts/audio/a", bytes: 0 })).toThrow("audio-invalid");
+    expect(() => validateTtsPayload({ mediaType: "audio/ogg", url: "/kepos-speech/audio/a", bytes: 1 })).toThrow("audio-invalid");
+    expect(() => validateTtsPayload({ mediaType: "audio/mpeg", url: "/kepos-speech/audio/a", bytes: 0 })).toThrow("audio-invalid");
+    expect(() => validateTtsPayload({ mediaType: "audio/mpeg", url: "/kepos-tts/audio/a", bytes: 1 })).toThrow("audio-invalid");
+    expect(() => validateTtsPayload({ mediaType: "audio/mpeg", url: "/other/audio/a", bytes: 1 })).toThrow("audio-invalid");
   });
 
   it("evicts a rejected preparation so a voice retry calls Kepos again", async () => {
-    const payload = { mediaType: "audio/mpeg", url: "/kepos-tts/audio/retry", bytes: 2401 };
+    const payload = { mediaType: "audio/mpeg", url: "/kepos-speech/audio/retry", bytes: 2401 };
     let calls = 0;
     const cache = new TtsPreparationCache();
     const rpc = {

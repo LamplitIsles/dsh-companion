@@ -100,13 +100,13 @@ interface HostContextLike {
   llm: LlmRuntime;
   /** Required by this web plugin solely for the pinned static-server alias. */
   webServer: WebServerLike;
-  /** Optional Host services are resolved at call time so Companion stays loadable without Kepos. */
+  /** Optional Host services are resolved at call time so Companion stays loadable without Kepos Speech. */
   get?: (name: string) => unknown;
   on(name: "llm/stream", listener: (options: GenerateOptions, next: () => AsyncIterable<StreamChunk>) => AsyncIterable<StreamChunk>, options: { global: true }): () => void;
   on(name: "system-prompt/assemble", listener: (assembly: PromptAssembly, context: AssembleContext, next: () => Promise<PromptAssembly>) => Promise<PromptAssembly>): () => void;
 }
 
-interface KeposTtsTranscriptionServiceLike {
+interface KeposSpeechTranscriptionServiceLike {
   transcribe(request: { sessionId: string; mediaType: string; data: Uint8Array }, signal?: AbortSignal): Promise<unknown>;
 }
 
@@ -223,12 +223,12 @@ function normalizeCompanionVoiceTranscription(raw: unknown): CompanionVoiceTrans
   return expression ? { text, expression } : { text };
 }
 
-function optionalKeposTts(ctx: HostContextLike): KeposTtsTranscriptionServiceLike | undefined {
+function optionalKeposSpeech(ctx: HostContextLike): KeposSpeechTranscriptionServiceLike | undefined {
   let service: unknown;
-  try { service = ctx.get?.("keposTts"); }
+  try { service = ctx.get?.("keposSpeech"); }
   catch { return undefined; }
   if (typeof service !== "object" || service === null || typeof (service as { transcribe?: unknown }).transcribe !== "function") return undefined;
-  return service as KeposTtsTranscriptionServiceLike;
+  return service as KeposSpeechTranscriptionServiceLike;
 }
 
 function currentCwd(exec: ToolRunContext): string | undefined {
@@ -776,15 +776,15 @@ export class CompanionHostController {
   }
 
   private voiceCapability(): boolean {
-    return optionalKeposTts(this.ctx) !== undefined;
+    return optionalKeposSpeech(this.ctx) !== undefined;
   }
 
   private async transcribeVoice(request: CompanionVoiceRequest, signal: AbortSignal): Promise<RpcResult<CompanionVoiceTranscription>> {
     const configured = this.configuredWorkspace(request.workspaceId);
     if (!configured) return fail("找不到已配置的 Companion Workspace。", "workspace-not-found");
     if (!workspaceOwnsSession(configured.workspace, request.sessionId)) return fail("所选对话不属于 Companion Workspace。", "session-not-found");
-    const service = optionalKeposTts(this.ctx);
-    if (!service) return fail("语音转写尚未配置，请安装并配置 Kepos。", "transcription-unavailable");
+    const service = optionalKeposSpeech(this.ctx);
+    if (!service) return fail("语音转写尚未配置，请安装并配置 Kepos Speech。", "transcription-unavailable");
     if (signal.aborted) return fail("语音转写已取消。", "cancelled");
     try {
       const raw = await service.transcribe({ sessionId: request.sessionId, mediaType: request.mediaType, data: request.data }, signal);

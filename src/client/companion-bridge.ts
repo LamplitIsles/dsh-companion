@@ -58,7 +58,7 @@ export interface CompanionBridgeProps {
   sessionId?: string;
   /** Host-advertised image capability and intake limits; absent means unavailable. */
   imageLimits?: ImageAttachmentLimits;
-  /** Optional Kepos capability observed by the Host RPC. */
+  /** Optional Kepos Speech capability observed by the Host RPC. */
   voiceCapability?: "loading" | "available" | "unavailable";
   continuity?: CompanionContinuityView;
   onAdvanced?: () => void;

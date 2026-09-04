@@ -2,6 +2,10 @@
 
 `@lamplitisles/dsh-companion` is a small, one-to-one Svelte surface for DeepSeek Harness (DSH). It keeps DSH's durable Workspace/Session contracts and adds a calm chat presentation at `/companion/`.
 
+The package is published from the `LamplitIsles/dsh-companion` repository as a
+public npm package. Its optional voice integration is provided by the separately
+installed [Kepos Speech](https://github.com/LamplitIsles/kepos-speech) plugin.
+
 ## Install and build
 
 This repository uses Bun:
@@ -26,7 +30,7 @@ The package is pinned to the published DSH `0.1.2-alpha.3` contract family (Cord
 ## Two surfaces
 
 - `/` remains the stock DSH Web UI, including advanced navigation, ordinary Tool views, Kepos ImageGen's React view, and plugin settings.
-- `/companion/` selects the lower-priority Companion root. It shows one configured Workspace and one remembered/recent Session, human and assistant chat, allowlisted ImageGen images, and finalized Kepos TTS voice messages. A small **高级 DSH** link returns to `/` with a full-page navigation so the two compositions do not leak into one another.
+- `/companion/` selects the lower-priority Companion root. It shows one configured Workspace and one remembered/recent Session, human and assistant chat, allowlisted ImageGen images, and finalized Kepos Speech voice messages. A small **高级 DSH** link returns to `/` with a full-page navigation so the two compositions do not leak into one another.
 
 Typing `/compact` as the complete Companion input invokes DSH's Session command channel and keeps the continuity checkpoint invisible; other slash-prefixed text remains an ordinary message.
 
@@ -62,9 +66,9 @@ The execution posture is fixed to `workspace-write` with escalation disabled. Op
 
 Images use the selected DSH Session attachment contract. Only assistant structured image blocks and successful/running/failed `kepos_image_generate` results are projected; unrelated Tool output is hidden. Object URLs are page-owned and revoked when replaced or unloaded. The stock `/` ImageGen renderer remains untouched.
 
-Voice rows recognize exactly one finalized `[[tts:text]]...[[/tts:text]]` passage (fenced code and malformed/multiple passages are ignored; normalized text is limited to 240 Unicode code points). Synthesis calls the already-installed Kepos TTS RPC with the live Session id. A page-local cache shares preparation by Session and normalized text, requires user activation for playback, and always leaves a transcript fallback. No changes are made to the `kepos-tts` repository.
+Voice rows recognize exactly one finalized `[[tts:text]]...[[/tts:text]]` passage (fenced code and malformed/multiple passages are ignored; normalized text is limited to 240 Unicode code points). Synthesis calls the already-installed Kepos Speech `synthesize` RPC on `/kepos-speech` with the live Session id. The returned audio URL must remain on the same-origin `/kepos-speech/audio/` route. A page-local cache shares preparation by Session and normalized text, requires user activation for playback, and always leaves a transcript fallback. Install Kepos Speech alongside Companion when voice output or input is needed.
 
-The composer microphone sits immediately left of the context-capacity circle. Click **开始录音** to request microphone access and click **结束录音** to stop; the browser stops automatically at five minutes or before the provider's complete `data:<mediaType>;base64,...` payload reaches its 10 MiB bound. The exact raw-byte ceiling depends on the normalized emitted media type (its prefix is part of that bound). Voice input requires a secure browser context, `MediaRecorder`, the installed Kepos plugin's optional `keposTts.transcribe` Host capability, and its DashScope credential (`KEPOS_TTS_DASHSCOPE_API_KEY`). The recording is held only long enough to send its Base64 bytes through Companion's authenticated Host RPC, is transcribed, and is then discarded: Companion writes no `localStorage` entry, workspace file, audio cache, player, attachment, or provider credential. A successful transcript is submitted as one ordinary Session text turn; when Kepos supplies a recognized expression label, only its raw bracketed form (for example `[sad]`) is appended. Missing or unknown labels are omitted. The bracketed label is model-derived and non-diagnostic; it is not a claim about the speaker's inner state. Typed sending remains available while **正在转写语音…** is shown, and a failed or empty attempt creates no turn.
+The composer microphone sits immediately left of the context-capacity circle. Click **开始录音** to request microphone access and click **结束录音** to stop; the browser stops automatically at five minutes or before the provider's complete `data:<mediaType>;base64,...` payload reaches its 10 MiB bound. The exact raw-byte ceiling depends on the normalized emitted media type (its prefix is part of that bound). Voice input requires a secure browser context, `MediaRecorder`, the installed Kepos Speech plugin's optional `keposSpeech.transcribe` Host capability, and its shared DashScope credential (`KEPOS_SPEECH_DASHSCOPE_API_KEY`). The recording is held only long enough to send its Base64 bytes through Companion's authenticated Host RPC, is transcribed, and is then discarded: Companion writes no `localStorage` entry, workspace file, audio cache, player, attachment, or provider credential. A successful transcript is submitted as one ordinary Session text turn; when Kepos Speech supplies a recognized expression label, only its raw bracketed form (for example `[sad]`) is appended. Missing or unknown labels are omitted. The bracketed label is model-derived and non-diagnostic; it is not a claim about the speaker's inner state. Typed sending remains available while **正在转写语音…** is shown, and a failed or empty attempt creates no turn.
 
 ## Themes and device target
 
@@ -85,3 +89,34 @@ DSH_CLI=/absolute/path/to/dsh bun run test:dsh-link
 ```
 
 `pack:check` builds and inspects the publishable tarball. `test:dsh-link` uses the explicitly supplied alpha.3 CLI to add this source tree through `file:` in a test-owned `DSH_HOME`, then verifies the composed bundle and client registration. It does not start DSH Web, a browser, or touch a live profile. Update the host-local linked web profile with `just deploy-local`; packaged or Kosmos deployment and production cutover remain outside local acceptance.
+
+## Publishing releases
+
+Releases are tag-gated by `.github/workflows/release.yml`. The workflow runs on
+`v<semver>` tags only and checks that the tag exactly matches the package
+version before it creates the publishable tarball. Stable tags such as
+`v0.1.0` use npm's `latest` channel; prereleases such as `v0.1.0-beta.1` use
+`beta`.
+
+For the first publication, create the public `@lamplitisles/dsh-companion`
+package in npm under the Lamplit Isles scope. In that package's Trusted
+Publishing settings, add this GitHub repository and the `Publish npm package`
+workflow as the trusted publisher. In GitHub, create a protected environment
+named `npm` and require the maintainers or deployment rules appropriate for
+release approval. No npm token is stored in the repository or in GitHub
+secrets: the publish job receives an OIDC identity token only after the
+protected environment is granted, and npm verifies that identity and records
+provenance for the tarball.
+
+For a routine release, update `version` in `package.json`, run the local
+verification commands above (and `GITHUB_REF_NAME=v<semver> bun run release:check`),
+commit that version, then push the tag:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The verification job must finish before the protected publish job can publish.
+Do not add `NPM_TOKEN`, `NODE_AUTH_TOKEN`, or a provider credential to the
+workflow; Trusted Publishing is the only release authentication path.

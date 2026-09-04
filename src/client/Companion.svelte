@@ -673,7 +673,7 @@
   }
 
   function voiceUnavailableText(): string {
-    return voiceCaptureAvailable ? "语音功能不可用，请安装并配置 Kepos。" : "当前环境不支持麦克风录音。";
+    return voiceCaptureAvailable ? "语音功能不可用，请安装并配置 Kepos Speech。" : "当前环境不支持麦克风录音。";
   }
 
   function clearVoiceClock(): void {

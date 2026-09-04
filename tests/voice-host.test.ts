@@ -18,7 +18,7 @@ function hostWith(service: unknown) {
     llm: {},
     webServer: { port: 1, register: () => () => undefined },
     on: () => () => undefined,
-    get: (name: string) => name === "keposTts" ? service : undefined,
+    get: (name: string) => name === "keposSpeech" ? service : undefined,
   };
   const host = new CompanionHostController(ctx as never, scope);
   host.register();
@@ -28,7 +28,7 @@ function hostWith(service: unknown) {
 afterEach(() => vi.restoreAllMocks());
 
 describe("Companion voice Host RPC", () => {
-  it("authorizes the configured workspace/session and passes only decoded audio to optional Kepos", async () => {
+  it("authorizes the configured workspace/session and passes only decoded audio to optional Kepos Speech", async () => {
     const transcribe = vi.fn(async (request: { sessionId: string; mediaType: string; data: Uint8Array }) => ({
       text: "你好",
       sentences: [{ startMs: 1, endMs: 2, text: "你好", expression: "sad", confidence: 0.2 }],
@@ -42,7 +42,7 @@ describe("Companion voice Host RPC", () => {
     await host.dispose();
   });
 
-  it("rejects non-canonical/unsupported/foreign requests before calling Kepos", async () => {
+  it("rejects non-canonical/unsupported/foreign requests before calling Kepos Speech", async () => {
     const transcribe = vi.fn(async () => ({ text: "never" }));
     const { host, handler } = hostWith({ transcribe });
     for (const payload of [
@@ -81,5 +81,24 @@ describe("Companion voice Host RPC", () => {
     expect(result).toMatchObject({ ok: false, error: { code: "transcription-failed" } });
     expect(JSON.stringify(result)).not.toContain("provider secret");
     await failing.host.dispose();
+  });
+
+  it("does not fall back to the retired Kepos TTS service name", async () => {
+    const transcribe = vi.fn(async () => ({ text: "never" }));
+    let handler: ((endpoint: string, payload: unknown, signal: AbortSignal) => Promise<unknown>) | undefined;
+    const scope = { get: () => ({ workspaceId: workspace.id, companionName: "Companion", userName: "你", preferredAddress: "你", defaultAffinity: 50 }), update: async () => undefined, watch: () => () => undefined };
+    const ctx = {
+      fs: {}, settings: { register: () => scope }, systemPrompt: { context: () => () => undefined }, tools: { register: () => undefined },
+      connection: { rpc: { handle: (_channel: string, next: typeof handler) => { handler = next; return () => undefined; } } },
+      workspaceRegistry: { get: (id: string) => id === workspace.id ? workspace : undefined, list: () => [workspace] }, llm: {},
+      webServer: { port: 1, register: () => () => undefined }, on: () => () => undefined,
+      get: (name: string) => name === "keposTts" ? { transcribe } : undefined,
+    };
+    const host = new CompanionHostController(ctx as never, scope);
+    host.register();
+    await expect(handler!(VOICE_CAPABILITY_ENDPOINT, { workspaceId: workspace.id }, signal)).resolves.toEqual({ ok: true, value: { available: false } });
+    await expect(handler!(VOICE_TRANSCRIBE_ENDPOINT, { workspaceId: workspace.id, sessionId: "session-a", mediaType: "audio/webm", data: "AQID" }, signal)).resolves.toMatchObject({ ok: false, error: { code: "transcription-unavailable" } });
+    expect(transcribe).not.toHaveBeenCalled();
+    await host.dispose();
   });
 });
