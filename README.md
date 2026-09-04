@@ -38,7 +38,7 @@ DSH continues to stream and persist model output internally, while Companion sho
 
 While ImageGen is running, its image skeleton and “正在画一张图…” status replace the generic typing bubble. If the agent resumes text generation after the image settles, the typing indicator returns with a fresh long-wait timer.
 
-The Companion deliberately does not include a Workspace picker, session list/new-chat flow, model or preset controls, permissions/approvals, reasoning, Trajectory, generic Tool cards, prompt-injection inspection, generic file upload, voice input, notifications, or multi-contact UI. It supports image messages through DSH's Session attachment contract.
+The Companion deliberately does not include a Workspace picker, session list/new-chat flow, model or preset controls, permissions/approvals, reasoning, Trajectory, generic Tool cards, prompt-injection inspection, generic file upload, notifications, or multi-contact UI. It supports image messages through DSH's Session attachment contract and one short voice-input control in the composer.
 
 ## Configuration and recovery
 
@@ -63,6 +63,8 @@ The execution posture is fixed to `workspace-write` with escalation disabled. Op
 Images use the selected DSH Session attachment contract. Only assistant structured image blocks and successful/running/failed `kepos_image_generate` results are projected; unrelated Tool output is hidden. Object URLs are page-owned and revoked when replaced or unloaded. The stock `/` ImageGen renderer remains untouched.
 
 Voice rows recognize exactly one finalized `[[tts:text]]...[[/tts:text]]` passage (fenced code and malformed/multiple passages are ignored; normalized text is limited to 240 Unicode code points). Synthesis calls the already-installed Kepos TTS RPC with the live Session id. A page-local cache shares preparation by Session and normalized text, requires user activation for playback, and always leaves a transcript fallback. No changes are made to the `kepos-tts` repository.
+
+The composer microphone sits immediately left of the context-capacity circle. Click **开始录音** to request microphone access and click **结束录音** to stop; the browser stops automatically at five minutes or 10 MB. Voice input requires a secure browser context, `MediaRecorder`, the installed Kepos plugin's optional `keposTts.transcribe` Host capability, and its DashScope credential (`KEPOS_TTS_DASHSCOPE_API_KEY`). The recording is held only long enough to send its Base64 bytes through Companion's authenticated Host RPC, is transcribed, and is then discarded: Companion writes no `localStorage` entry, workspace file, audio cache, player, attachment, or provider credential. A successful transcript is submitted as one ordinary Session text turn; when Kepos supplies a recognized expression label, only its raw bracketed form (for example `[sad]`) is appended. Missing or unknown labels are omitted. The bracketed label is model-derived and non-diagnostic; it is not a claim about the speaker's inner state. Typed sending remains available while **正在转写语音…** is shown, and a failed or empty attempt creates no turn.
 
 ## Themes and device target
 

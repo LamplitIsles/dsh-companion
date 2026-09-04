@@ -21,6 +21,8 @@ import type { CompanionImageDraft } from "./image-drafts.js";
 import { resolveSessionReadiness, resolveWorkspaceReadiness, type CompanionReadiness } from "./readiness.js";
 import { MOOD_LABELS } from "../domain.js";
 import { SubmissionHandoff } from "./submission-handoff.js";
+import { normalizeVoiceTranscription, voiceBlobToBase64, type VoiceRecording, type CompanionVoiceTranscription } from "./voice-input.js";
+import { VOICE_CAPABILITY_ENDPOINT, VOICE_TRANSCRIBE_ENDPOINT } from "../voice-contract.js";
 
 export interface CompanionRootInjected {
   ctx: ClientContext;
@@ -110,6 +112,7 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
     : remembered;
   const [relationship, setRelationship] = useState<RelationshipView>({ workspacePresent: false, revision: 0 });
   const [relationshipReadiness, setRelationshipReadiness] = useState<CompanionReadiness>("loading");
+  const [voiceCapability, setVoiceCapability] = useState<"loading" | "available" | "unavailable">("unavailable");
   const [sessionCreateError, setSessionCreateError] = useState(false);
   const themeRuntime = (ctx as unknown as { theme?: { getTheme?: () => { active?: { colorScheme?: string } } } }).theme;
   const [scheme, setScheme] = useState<"light" | "dark">(() => themeRuntime?.getTheme?.().active?.colorScheme === "dark" ? "dark" : "light");
@@ -162,6 +165,22 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
     void run();
     return () => controller.abort();
   }, [connection, configured?.workspaceId, connectionState, recoveryKey, settingsSnapshot.status]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    if (!workspace || !selectedSessionId || !session) {
+      setVoiceCapability("unavailable");
+      return () => controller.abort();
+    }
+    setVoiceCapability("loading");
+    void connection.rpc.call("/dsh-companion", VOICE_CAPABILITY_ENDPOINT, { workspaceId: workspace.id }, controller.signal)
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        setVoiceCapability(result.ok && (result.value as { available?: unknown } | undefined)?.available === true ? "available" : "unavailable");
+      })
+      .catch(() => { if (!controller.signal.aborted) setVoiceCapability("unavailable"); });
+    return () => controller.abort();
+  }, [connection, connectionState, recoveryKey, selectedSessionId, session, workspace]);
 
   useEffect(() => {
     const listener = (snapshot: { active?: { colorScheme?: string } }) => setScheme(snapshot.active?.colorScheme === "dark" ? "dark" : "light");
@@ -241,6 +260,18 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
       },
       async loadOlder(): Promise<void> { await session?.loadOlder(); },
       async attachmentUrl(attachment: unknown): Promise<string> { if (!session) throw new Error("session-unavailable"); return imageUrl(session, attachment); },
+      async transcribeVoice(recording: VoiceRecording, signal?: AbortSignal): Promise<CompanionVoiceTranscription> {
+        if (!session || !workspace || !selectedSessionId) throw new Error("session-unavailable");
+        const data = await voiceBlobToBase64(recording.blob);
+        const result = await rpc.call("/dsh-companion", VOICE_TRANSCRIBE_ENDPOINT, {
+          workspaceId: workspace.id,
+          sessionId: String(selectedSessionId),
+          mediaType: recording.mediaType,
+          data,
+        }, signal);
+        if (!result.ok) throw new Error(result.error?.message ?? "语音转写暂时不可用，请再试一次。");
+        return normalizeVoiceTranscription(result.value);
+      },
       async prepareVoice(text: string): Promise<string> {
         if (!session) throw new Error("session-unavailable");
         const prepared = await ttsCache.current!.prepare(String(session.sessionId), text, { synthesize: async (value, sessionId, signal) => {
@@ -251,7 +282,7 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
         return prepared.url;
       },
     };
-  }, [connection.rpc, session, workspace]);
+  }, [connection.rpc, selectedSessionId, session, workspace]);
 
   const sessions = useMemo(() => {
     return availableSessions.map((item) => ({ ...item, selected: item.id === selectedSessionId }));
@@ -269,6 +300,7 @@ export function CompanionRoot({ ctx, settings }: CompanionRootInjected): JSX.Ele
     sessionReadiness,
     sessionId: selectedSessionId,
     imageLimits,
+    voiceCapability,
     onAdvanced: () => { window.location.assign("/"); },
     onRecovery: () => setRecoveryKey((value) => value + 1),
   };

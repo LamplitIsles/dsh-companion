@@ -108,6 +108,11 @@ export const companionStyles = `
 #dsh-companion .companion-textarea::placeholder{color:color-mix(in srgb,var(--color-base-content) 46%,transparent)}
 #dsh-companion .companion-attach{width:40px;min-width:40px!important;height:40px;min-height:40px!important;flex:none;margin:0 0 1px;padding:0;color:color-mix(in srgb,var(--color-base-content) 56%,transparent);touch-action:manipulation;-webkit-touch-callout:none;user-select:none}
 #dsh-companion .companion-attach:hover,#dsh-companion .companion-attach:focus-visible{color:var(--color-primary)}
+#dsh-companion .companion-microphone{width:40px;min-width:40px!important;height:40px;min-height:40px!important;flex:none;margin:0 0 1px;padding:0;color:color-mix(in srgb,var(--color-base-content) 56%,transparent);transition:color .16s ease,background-color .16s ease,box-shadow .16s ease}
+#dsh-companion .companion-microphone:hover,#dsh-companion .companion-microphone:focus-visible{color:var(--color-primary)}
+#dsh-companion .companion-microphone[data-state="recording"]{color:var(--color-error);background:color-mix(in srgb,var(--color-error) 12%,transparent)!important;box-shadow:0 0 0 4px color-mix(in srgb,var(--color-error) 12%,transparent)}
+#dsh-companion .companion-microphone[data-state="stopping"],#dsh-companion .companion-microphone[data-state="transcribing"]{color:var(--color-primary)}
+#dsh-companion .companion-microphone:disabled{cursor:not-allowed;opacity:.52}
 #dsh-companion .companion-send{flex:none;width:43px;height:43px;font-size:1.15rem}
 #dsh-companion .companion-context-meter-wrap{position:relative;flex:none;align-self:flex-end}
 #dsh-companion .companion-context-meter{width:28px!important;min-width:28px!important;height:28px!important;min-height:28px!important;margin:0 2px 8px 0;padding:0;border:0;color:color-mix(in srgb,var(--color-base-content) 48%,transparent);background:transparent!important;box-shadow:none!important}
@@ -136,6 +141,10 @@ export const companionStyles = `
 #dsh-companion[data-theme="night-voyage"] .companion-context-meter[data-state="active"]{--context-meter-color:var(--color-secondary)}
 #dsh-companion[data-theme="night-voyage"] .companion-context-popover{border-radius:12px;box-shadow:0 16px 42px rgb(0 0 0 / .42)}
 #dsh-companion .companion-compose-hint{max-width:790px;margin:5px auto 0;padding:0 10px;color:color-mix(in srgb,var(--color-base-content) 47%,transparent);font-size:.66rem}
+#dsh-companion .companion-voice-input-status{max-width:820px;margin:6px auto 0;padding:0 12px;color:var(--color-primary);font-size:.7rem;line-height:1.35}
+#dsh-companion .companion-voice-input-status[role="status"]{min-height:1.1em}
+#dsh-companion .companion-voice-input-unavailable{color:color-mix(in srgb,var(--color-base-content) 55%,transparent)}
+#dsh-companion .companion-voice-input-error{color:var(--color-error)}
 #dsh-companion .companion-recovery{align-self:center;justify-self:center;max-width:500px;padding:34px 24px;text-align:center}
 #dsh-companion .companion-recovery h1{margin:8px 0;font-size:1.32rem}
 #dsh-companion .companion-recovery p{opacity:.66}

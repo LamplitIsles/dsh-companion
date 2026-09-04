@@ -1,0 +1,87 @@
+/**
+ * The browser/Companion boundary for the optional Kepos short-audio service.
+ * Keep this module free of browser and Node-only APIs so both bundles can use
+ * the same admission rules.
+ */
+
+/** Qwen3-ASR-Flash's synchronous input bound. */
+export const MAX_VOICE_AUDIO_BYTES = 10 * 1024 * 1024;
+/** Companion stops capture before the provider's duration policy can reject it. */
+export const MAX_VOICE_DURATION_MS = 5 * 60 * 1000;
+export const VOICE_TRANSCRIBE_ENDPOINT = "voice/transcribe" as const;
+export const VOICE_CAPABILITY_ENDPOINT = "voice/capability" as const;
+
+/** Media types advertised by the optional Kepos ASR contract. */
+export const VOICE_AUDIO_MEDIA_TYPES = [
+  "audio/aac",
+  "audio/amr",
+  "audio/aiff",
+  "audio/flac",
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/ogg",
+  "audio/opus",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/webm",
+  "audio/x-ms-wma",
+] as const;
+
+export type VoiceAudioMediaType = (typeof VOICE_AUDIO_MEDIA_TYPES)[number];
+
+/** Labels normalized by Kepos from Qwen's model-derived speech expression. */
+export const VOICE_EXPRESSIONS = [
+  "surprised",
+  "neutral",
+  "happy",
+  "sad",
+  "disgusted",
+  "angry",
+  "fearful",
+] as const;
+
+export type VoiceExpression = (typeof VOICE_EXPRESSIONS)[number];
+
+const PARAM_TOKEN = "[a-z0-9!#$&^_.+-]+";
+const AUDIO_MEDIA_TYPE_PATTERN = new RegExp(
+  `^audio\\/[a-z0-9][a-z0-9.+-]*(?:\\s*;\\s*${PARAM_TOKEN}=${PARAM_TOKEN})*$`,
+  "u",
+);
+
+/**
+ * Normalize and allowlist a declared audio media type. Parameters (for
+ * example `codecs=opus`) are retained because MediaRecorder may emit them.
+ */
+export function normalizeVoiceMediaType(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 256) return undefined;
+  const normalized = value.trim().toLowerCase();
+  const base = normalized.split(";", 1)[0]?.trim();
+  if (!base || !AUDIO_MEDIA_TYPE_PATTERN.test(normalized)) return undefined;
+  return (VOICE_AUDIO_MEDIA_TYPES as readonly string[]).includes(base) ? normalized : undefined;
+}
+
+/** Return the allowlisted base media type without parameters. */
+export function voiceMediaBaseType(value: unknown): VoiceAudioMediaType | undefined {
+  const normalized = normalizeVoiceMediaType(value);
+  if (!normalized) return undefined;
+  return normalized.split(";", 1)[0] as VoiceAudioMediaType;
+}
+
+export function isVoiceExpression(value: unknown): value is VoiceExpression {
+  return typeof value === "string" && (VOICE_EXPRESSIONS as readonly string[]).includes(value.trim().toLowerCase());
+}
+
+export function normalizeVoiceExpression(value: unknown): VoiceExpression | undefined {
+  if (!isVoiceExpression(value)) return undefined;
+  return value.trim().toLowerCase() as VoiceExpression;
+}
+
+/** Maximum Base64 characters admitted by the Companion RPC before decoding. */
+export const MAX_VOICE_BASE64_CHARS = Math.ceil(MAX_VOICE_AUDIO_BYTES / 3) * 4;
+
+/** Canonical RFC 4648 Base64 has no whitespace, URL-safe substitutions, or spare padding. */
+export function isCanonicalBase64(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > MAX_VOICE_BASE64_CHARS || value.length % 4 !== 0) return false;
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)) return false;
+  return true;
+}
