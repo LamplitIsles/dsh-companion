@@ -25,6 +25,10 @@ jobs:
           package-manager-cache: false
       - run: npm install --global npm@">=11.10.0"
       - run: bun install --frozen-lockfile
+      - name: Synchronize package version from release tag
+        run: bun run release:sync-version
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
       - run: bun run typecheck
       - run: bun run test
       - run: bun run build

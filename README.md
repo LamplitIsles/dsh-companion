@@ -134,33 +134,20 @@ maintainers or deployment rules required for release approval.
 
 ### First stable OIDC release
 
-Change `package.json` to the new, unpublished version `0.1.0`, run the stable
-checks below, commit the version update, and push it with `og push`:
-
-```sh
-bun install --frozen-lockfile
-bun run typecheck
-bun run test
-bun run build
-bun run pack:check
-GITHUB_REF_NAME=v0.1.0 bun run release:check
-og push
-```
-
-The supported tag command is `og tag [<version> | --bump <major|minor|patch>]`
-(see `og tag --help`); it creates and pushes the tag. Create the first stable
-tag with:
+Push the intended release commit. The supported tag command is
+`og tag [<version> | --bump <major|minor|patch>]` (see `og tag --help`); it
+creates and pushes the tag. CI synchronizes its disposable release manifest
+from that tag before checks and publication. Create the first stable tag with:
 
 ```sh
 og tag v0.1.0
 ```
 
 The verification job must finish before the protected publish job can publish.
-For each subsequent release, choose a version that has never been published,
-run the same checks, push the commit with `og push`, and create its tag with
-the same supported operation (for example, `og tag v0.2.0-beta.1`). Stable
-tags use npm's `latest` channel; tags containing a prerelease identifier use
-`beta`.
+For each subsequent release, choose an unpublished tag version, push the
+intended change, and create its tag with the same supported operation (for
+example, `og tag v0.2.0-beta.1`). Stable tags use npm's `latest` channel; tags
+containing a prerelease identifier use `beta`.
 
 Trusted Publishing is the only automated release authentication path. Do not
 add `NPM_TOKEN`, `NODE_AUTH_TOKEN`, or a provider credential to the workflow;
