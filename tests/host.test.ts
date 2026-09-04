@@ -12,7 +12,7 @@ const temporary: string[] = [];
 afterEach(async () => { await Promise.all(temporary.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
 
 function execution(events: readonly { type: string; data: { turn: number } }[], cwd?: string): ToolRunContext {
-  return { agent: { id: "agent-a", session: { events, ...(cwd === undefined ? {} : { header: { cwd } }) } }, signal: new AbortController().signal } as unknown as ToolRunContext;
+  return { agent: { id: "agent-a", session: { snapshotEvents: () => events, ...(cwd === undefined ? {} : { header: { cwd } }) } }, signal: new AbortController().signal } as unknown as ToolRunContext;
 }
 
 async function listen(server: Server): Promise<number> {

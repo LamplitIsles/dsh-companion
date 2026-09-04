@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -7,25 +7,84 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const require = createRequire(import.meta.url);
+const DSH_RC_VERSION = "0.1.2-rc.1";
 
 if (!existsSync(join(root, "dist", "index.js"))) throw new Error("compaction Loader smoke requires a fresh `bun run build`");
 
 function dshEntry() {
   const configured = process.env.DSH_CLI;
-  const cli = configured ?? execFileSync("which", ["dsh"], { encoding: "utf8" }).trim();
-  if (!cli || !existsSync(cli)) throw new Error("set DSH_CLI to the installed dsh executable");
-  return cli;
+  if (!configured) throw new Error(`DSH_CLI is required: set it to the official DSH ${DSH_RC_VERSION} executable (for example /absolute/path/to/node_modules/.bin/dsh)`);
+  if (!existsSync(configured)) throw new Error(`DSH_CLI does not exist: ${configured}`);
+  return configured;
 }
 
 /**
  * The profile manager extracts a plugin without installing its peer graph.
- * Link the real alpha CLI's dependency tree into this disposable profile so
- * Node resolves the packed plugin exactly as it would inside the DSH install,
- * without touching the repository or a user's profile.
+ * Link the official rc.1 CLI's real dependency tree into the disposable
+ * profile so Node resolves the packed plugin against the installed DSH graph,
+ * without installing into the repository or a user's profile.
  */
 function linkCliDependencies(temp, entry) {
   const cliNodeModules = dirname(dirname(dirname(dirname(realpathSync(entry)))));
   symlinkSync(cliNodeModules, join(temp, "node_modules"), "dir");
+}
+
+function resolvedDshPackages(roots) {
+  const packages = [];
+  const visited = new Set();
+
+  function visit(candidate) {
+    let real;
+    try {
+      real = realpathSync(candidate);
+    } catch {
+      return;
+    }
+    if (visited.has(real)) return;
+    visited.add(real);
+
+    let stat;
+    try {
+      stat = statSync(real);
+    } catch {
+      return;
+    }
+    if (!stat.isDirectory()) return;
+
+    let entries;
+    try {
+      entries = readdirSync(real, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const child = join(real, entry.name);
+      if (entry.name === "package.json") {
+        try {
+          const manifest = JSON.parse(readFileSync(child, "utf8"));
+          if (typeof manifest.name === "string" && manifest.name.startsWith("@deepseek-ai/dsh-")) {
+            packages.push({ name: manifest.name, version: manifest.version, path: child });
+          }
+        } catch {
+          // Ignore non-package JSON while walking the disposable installation.
+        }
+        continue;
+      }
+      if (entry.isDirectory() || entry.isSymbolicLink()) visit(child);
+    }
+  }
+
+  for (const root of roots) visit(root);
+  return packages;
+}
+
+function assertResolvedDshGraph(roots) {
+  const packages = resolvedDshPackages(roots);
+  if (!packages.length) throw new Error("installed graph resolved no first-party DSH packages");
+  const mismatches = packages.filter(({ version }) => version !== DSH_RC_VERSION);
+  if (mismatches.length) {
+    throw new Error(`installed graph resolved non-rc.1 DSH packages: ${mismatches.map(({ name, version }) => `${name}@${version}`).join(", ")}`);
+  }
 }
 
 function isolatedEnvironment(temp, dshHome) {
@@ -124,7 +183,7 @@ const relationshipResult = await relationshipTool.execute({
   affinity: { delta: 2, reason: "The user valued the shared result" },
 }, {
   signal: new AbortController().signal,
-  agent: { id: "agent-a", session: { header: { cwd: workspace.path }, events: [{ type: "turn/start", data: { turn: 1 } }] } },
+  agent: { id: "agent-a", session: { header: { cwd: workspace.path }, snapshotEvents: () => [{ type: "turn/start", data: { turn: 1 } }] } },
 });
 assert.equal(relationshipResult.mood, "bright");
 assert.equal(relationshipResult.affinity, 52);
@@ -136,7 +195,7 @@ assert.equal(relationshipRecord.changes.affinity.reason, "The user valued the sh
 assert.equal(relationshipRecord.state.affinity, 52);
 const historyResult = await historyTool.execute({ limit: 1 }, {
   signal: new AbortController().signal,
-  agent: { id: "agent-a", session: { header: { cwd: workspace.path }, events: [{ type: "turn/start", data: { turn: 1 } }] } },
+  agent: { id: "agent-a", session: { header: { cwd: workspace.path }, snapshotEvents: () => [{ type: "turn/start", data: { turn: 1 } }] } },
 });
 assert.equal(historyResult.records.length, 1);
 assert.equal(historyResult.records[0].state.affinity, 52);
@@ -172,6 +231,8 @@ try {
   const dshHome = join(temp, "dsh-home");
   const env = isolatedEnvironment(temp, dshHome);
   const entry = dshEntry();
+  const cliVersion = execFileSync(process.execPath, [entry, "--version"], { encoding: "utf8" }).trim();
+  if (cliVersion !== DSH_RC_VERSION) throw new Error(`expected official DSH ${DSH_RC_VERSION}, got ${cliVersion}`);
   linkCliDependencies(temp, entry);
   execFileSync(process.execPath, ["--expose-internals", entry, "plugin", "--profile", "web", "add", tarball, "--ignore-scripts"], { cwd: temp, env, stdio: "pipe" });
 
@@ -180,16 +241,17 @@ try {
 
   const packageDir = join(dshHome, "profiles", "web", "node_modules", "@lamplitisles", "dsh-companion");
   const manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
+  assertResolvedDshGraph([join(temp, "node_modules"), join(dshHome, "profiles", "web", "node_modules")]);
   if (manifest.name !== "@lamplitisles/dsh-companion" || manifest.dsh?.bundle?.patch !== "./cordis.patch.yml") throw new Error("packed manifest lost the existing single DSH bundle identity");
   for (const dependencySection of ["peerDependencies", "devDependencies"]) {
     for (const [name, version] of Object.entries(manifest[dependencySection] ?? {})) {
-      if (name.startsWith("@deepseek-ai/dsh-") && version !== "0.1.2-alpha.3") throw new Error(`packed manifest mixes DSH contract versions in ${dependencySection}: ${name}@${version}`);
+      if (name.startsWith("@deepseek-ai/dsh-") && version !== DSH_RC_VERSION) throw new Error(`packed manifest mixes DSH contract versions in ${dependencySection}: ${name}@${version}`);
     }
   }
   const bundledDshDependencies = Object.keys(manifest.dependencies ?? {}).filter((name) => name.startsWith("@deepseek-ai/dsh-"));
   if (bundledDshDependencies.length) throw new Error(`packed manifest bundles DSH runtime dependencies: ${bundledDshDependencies.join(", ")}`);
   for (const dependencySection of ["peerDependencies", "devDependencies"]) {
-    if (manifest[dependencySection]?.["@deepseek-ai/dsh-llm"] !== "0.1.2-alpha.3") throw new Error(`packed manifest lacks the exact alpha.3 LLM ${dependencySection} pin`);
+    if (manifest[dependencySection]?.["@deepseek-ai/dsh-llm"] !== DSH_RC_VERSION) throw new Error(`packed manifest lacks the exact rc.1 LLM ${dependencySection} pin`);
   }
   const patch = readFileSync(join(packageDir, "cordis.patch.yml"), "utf8");
   if (!/inject:\s*\[[^\]]*\bllm\b[^\]]*\]/u.test(patch)) throw new Error("packed Cordis patch lacks hard llm injection");

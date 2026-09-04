@@ -33,9 +33,9 @@ The send path has deliberately narrow owners:
 
 There must not be a second custom optimistic-send owner. In particular, Companion does not maintain a bespoke outbox, infer acknowledgements from matching text, or create a retry-card state machine.
 
-## The alpha.3 API: `session.beginSubmission`
+## The rc.1 API: `session.beginSubmission`
 
-The DSH `0.1.2-alpha.3` behavior behind this design is named `beginSubmission`, not simply `submit`. Companion uses it like this:
+The DSH `0.1.2-rc.1` behavior behind this design is named `beginSubmission`, not simply `submit`. Companion uses it like this:
 
 ```ts
 const handle = session.beginSubmission({
@@ -313,7 +313,7 @@ This is the complete commit lineage that establishes or directly fixes the curre
 
 | Commit | Contribution |
 | --- | --- |
-| `7b8d96d` | `feat(companion): migrate to alpha session submissions (#5)` — migrated to DSH alpha.3 and replaced the custom optimistic overlay with `beginSubmission`, exact request-ID propagation, and controller retirement. |
+| `7b8d96d` | `feat(companion): migrate to alpha session submissions (#5)` — migrated to the DSH Session submission contract and replaced the custom optimistic overlay with `beginSubmission`, exact request-ID propagation, and controller retirement. |
 | `4cef10f` | `feat(companion): improve composer, media, and relationship state (#7)` — established canonical message units, text/image grouping, optimistic preview ownership, and durable media takeover behavior used by this design. |
 | `e32097f` | `fix(companion): preserve correlated message continuity` — made pending, queue, steering, and durable contributions share `submission:<rpcId>`. |
 | `d7fce01` | `chore(companion): add implementation report` — recorded the first continuity implementation and verification. |
@@ -324,7 +324,7 @@ This is the complete commit lineage that establishes or directly fixes the curre
 | `22a383e` | `fix(companion): bridge submission snapshot handoff` — fixed the real Session/Chat empty-snapshot race and added idle, queued, and failed handoff tests. |
 | `56ca048` | `chore(docs): document optimistic message continuity` — consolidated the final architecture, diagnostic lessons, and regression contract into this document. |
 
-Commits for unrelated Companion features are intentionally not listed. The table is exhaustive for the alpha.3 optimistic submission, message-unit/media continuity foundation, follow-up continuity fixes, and their local deployment/documentation path.
+Commits for unrelated Companion features are intentionally not listed. The table is exhaustive for the optimistic submission, message-unit/media continuity foundation, follow-up continuity fixes, and their local deployment/documentation path.
 
 ## Explicit non-goals
 

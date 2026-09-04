@@ -249,7 +249,7 @@ export function acceptedTurnKey(exec: ToolRunContext): string {
   const agent = exec.agent;
   if (!agent) throw new CompanionValidationError("Companion 只能在活动对话回合中更新亲近度。");
   let openTurn: number | undefined;
-  for (const event of agent.session.events) {
+  for (const event of agent.session.snapshotEvents()) {
     if (event.type === "turn/start") openTurn = event.data.turn;
     else if (event.type === "turn/end" && event.data.turn === openTurn) openTurn = undefined;
   }
