@@ -234,7 +234,7 @@ test("microphone records once beside context capacity and submits a minimal expr
   await textarea.fill("键入草稿");
   await expect(page.getByRole("button", { name: "发送消息" })).toBeEnabled();
   await page.evaluate(() => window.__companionFixture?.resolveVoice());
-  await expect(page.getByText("来自麦克风的测试消息 [sad]", { exact: true })).toBeVisible();
+  await expect(page.getByText("🎙️ 来自麦克风的测试消息 [sad]", { exact: true })).toBeVisible();
   await expect(page.getByTestId("companion-voice-transcribing-status")).toHaveCount(0);
   await expect(textarea).toHaveValue("键入草稿");
 });
@@ -976,9 +976,10 @@ test("initial chat presentation is already at the bottom with circular avatars a
     const geometry = await avatar.evaluate((node) => {
       const style = getComputedStyle(node);
       const bounds = node.getBoundingClientRect();
-      return { radius: Number.parseFloat(style.borderRadius), size: Math.min(bounds.width, bounds.height), overflow: style.overflow };
+      return { mask: style.maskImage, width: bounds.width, height: bounds.height, overflow: style.overflow };
     });
-    expect(geometry.radius).toBeGreaterThanOrEqual(geometry.size / 2 - 1);
+    expect(geometry.mask).not.toBe("none");
+    expect(Math.abs(geometry.width - geometry.height)).toBeLessThanOrEqual(1);
     expect(geometry.overflow).toBe("hidden");
   }
 

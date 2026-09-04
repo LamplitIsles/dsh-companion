@@ -1,3 +1,0 @@
-@import "tailwindcss/utilities.css" prefix(cmp);
-@source "./Companion.svelte";
-@theme prefix(cmp);
