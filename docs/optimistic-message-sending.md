@@ -33,9 +33,9 @@ The send path has deliberately narrow owners:
 
 There must not be a second custom optimistic-send owner. In particular, Companion does not maintain a bespoke outbox, infer acknowledgements from matching text, or create a retry-card state machine.
 
-## The alpha.5 API: `session.beginSubmission`
+## The rc.1 API: `session.beginSubmission`
 
-The DSH `0.1.2-alpha.5` behavior behind this design is named `beginSubmission`, not simply `submit`. Companion uses it like this:
+The DSH `0.1.2-rc.1` behavior behind this design is named `beginSubmission`, not simply `submit`. Companion uses it like this:
 
 ```ts
 const handle = session.beginSubmission({

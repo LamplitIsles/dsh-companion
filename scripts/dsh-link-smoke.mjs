@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import vm from "node:vm";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
-const DSH_ALPHA_VERSION = "0.1.2-alpha.5";
+const DSH_RC_VERSION = "0.1.2-rc.1";
 
 if (!existsSync(join(root, "dist", "index.js")) || !existsSync(join(root, "dist", "client.js"))) {
   throw new Error("DSH link smoke requires a fresh `bun run build`");
@@ -15,7 +15,7 @@ if (!existsSync(join(root, "dist", "index.js")) || !existsSync(join(root, "dist"
 
 function resolveDshCli() {
   const cli = process.env.DSH_CLI;
-  if (!cli || !existsSync(cli)) throw new Error("set DSH_CLI to the fixed local DSH alpha executable");
+  if (!cli || !existsSync(cli)) throw new Error("set DSH_CLI to the fixed local DSH rc.1 executable");
   return cli;
 }
 
@@ -61,7 +61,7 @@ try {
   };
   const profile = "companion-link-smoke";
 
-  requireCondition(run(cli, ["--version"], workspace, env).trim() === DSH_ALPHA_VERSION, `expected fixed DSH ${DSH_ALPHA_VERSION}`);
+  requireCondition(run(cli, ["--version"], workspace, env).trim() === DSH_RC_VERSION, `expected fixed DSH ${DSH_RC_VERSION}`);
   run(cli, ["plugin", "--profile", profile, "add", pathToFileURL(root).href], workspace, env);
   const dump = run(cli, ["--profile", profile, "--dump-config"], workspace, env);
   requireCondition(
