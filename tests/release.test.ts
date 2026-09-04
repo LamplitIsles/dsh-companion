@@ -34,10 +34,11 @@ describe("release preflight", () => {
 
   it("enforces strict prerelease identifiers and accepts build metadata", () => {
     expect(() => versionFromTag("v1.2.3-01")).toThrow("v<semver>");
+    expect(() => versionFromTag("v1.2.3-alpha.01")).toThrow("v<semver>");
     expect(versionFromTag("v1.2.3-0")).toBe("1.2.3-0");
-    expect(versionFromTag("v1.2.3-alpha.01")).toBe("1.2.3-alpha.01");
+    expect(versionFromTag("v1.2.3-alpha01")).toBe("1.2.3-alpha01");
     expect(versionFromTag("v1.2.3+build.1")).toBe("1.2.3+build.1");
-    expect(versionFromTag("v1.2.3-alpha.01+build.1")).toBe("1.2.3-alpha.01+build.1");
+    expect(versionFromTag("v1.2.3-alpha01+build.1")).toBe("1.2.3-alpha01+build.1");
     expect(npmDistTag("v1.2.3+build.1")).toBe("latest");
   });
 

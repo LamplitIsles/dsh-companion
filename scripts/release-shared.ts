@@ -15,7 +15,8 @@ export const REQUIRED_PACKED_FILES = [
 ] as const;
 
 const numericIdentifier = "(?:0|[1-9]\\d*)";
-const prereleaseIdentifier = "[0-9A-Za-z-]+";
+const nonNumericIdentifier = "(?:\\d*[A-Za-z-][0-9A-Za-z-]*)";
+const prereleaseIdentifier = `(?:${numericIdentifier}|${nonNumericIdentifier})`;
 const buildIdentifier = "[0-9A-Za-z-]+";
 const tagPattern = new RegExp(
   `^v${numericIdentifier}\\.${numericIdentifier}\\.${numericIdentifier}`
@@ -27,10 +28,7 @@ const tagPattern = new RegExp(
 /** Return the exact package version encoded by a release tag. */
 export function versionFromTag(tag: string): string {
   const match = tagPattern.exec(tag);
-  // A standalone numeric prerelease identifier may be exactly `0`, but the
-  // first identifier cannot have a leading zero. Mixed identifiers such as
-  // `alpha.01` remain supported by the release tag contract.
-  if (!match || /^0\d+$/.test(match[1]?.split(".", 1)[0] ?? "")) {
+  if (!match) {
     throw new Error(
       "Release tags must use v<semver>, for example v0.1.0 or v0.1.0-beta.1.",
     );

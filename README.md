@@ -98,6 +98,12 @@ version before it creates the publishable tarball. Stable tags such as
 `v0.1.0` use npm's `latest` channel; prereleases such as `v0.1.0-beta.1` use
 `beta`.
 
+Tags use strict SemVer prerelease identifiers: every purely numeric segment is
+`0` or has no leading zero (`v1.2.3-0` is valid, while `v1.2.3-01` and
+`v1.2.3-alpha.01` are invalid). Mixed identifiers containing letters, such as
+`v1.2.3-alpha01`, remain valid, as does build metadata such as
+`v1.2.3+build.1`.
+
 ### First-time bootstrap and Trusted Publishing
 
 Bootstrap the package with a prerelease version that has never been published.
