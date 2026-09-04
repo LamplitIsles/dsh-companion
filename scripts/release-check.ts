@@ -1,10 +1,10 @@
-import { npmDistTag, checkPackedManifests, checkReleaseManifests } from "./release-shared.js";
+import { checkPackedManifest, checkReleaseManifest, npmDistTag } from "./release-shared.js";
 
 export { npmDistTag, versionFromTag } from "./release-shared.js";
 
 export function releaseCheck(root: string, tag: string, checkPacked = true): string[] {
-  const errors = checkReleaseManifests(root, tag);
-  if (checkPacked) errors.push(...checkPackedManifests(root));
+  const errors = checkReleaseManifest(root, tag);
+  if (checkPacked) errors.push(...checkPackedManifest(root));
   return errors;
 }
 

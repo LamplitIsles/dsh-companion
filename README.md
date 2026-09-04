@@ -98,25 +98,66 @@ version before it creates the publishable tarball. Stable tags such as
 `v0.1.0` use npm's `latest` channel; prereleases such as `v0.1.0-beta.1` use
 `beta`.
 
-For the first publication, create the public `@lamplitisles/dsh-companion`
-package in npm under the Lamplit Isles scope. In that package's Trusted
-Publishing settings, add this GitHub repository and the `Publish npm package`
-workflow as the trusted publisher. In GitHub, create a protected environment
-named `npm` and require the maintainers or deployment rules appropriate for
-release approval. No npm token is stored in the repository or in GitHub
-secrets: the publish job receives an OIDC identity token only after the
-protected environment is granted, and npm verifies that identity and records
-provenance for the tarball.
+### First-time bootstrap and Trusted Publishing
 
-For a routine release, update `version` in `package.json`, run the local
-verification commands above (and `GITHUB_REF_NAME=v<semver> bun run release:check`),
-commit that version, then push the tag:
+Bootstrap the package with a prerelease version that has never been published.
+For the first release, set `package.json` to `0.1.0-beta.0`, run the local
+checks, and then publish that exact prerelease once with the maintainer's local
+npm authentication:
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+bun install --frozen-lockfile
+bun run typecheck
+bun run test
+bun run build
+bun run pack:check
+GITHUB_REF_NAME=v0.1.0-beta.0 bun run release:check
+npm publish --access public --tag beta
+```
+
+This bootstrap prerelease is deliberately distinct from the first stable
+`0.1.0`; never manually publish or reuse `0.1.0` for bootstrap. Each npm
+version must be new and unpublished before a release.
+
+After the bootstrap succeeds, configure Trusted Publishing for the exact
+`@lamplitisles/dsh-companion` package in npm: add the `LamplitIsles` GitHub
+owner, repository `dsh-companion`, workflow
+`.github/workflows/release.yml`, and environment `npm` as the trusted
+publisher. Create a protected GitHub environment named `npm` with the
+maintainers or deployment rules required for release approval.
+
+### First stable OIDC release
+
+Change `package.json` to the new, unpublished version `0.1.0`, run the stable
+checks below, commit the version update, and push it with `og push`:
+
+```sh
+bun install --frozen-lockfile
+bun run typecheck
+bun run test
+bun run build
+bun run pack:check
+GITHUB_REF_NAME=v0.1.0 bun run release:check
+og push
+```
+
+The supported tag command is `og tag [<version> | --bump <major|minor|patch>]`
+(see `og tag --help`); it creates and pushes the tag. Create the first stable
+tag with:
+
+```sh
+og tag v0.1.0
 ```
 
 The verification job must finish before the protected publish job can publish.
-Do not add `NPM_TOKEN`, `NODE_AUTH_TOKEN`, or a provider credential to the
-workflow; Trusted Publishing is the only release authentication path.
+For each subsequent release, choose a version that has never been published,
+run the same checks, push the commit with `og push`, and create its tag with
+the same supported operation (for example, `og tag v0.2.0-beta.1`). Stable
+tags use npm's `latest` channel; tags containing a prerelease identifier use
+`beta`.
+
+Trusted Publishing is the only automated release authentication path. Do not
+add `NPM_TOKEN`, `NODE_AUTH_TOKEN`, or a provider credential to the workflow;
+the protected publish job receives an OIDC identity and records npm
+provenance for the verified tarball. The one-time bootstrap publication uses
+the maintainer's local npm authentication only.
