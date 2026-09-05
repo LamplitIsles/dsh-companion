@@ -17,6 +17,7 @@ import { decodeClientSettings } from "./client/settings.js";
 import { companionStyles } from "./client/theme.js";
 import daisyStyles from "./client/daisy.css?inline";
 import settingsCardStyles from "./client/CompanionSettingsCard.module.css?inline";
+import { APPLICATION_STYLESHEET_ID, mountStyleSheet, SETTINGS_STYLESHEET_ID } from "./client/styles.js";
 import { registerCompanionContinuity } from "./continuity.js";
 
 export const name = "dsh-companion" as const;
@@ -26,37 +27,18 @@ const SETTINGS_NAMESPACE = "dsh-companion";
 
 function onCompanionPath(pathname: string): boolean { return pathname === "/companion" || pathname.startsWith("/companion/"); }
 
-export function installStyles(ctx: ClientContext): () => void {
-  const id = "dsh-companion-styles";
-  const existing = document.getElementById(id);
-  if (existing) return () => undefined;
-  const element = document.createElement("style");
-  element.id = id;
-  element.textContent = `${daisyStyles}\n${companionStyles}`;
-  document.head.appendChild(element);
-  const dispose = () => element.remove();
-  if (typeof ctx.effect === "function") ctx.effect(() => dispose, "dsh-companion: styles");
-  return dispose;
+export function installStyles(ctx: ClientContext): void {
+  mountStyleSheet(ctx, `${daisyStyles}\n${companionStyles}`, APPLICATION_STYLESHEET_ID, "dsh-companion: application stylesheet");
 }
 
-export function installSettingsStyles(ctx: ClientContext): () => void {
-  const id = "dsh-companion-settings-styles";
-  const existing = document.getElementById(id);
-  if (existing) return () => undefined;
-  const element = document.createElement("style");
-  element.id = id;
-  element.dataset.pluginCss = "dsh-companion-settings";
-  element.textContent = settingsCardStyles;
-  document.head.appendChild(element);
-  const dispose = () => element.remove();
-  if (typeof ctx.effect === "function") ctx.effect(() => dispose, "dsh-companion: settings styles");
-  return dispose;
+export function installSettingsStyles(ctx: ClientContext): void {
+  mountStyleSheet(ctx, settingsCardStyles, SETTINGS_STYLESHEET_ID, "dsh-companion: settings stylesheet");
 }
 
 export function apply(ctx: ClientContext): void {
   installSettingsStyles(ctx);
   const disposeContinuity = registerCompanionContinuity(ctx);
-  if (typeof ctx.effect === "function") ctx.effect(() => disposeContinuity, "dsh-companion: continuity registrations");
+  ctx.effect(() => disposeContinuity, "dsh-companion: continuity registrations");
   const settings = ctx.settingsScope.bind({ namespace: SETTINGS_NAMESPACE, decode: decodeClientSettings });
   const connection = (ctx as unknown as { connection: { rpc: { call(channel: string, endpoint: string, payload: unknown, signal?: AbortSignal): Promise<{ ok: boolean; value?: unknown; error?: { message: string } }> } } }).connection;
   const configuredWorkspace = (): string => {

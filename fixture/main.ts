@@ -1,10 +1,13 @@
 import { mount, unmount } from "svelte";
 import { writable } from "svelte/store";
+import type { Context as ClientContext } from "@deepseek-ai/cordis";
 import { mountBridgeFixture } from "./bridge.js";
 import CompanionBridge from "../src/client/CompanionBridge.svelte";
 import type { CompanionBridgeProps } from "../src/client/companion-bridge.js";
 import { companionStyles } from "../src/client/theme.js";
 import daisyStyles from "../src/client/daisy.css?inline";
+import settingsCardStyles from "../src/client/CompanionSettingsCard.module.css?inline";
+import { APPLICATION_STYLESHEET_ID, mountStyleSheet, SETTINGS_STYLESHEET_ID } from "../src/client/styles.js";
 import { groupTimelineItems, type CompanionProjection } from "../src/projection.js";
 import type { TimelineItem } from "../src/projection.js";
 import type { CompanionContinuityView } from "../src/client/companion-bridge.js";
@@ -16,7 +19,24 @@ import type { ImageAttachmentLimits } from "@deepseek-ai/dsh-attachment";
 import type { CompanionReadiness } from "../src/client/readiness.js";
 
 const fixtureDaisyStyles = daisyStyles.replace(/:root:has\(input\.theme-controller\[value=[^)]+\]:checked\),?/gu, "").replace(/:root\b/gu, ":scope").replace(/\[data-theme=["']?(sticker-messenger|night-voyage)["']?\]/gu, ":scope[data-theme=$1]");
-const style = document.createElement("style"); style.textContent = `@font-face{font-family:'Companion Noto Sans SC';src:url('/fonts/NotoSansSC-Companion.woff2') format('woff2');font-weight:100 900;font-display:block}@scope (#dsh-companion){${fixtureDaisyStyles}}${companionStyles.replace('ui-rounded, "SF Pro Rounded", system-ui, sans-serif', '"Companion Noto Sans SC", ui-rounded, "SF Pro Rounded", system-ui, sans-serif')}`; document.head.appendChild(style);
+const styleDisposers = new Set<() => void>();
+const fixtureStyleContext = {
+  effect(execute: () => () => void): () => void {
+    const dispose = execute();
+    let active = true;
+    const release = (): void => {
+      if (!active) return;
+      active = false;
+      styleDisposers.delete(release);
+      dispose();
+    };
+    styleDisposers.add(release);
+    return release;
+  },
+} as unknown as Pick<ClientContext, "effect">;
+const fixtureApplicationStyles = `@font-face{font-family:'Companion Noto Sans SC';src:url('/fonts/NotoSansSC-Companion.woff2') format('woff2');font-weight:100 900;font-display:block}@scope (#dsh-companion){${fixtureDaisyStyles}}${companionStyles.replace('ui-rounded, "SF Pro Rounded", system-ui, sans-serif', '"Companion Noto Sans SC", ui-rounded, "SF Pro Rounded", system-ui, sans-serif')}`;
+mountStyleSheet(fixtureStyleContext, fixtureApplicationStyles, APPLICATION_STYLESHEET_ID, "fixture: application stylesheet");
+mountStyleSheet(fixtureStyleContext, settingsCardStyles, SETTINGS_STYLESHEET_ID, "fixture: settings stylesheet");
 const svgDocument = "<svg xmlns='http://www.w3.org/2000/svg' width='640' height='420' viewBox='0 0 640 420'><rect width='640' height='420' rx='34' fill='#ffc857'/><circle cx='180' cy='190' r='86' fill='#f26d85'/><circle cx='460' cy='190' r='86' fill='#76c9bc'/></svg>";
 const svg = `data:image/svg+xml,${encodeURIComponent(svgDocument)}`;
 const query = new URLSearchParams(location.search);
@@ -267,6 +287,7 @@ declare global {
       setIdentity(patch: Partial<CompanionBridgeProps["identity"]>): void;
       revoked(): number;
       rootIsStable(): boolean;
+      disposeStyles(): void;
       dispose(): void;
       unmountCalls(): number;
       setReadiness(next: { workspace?: CompanionReadiness; relationship?: CompanionReadiness; session?: CompanionReadiness }): void;
@@ -351,6 +372,7 @@ window.__companionFixture = {
   setIdentity(patch) { propsStore.update((current) => ({ ...current, identity: { ...current.identity!, ...patch } })); },
   revoked: () => revokedImageUrls,
   rootIsStable: () => !bridgeMode && document.getElementById("dsh-companion") === mountedCompanionRoot,
+  disposeStyles() { for (const dispose of [...styleDisposers]) dispose(); },
   dispose() { if (!disposed) { disposed = true; unmountCount += 1; if (component) void unmount(component); } },
   unmountCalls: () => unmountCount,
 };

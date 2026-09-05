@@ -1,4 +1,25 @@
 import { expect, test } from "@playwright/test";
+import { APPLICATION_STYLESHEET_ID, CLIENT_PLUGIN_ID, SETTINGS_STYLESHEET_ID } from "../../src/client/styles.js";
+
+test("Companion stylesheet ownership follows its effect lifecycle", async ({ page }) => {
+  await page.goto("/");
+  const styles = page.locator(`style[data-plugin="${CLIENT_PLUGIN_ID}"]`);
+  await expect(styles).toHaveCount(2);
+
+  const sheets = await styles.evaluateAll((elements) => elements.map((element) => ({
+    css: element.textContent,
+    plugin: element.getAttribute("data-plugin"),
+    sheet: element.getAttribute("data-plugin-css"),
+  })));
+  expect(sheets).toEqual(expect.arrayContaining([
+    expect.objectContaining({ plugin: CLIENT_PLUGIN_ID, sheet: APPLICATION_STYLESHEET_ID, css: expect.stringContaining("#dsh-companion") }),
+    expect.objectContaining({ plugin: CLIENT_PLUGIN_ID, sheet: SETTINGS_STYLESHEET_ID, css: expect.stringContaining("--dsw-alias-label-primary") }),
+  ]));
+  await expect(page.locator("#dsh-companion-styles, #dsh-companion-settings-styles")).toHaveCount(0);
+
+  await page.evaluate(() => window.__companionFixture?.disposeStyles());
+  await expect(styles).toHaveCount(0);
+});
 
 test("fixture has complete media states, accessible overlays, and no duplicate image URLs", async ({ page }) => {
   await page.goto("/");
@@ -770,18 +791,19 @@ test("Svelte 5 bridge applies live identity and theme changes without remounting
   await page.evaluate(() => window.__companionFixture?.setIdentity({ companionName: "新灯", moodLabel: "愉快" }));
   await expect(page.locator(".companion-name")).toHaveText("新灯");
   await expect(page.locator(".companion-presence")).toContainText("愉快");
+  const presenceStatus = page.locator(".companion-presence .cmp-status");
   const statusClasses = { ready: "cmp-status-success", working: "cmp-status-warning", reconnecting: "cmp-status-error" } as const;
   for (const [status, className] of Object.entries(statusClasses)) {
     await page.evaluate((next) => window.__companionFixture?.setStatus(next as "ready" | "working" | "reconnecting"), status);
-    await expect(page.locator(".cmp-status")).toHaveClass(new RegExp(className));
-    await expect.poll(() => page.locator(".cmp-status").evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+    await expect(presenceStatus).toHaveClass(new RegExp(className));
+    await expect.poll(() => presenceStatus.evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
     await expect(page.locator(".companion-presence")).toContainText(status === "ready" ? "在线" : status === "working" ? "正在输入…" : "连接中…");
   }
   await page.evaluate(() => window.__companionFixture?.setStatus("working"));
-  const lightStatus = await page.locator(".cmp-status").evaluate((node) => getComputedStyle(node).backgroundColor);
+  const lightStatus = await presenceStatus.evaluate((node) => getComputedStyle(node).backgroundColor);
   await page.evaluate(() => window.__companionFixture?.setTheme("dark"));
   await expect(page.getByTestId("companion-root")).toHaveAttribute("data-theme", "night-voyage");
-  await expect.poll(() => page.locator(".cmp-status").evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe(lightStatus);
+  await expect.poll(() => presenceStatus.evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe(lightStatus);
   await expect.poll(() => page.evaluate(() => window.__companionFixture?.rootIsStable() ?? false)).toBe(true);
   await page.evaluate(() => { window.__companionFixture?.dispose(); window.__companionFixture?.dispose(); });
   await expect.poll(() => page.getByTestId("companion-root").count()).toBe(0);
